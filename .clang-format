@@ -1,0 +1,32 @@
+---
+BasedOnStyle: LLVM
+IndentWidth: 4
+UseTab: Never
+---
+Language: Cpp
+BreakConstructorInitializers: BeforeComma
+AccessModifierOffset: -4
+PointerAlignment: Left
+ColumnLimit: 100
+FixNamespaceComments: true
+NamespaceIndentation: None
+SortIncludes: true
+SortUsingDeclarations: true
+AlignAfterOpenBracket: Align
+BreakBeforeBraces: Allman
+AlwaysBreakAfterDefinitionReturnType: All
+BreakInheritanceList: BeforeComma
+IncludeBlocks: Regroup
+IncludeIsMainRegex: ''
+IncludeCategories:
+  # Headers in <> without extension.
+  - Regex:           '<([a-z_])>'
+    Priority:        100
+
+  # Headers in "" with extension.
+  - Regex:           '"([a-zA-Z\/])+(\.h|\.hpp)"'
+    Priority:        99
+  
+  # Headers in <> with extension.
+  - Regex:           '<([a-zA-Z\/])+(\.h|\.hpp)>'
+    Priority:        2
