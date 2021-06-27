@@ -1,14 +1,14 @@
 #include "VOG/Engine/Renderer.hpp"
 
 #include <VOG/Common/JSONContainer.hpp>
-#include <VOG/Graphics/Api/CommandManager.hpp>
-#include <VOG/Graphics/Api/Device.hpp>
 #include <VOG/Graphics/Api/GraphicsProvider.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Resources/RenderSurface.hpp>
 #include <VOG/Graphics/Resources/ResourceManager.hpp>
 #include <VOG/Graphics/Resources/Shader.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
+#include <VOG/Graphics/VulkanWrappers/CommandManager.hpp>
+#include <VOG/Graphics/VulkanWrappers/Device.hpp>
 
 namespace VOG::Engine
 {
@@ -25,7 +25,7 @@ Renderer::Renderer(const Common::JSONContainer& parameters)
     , m_nextState{RenderJobState::Inactive}
     , m_graphicsProvider{std::make_shared<Graphics::Api::GraphicsProvider>(parameters)}
     , m_resourceManager{std::make_shared<Graphics::Resources::ResourceManager>(m_graphicsProvider)}
-    , m_device{std::make_shared<VOG::Graphics::Api::Device>(m_graphicsProvider)}
+    , m_device{std::make_shared<VOG::Graphics::VulkanWrappers::Device>(m_graphicsProvider)}
     , m_renderSurface{m_resourceManager->CreateRenderSurface(parameters)}
     , m_scene{std::make_shared<Scene::Scene>()}
     , m_maxFramesInFlight{std::clamp(
@@ -33,8 +33,8 @@ Renderer::Renderer(const Common::JSONContainer& parameters)
               parameters["frames_in_flight"]->GetValueOr<Common::JSONContainer::UnsignedInt>(1)),
           std::uint8_t{1}, MaxFramesInFlight)}
     , m_renderFrame{0}
-    , m_commandManager{
-          std::make_unique<Graphics::Api::CommandManager>(m_graphicsProvider, m_maxFramesInFlight)}
+    , m_commandManager{std::make_shared<Graphics::VulkanWrappers::CommandManager>(
+          m_graphicsProvider, m_maxFramesInFlight)}
 {
     m_submissions.resize(m_maxFramesInFlight);
 }
@@ -49,11 +49,14 @@ Renderer::Render()
     auto& submissions = m_submissions[frameInFlightIndex];
     for (auto& submission : submissions)
     {
-        submission->WaitUntilFinished();
+        submission.WaitUntilFinished();
     }
     submissions.clear();
 
-    m_device->UseCommandBuffer(m_commandManager->MakeCommandBuffer(frameInFlightIndex));
+    auto commandRequest = m_commandManager->Request(frameInFlightIndex);
+    commandRequest.ResetPool();
+
+    m_device->UseCommandBuffer(commandRequest.MakeCommandBuffer());
 
     m_device->BeginRenderPass(m_renderSurface, nullptr);
 
@@ -62,14 +65,8 @@ Renderer::Render()
     m_device->EndRenderPass();
 
     auto commandBuffer = m_device->EndCommandBuffer();
-    {
-        std::vector<std::unique_ptr<vk::raii::CommandBuffer>> commandBuffers;
-        commandBuffers.reserve(1);
-        commandBuffers.push_back(std::move(commandBuffer));
-        submissions.push_back(
-            m_commandManager->SubmitCommandBuffers(frameInFlightIndex, std::move(commandBuffers)));
-    }
-    m_renderSurface->Present(submissions[0]->GetSemaphore());
+    submissions.push_back(commandRequest.SubmitCommandBuffer(std::move(commandBuffer)));
+    m_renderSurface->Present(submissions[0].GetSemaphore());
 
     m_device->OnFrameReset();
 

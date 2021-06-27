@@ -101,7 +101,7 @@ Shader::Shader(const std::shared_ptr<Api::GraphicsProvider>& graphicsProvider,
     m_shaderBinary = {resultCompile.cbegin(), resultCompile.cend()};
 
     m_shaderModule = std::make_shared<vk::raii::ShaderModule>(
-        *m_graphicsProvider->GetDevice(),
+        m_graphicsProvider->GetDevice(),
         vk::ShaderModuleCreateInfo{
             {}, m_shaderBinary.size(), reinterpret_cast<std::uint32_t*>(m_shaderBinary.data())});
 }

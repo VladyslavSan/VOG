@@ -29,8 +29,8 @@ CreateRenderSurface(Api::GraphicsProviderPtr graphicsProvider,
             createInfo.setHwnd(reinterpret_cast<HWND>(windowHandle))
                 .setHinstance(GetModuleHandleA(0));
 
-            SurfaceHandle = std::make_shared<vk::raii::SurfaceKHR>(*graphicsProvider->GetInstance(),
-                                                                   createInfo);
+            SurfaceHandle =
+                std::make_shared<vk::raii::SurfaceKHR>(graphicsProvider->GetInstance(), createInfo);
         }
     }
 #elif

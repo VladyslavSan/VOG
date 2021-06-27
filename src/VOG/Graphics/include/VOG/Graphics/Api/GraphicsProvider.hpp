@@ -1,26 +1,11 @@
 #pragma once
 
+#include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 
 #include <memory>
 #include <utility>
 #include <vector>
-
-namespace vk
-{
-struct QueueFamilyProperties;
-namespace raii
-{
-class Context;
-class CommandPool;
-class CommandBuffer;
-class Device;
-class Instance;
-class PipelineCache;
-class PhysicalDevice;
-class Queue;
-} // namespace raii
-} // namespace vk
 
 namespace VOG::Common
 {
@@ -40,13 +25,22 @@ namespace Api
 class GraphicsProvider
 {
 public:
-    using QueueFamilyInfo = std::pair<std::uint32_t, std::unique_ptr<vk::QueueFamilyProperties>>;
+    struct QueueFamilyInfo
+    {
+        std::uint32_t familyIndex = 0u;
+        vk::QueueFamilyProperties familyProperties{};
+    };
+
+    struct QueueInfos
+    {
+        QueueFamilyInfo graphics;
+        QueueFamilyInfo transfer;
+    };
 
     enum class CommandPoolType
     {
         Graphics,
-        Transfer,
-        Present
+        Transfer
     };
 
     ~GraphicsProvider();
@@ -63,37 +57,38 @@ public:
      */
     GraphicsProvider(const Common::JSONContainer& options);
 
-    const std::shared_ptr<vk::raii::Context>& GetContext() const;
+    // clang-format off
+    vk::raii::Context& GetContext() { return mContext; }
+    const vk::raii::Context& GetContext() const { return mContext; }
 
-    const std::shared_ptr<vk::raii::Instance>& GetInstance() const;
+    vk::raii::Instance& GetInstance() { return mInstance; }
+    const vk::raii::Instance& GetInstance() const { return mInstance; }
 
-    const std::shared_ptr<vk::raii::PhysicalDevice>& GetPhysicalDevice() const;
+    vk::raii::PhysicalDevice& GetPhysicalDevice() { return mPhysicalDevice; }
+    const vk::raii::PhysicalDevice& GetPhysicalDevice() const { return mPhysicalDevice; }
 
-    const std::shared_ptr<vk::raii::Device>& GetDevice() const;
+    vk::raii::Device& GetDevice() { return mDevice; }
+    const vk::raii::Device& GetDevice() const { return mDevice; }
 
-    const QueueFamilyInfo& GetGraphicsQueueInfo() const;
+    const QueueInfos& GetQueueInfos() const { return mQueueInfos; }
 
-    const std::shared_ptr<vk::raii::Queue>& GetGraphicsQueue() const;
+    vk::raii::Queue& GetGraphicsQueue() { return mGraphicsQueue; }
+    const vk::raii::Queue& GetGraphicsQueue() const { return mGraphicsQueue; }
 
-    const QueueFamilyInfo& GetTransferQueueInfo() const;
-
-    const std::shared_ptr<vk::raii::Queue>& GetTransferQueue() const;
+    vk::raii::Queue& GetTransferQueue() { return mTransferQueue; }
+    const vk::raii::Queue& GetTransferQueue() const { return mTransferQueue; }
+    // clang-format on
 
     std::shared_ptr<vk::raii::CommandPool> MakeCommandPool(CommandPoolType commandPoolType) const;
 
 protected:
-    // Generic
-    std::shared_ptr<vk::raii::Context> m_context;
-    std::shared_ptr<vk::raii::Instance> m_instance;
-    std::shared_ptr<vk::raii::PhysicalDevice> m_physicalDevice;
-
-    // Queues
-    QueueFamilyInfo m_graphicsQueueInfo;
-    QueueFamilyInfo m_transferQueueInfo;
-
-    std::shared_ptr<vk::raii::Device> m_device;
-    std::shared_ptr<vk::raii::Queue> m_graphicsQueue;
-    std::shared_ptr<vk::raii::Queue> m_transferQueue;
+    vk::raii::Context mContext;
+    vk::raii::Instance mInstance;
+    vk::raii::PhysicalDevice mPhysicalDevice;
+    QueueInfos mQueueInfos;
+    vk::raii::Device mDevice;
+    vk::raii::Queue mGraphicsQueue;
+    vk::raii::Queue mTransferQueue;
 };
 
 VOG_DECLARE_PTR(GraphicsProvider);

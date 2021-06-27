@@ -1,4 +1,4 @@
-#include "VOG/Graphics/Api/Device.hpp"
+#include "VOG/Graphics/VulkanWrappers/Device.hpp"
 
 #include <VOG/Graphics/Api/GraphicsProvider.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
@@ -7,27 +7,35 @@
 
 #include <stdexcept>
 
-namespace VOG::Graphics::Api
+namespace VOG::Graphics::VulkanWrappers
 {
 Device::~Device() {}
 
-Device::Device(const GraphicsProviderPtr& graphicsProvider)
-    : m_graphicsProvider{graphicsProvider}
-    , m_defaultRenderStates{RenderStates::DefaultRenderStates}
+Device::Device(const Api::GraphicsProviderPtr& graphicsProvider)
+    : mGraphicsProvider{graphicsProvider}
+    , mDefaultRenderStates{RenderStates::DefaultRenderStates}
+    , mCommandBuffer{}
 {
 }
 
 void
-Device::UseCommandBuffer(std::unique_ptr<vk::raii::CommandBuffer> commandBuffer)
+Device::UseCommandBuffer(CommandBuffer commandBuffer)
 {
-    m_commandBuffer = std::move(commandBuffer);
+    // Should have no value when use is called
+    if (mCommandBuffer.has_value())
+    {
+        throw std::runtime_error{"Device::UseCommandBuffer internall command buffer is going to be "
+                                 "discarded, check if it is desired"};
+    }
+
+    mCommandBuffer.emplace(std::move(commandBuffer));
 }
 
 void
 Device::BeginRenderPass(const Resources::AttachmentPtr& color,
                         const Resources::AttachmentPtr& depthstencil)
 {
-    if (!m_commandBuffer)
+    if (!mCommandBuffer)
     {
         throw std::runtime_error{"BeginRenderPass failed. Command buffer is not set."};
     }
@@ -42,10 +50,10 @@ Device::BeginRenderPass(const Resources::AttachmentPtr& color,
             "BeginRenderPass failed. Color and depth attachments have different extents."};
     }
 
-    m_attachments[0] = color;
-    m_depthStencilAttachment = depthstencil;
+    mAttachments[0] = color;
+    mDepthStencilAttachment = depthstencil;
     for (std::size_t i = 1; i < MaxAttachments; ++i)
-        m_attachments[i] = nullptr;
+        mAttachments[i] = nullptr;
 
     std::array<vk::AttachmentDescription, 2> description;
     description[0].setFormat(ConvertTo<vk::Format>(color->GetFormat()));
@@ -91,7 +99,8 @@ Device::BeginRenderPass(const Resources::AttachmentPtr& color,
         ci.setSubpassCount(1);
         ci.setSubpasses(subpass);
 
-        m_renderPass = std::make_unique<vk::raii::RenderPass>(*m_graphicsProvider->GetDevice(), ci);
+        mRenderPass = std::make_shared<vk::raii::RenderPass>(mGraphicsProvider->GetDevice(), ci);
+        mCommandBuffer->AddBoundResource(mRenderPass);
     }
 
     {
@@ -100,45 +109,56 @@ Device::BeginRenderPass(const Resources::AttachmentPtr& color,
             depthstencil ? **depthstencil->GetImageView() : vk::ImageView{}};
         auto extent = color->GetExtent();
         vk::FramebufferCreateInfo ci{};
-        ci.setRenderPass(**m_renderPass)
+        ci.setRenderPass(**mRenderPass)
             .setHeight(extent.height)
             .setWidth(extent.width)
             .setAttachments(attachmentsViews)
             .setAttachmentCount(depthstencil ? 2 : 1)
             .setLayers(1);
 
-        m_framebuffer =
-            std::make_unique<vk::raii::Framebuffer>(*m_graphicsProvider->GetDevice(), ci);
+        mFramebuffer = std::make_shared<vk::raii::Framebuffer>(mGraphicsProvider->GetDevice(), ci);
+        mCommandBuffer->AddBoundResource(mFramebuffer);
     }
 
     vk::CommandBufferBeginInfo beginInfo{};
-    m_commandBuffer->begin({});
+    mCommandBuffer->begin(beginInfo);
 
     std::array<vk::ClearValue, 1> clearValues;
     clearValues[0].color = vk::ClearColorValue(std::array<float, 4>({{1.0f, 0.0f, 0.0f, 1.0f}}));
     // clearValues[1].depthStencil = vk::ClearDepthStencilValue(1.0f, 0);
     vk::RenderPassBeginInfo renderPassBeginInfo(
-        **m_renderPass, **m_framebuffer,
-        vk::Rect2D(vk::Offset2D(0, 0), ConvertTo<vk::Extent2D>(m_attachments[0]->GetExtent())),
+        **mRenderPass, **mFramebuffer,
+        vk::Rect2D(vk::Offset2D(0, 0), ConvertTo<vk::Extent2D>(mAttachments[0]->GetExtent())),
         clearValues);
 
-    m_commandBuffer->beginRenderPass(renderPassBeginInfo, vk::SubpassContents::eInline);
+    mCommandBuffer->beginRenderPass(renderPassBeginInfo);
+    mRenderPass.reset();
+    mFramebuffer.reset();
 }
 
 void
 Device::EndRenderPass()
 {
-    if (!m_commandBuffer)
+    if (!mCommandBuffer)
         return;
 
-    m_commandBuffer->endRenderPass();
+    mCommandBuffer->endRenderPass();
 }
 
-std::unique_ptr<vk::raii::CommandBuffer>
+CommandBuffer
 Device::EndCommandBuffer()
 {
-    m_commandBuffer->end();
-    return std::move(m_commandBuffer);
+    if (!mCommandBuffer)
+    {
+        throw std::runtime_error{
+            "Device::EndCommandBuffer while not having a command buffer bound"};
+    }
+
+    mCommandBuffer->end();
+    auto result = std::move(*mCommandBuffer);
+    mCommandBuffer.reset();
+
+    return std::move(result);
 }
 
 void
@@ -147,4 +167,4 @@ Device::OnFrameReset()
     ResetRenderStates();
     ResetAttachments();
 }
-} // namespace VOG::Graphics::Api
+} // namespace VOG::Graphics::VulkanWrappers

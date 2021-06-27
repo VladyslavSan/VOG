@@ -1,34 +1,30 @@
 #pragma once
 
-#include <VOG/Graphics/Api/RenderStates.hpp>
+#include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
+#include <VOG/Graphics/VulkanWrappers/CommandBuffer.hpp>
+#include <VOG/Graphics/VulkanWrappers/RenderStates.hpp>
 
 #include <array>
 #include <optional>
 #include <stack>
 #include <variant>
 
-namespace vk::raii
-{
-class RenderPass;
-class PipelineCache;
-class Framebuffer;
-class CommandPool;
-class CommandBuffer;
-class Semaphore;
-class Fence;
-} // namespace vk::raii
-
 namespace VOG::Graphics
 {
+namespace Api
+{
+VOG_DECLARE_PTR(GraphicsProvider);
+}
 namespace Resources
 {
 VOG_DECLARE_PTR(Attachment);
 VOG_DECLARE_PTR(RenderSurface);
 } // namespace Resources
-namespace Api
+
+namespace VulkanWrappers
 {
-VOG_DECLARE_PTR(GraphicsProvider);
+class CommandBuffer;
 
 class Device
 {
@@ -41,7 +37,7 @@ public:
 
     ~Device();
 
-    Device(const GraphicsProviderPtr& graphicsProvider);
+    Device(const Api::GraphicsProviderPtr& graphicsProvider);
 
     void SetDefaultRenderStates(const RenderStates::RenderState& renderStates);
 
@@ -50,7 +46,7 @@ public:
     void SetRenderState(std::optional<RenderStates::StencilTest> stencilTest);
     void SetRenderState(std::optional<RenderStates::ColorBlend> colorBlend);
 
-    void UseCommandBuffer(std::unique_ptr<vk::raii::CommandBuffer> commandBuffer);
+    void UseCommandBuffer(VulkanWrappers::CommandBuffer commandBuffer);
 
     /**
      * Start a simple render pass with color and optional depthstencil attachments
@@ -77,7 +73,7 @@ public:
 
     std::optional<std::size_t> GetCurrentSubpassStage() const;
 
-    std::unique_ptr<vk::raii::CommandBuffer> EndCommandBuffer();
+    CommandBuffer EndCommandBuffer();
 
     void ResetRenderStates();
     void ResetAttachments();
@@ -85,60 +81,60 @@ public:
 
 protected:
     // Object references
-    GraphicsProviderPtr m_graphicsProvider;
+    Api::GraphicsProviderPtr mGraphicsProvider;
 
     // States
-    RenderStates::RenderState m_defaultRenderStates;
-    RenderStates::RenderState m_renderStates;
-    std::pair<std::int32_t, std::int32_t> m_viewport;
-    std::pair<std::int32_t, std::int32_t> m_scissors;
+    RenderStates::RenderState mDefaultRenderStates;
+    RenderStates::RenderState mRenderStates;
+
+    vk::Viewport mViewport;
+    vk::Rect2D mScissors;
 
     // Resources
-    std::array<Resources::AttachmentPtr, MaxAttachments> m_attachments;
-    Resources::AttachmentPtr m_depthStencilAttachment;
+    std::array<Resources::AttachmentPtr, MaxAttachments> mAttachments;
+    Resources::AttachmentPtr mDepthStencilAttachment;
 
-    std::unique_ptr<vk::raii::CommandBuffer> m_commandBuffer;
-
-    std::unique_ptr<vk::raii::PipelineCache> m_pipelineCache;
-    std::unique_ptr<vk::raii::RenderPass> m_renderPass;
-    std::unique_ptr<vk::raii::Framebuffer> m_framebuffer;
+    std::optional<VulkanWrappers::CommandBuffer> mCommandBuffer;
+    std::unique_ptr<vk::raii::PipelineCache> mPipelineCache;
+    std::shared_ptr<vk::raii::RenderPass> mRenderPass;
+    std::shared_ptr<vk::raii::Framebuffer> mFramebuffer;
 };
 VOG_DECLARE_PTR(Device);
 
 inline void
 Device::SetDefaultRenderStates(const RenderStates::RenderState& renderStates)
 {
-    m_defaultRenderStates = renderStates;
+    mDefaultRenderStates = renderStates;
 }
 
 inline void
 Device::SetRenderState(RenderStates::PolygonMode polygonMode)
 {
-    m_renderStates.polygonMode = polygonMode;
+    mRenderStates.polygonMode = polygonMode;
 }
 
 inline void
 Device::SetRenderState(std::optional<RenderStates::DepthTest> depthTest)
 {
-    m_renderStates.depthTest = depthTest;
+    mRenderStates.depthTest = depthTest;
 }
 
 inline void
 Device::SetRenderState(std::optional<RenderStates::StencilTest> stencilTest)
 {
-    m_renderStates.stencilTest = stencilTest;
+    mRenderStates.stencilTest = stencilTest;
 }
 
 inline void
 Device::SetRenderState(std::optional<RenderStates::ColorBlend> colorBlend)
 {
-    m_renderStates.colorBlend = colorBlend;
+    mRenderStates.colorBlend = colorBlend;
 }
 
 inline const RenderStates::RenderState&
 Device::GetRenderStates() const
 {
-    return m_renderStates;
+    return mRenderStates;
 }
 
 inline std::optional<std::size_t>
@@ -150,7 +146,7 @@ Device::GetCurrentSubpassStage() const
 inline void
 Device::ResetRenderStates()
 {
-    m_renderStates = m_defaultRenderStates;
+    mRenderStates = mDefaultRenderStates;
 }
 
 inline void
@@ -158,8 +154,8 @@ Device::ResetAttachments()
 {
     for (std::size_t i = 0; i < MaxAttachments; ++i)
     {
-        m_attachments[i].reset();
+        mAttachments[i].reset();
     }
 }
-} // namespace Api
+} // namespace VulkanWrappers
 } // namespace VOG::Graphics

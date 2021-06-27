@@ -13,12 +13,12 @@ VulkanMemoryAllocator::VulkanMemoryAllocator(const Api::GraphicsProviderPtr& gra
     , m_vmaHandle{nullptr}
 {
     VmaAllocatorCreateInfo allocatorInfo = {};
-    allocatorInfo.physicalDevice = **m_graphicsProvider->GetPhysicalDevice();
-    allocatorInfo.device = **m_graphicsProvider->GetDevice();
+    allocatorInfo.physicalDevice = *m_graphicsProvider->GetPhysicalDevice();
+    allocatorInfo.device = *m_graphicsProvider->GetDevice();
 
     VmaVulkanFunctions vulkanFunctions;
     {
-        auto callDispatcherDevice = m_graphicsProvider->GetDevice()->getDispatcher();
+        auto callDispatcherDevice = m_graphicsProvider->GetDevice().getDispatcher();
 
         vulkanFunctions.vkAllocateMemory = callDispatcherDevice->vkAllocateMemory;
         vulkanFunctions.vkBindBufferMemory = callDispatcherDevice->vkBindBufferMemory;
@@ -42,7 +42,7 @@ VulkanMemoryAllocator::VulkanMemoryAllocator(const Api::GraphicsProviderPtr& gra
     }
 
     {
-        auto callDispatcherInstance = m_graphicsProvider->GetInstance()->getDispatcher();
+        auto callDispatcherInstance = m_graphicsProvider->GetInstance().getDispatcher();
         vulkanFunctions.vkGetPhysicalDeviceMemoryProperties =
             callDispatcherInstance->vkGetPhysicalDeviceMemoryProperties;
         vulkanFunctions.vkGetPhysicalDeviceProperties =

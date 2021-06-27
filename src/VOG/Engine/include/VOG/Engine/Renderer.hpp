@@ -8,12 +8,6 @@
 #include <thread>
 #include <unordered_map>
 
-namespace vk::raii
-{
-class Fence;
-class Semaphore;
-} // namespace vk::raii
-
 namespace VOG
 {
 
@@ -28,10 +22,14 @@ namespace Graphics
 namespace Api
 {
 class GraphicsProvider;
-class Device;
-class CommandsSubmission;
-class CommandManager;
 } // namespace Api
+
+namespace VulkanWrappers
+{
+class CommandSubmission;
+class CommandManager;
+class Device;
+} // namespace VulkanWrappers
 
 namespace Resources
 {
@@ -88,15 +86,15 @@ protected:
 
     std::shared_ptr<Graphics::Api::GraphicsProvider> m_graphicsProvider;
     std::shared_ptr<Graphics::Resources::ResourceManager> m_resourceManager;
-    std::shared_ptr<Graphics::Api::Device> m_device;
+    std::shared_ptr<Graphics::VulkanWrappers::Device> m_device;
     std::shared_ptr<Graphics::Resources::RenderSurface> m_renderSurface;
 
     std::shared_ptr<VOG::Scene::Scene> m_scene;
 
     std::uint8_t m_maxFramesInFlight;
     std::atomic<std::size_t> m_renderFrame;
-    std::unique_ptr<Graphics::Api::CommandManager> m_commandManager;
-    std::vector<std::vector<std::unique_ptr<Graphics::Api::CommandsSubmission>>> m_submissions;
+    std::shared_ptr<Graphics::VulkanWrappers::CommandManager> m_commandManager;
+    std::vector<std::vector<Graphics::VulkanWrappers::CommandSubmission>> m_submissions;
 };
 } // namespace Engine
 } // namespace VOG

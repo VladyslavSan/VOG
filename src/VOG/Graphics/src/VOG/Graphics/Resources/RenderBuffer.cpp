@@ -28,14 +28,14 @@ RenderBuffer::RenderBuffer(const std::shared_ptr<Api::GraphicsProvider>& graphic
         .setSharingMode(vk::SharingMode::eExclusive)
         .setInitialLayout(initialLayout);
 
-    m_image = std::make_shared<vk::raii::Image>(*m_graphicsProvider->GetDevice(), imageCreateInfo);
+    m_image = std::make_shared<vk::raii::Image>(m_graphicsProvider->GetDevice(), imageCreateInfo);
     auto imageMemoryRequirements = m_image->getMemoryRequirements();
 
     std::uint32_t memoryTypeIndex =
-        FindMemoryType(m_graphicsProvider->GetPhysicalDevice()->getMemoryProperties(),
+        FindMemoryType(m_graphicsProvider->GetPhysicalDevice().getMemoryProperties(),
                        imageMemoryRequirements.memoryTypeBits, memoryProperties);
     vk::MemoryAllocateInfo memoryAllocateInfo(imageMemoryRequirements.size, memoryTypeIndex);
-    m_memory = std::make_shared<vk::raii::DeviceMemory>(*m_graphicsProvider->GetDevice(),
+    m_memory = std::make_shared<vk::raii::DeviceMemory>(m_graphicsProvider->GetDevice(),
                                                         memoryAllocateInfo);
 
     m_image->bindMemory(**m_memory, 0);
@@ -47,8 +47,8 @@ RenderBuffer::RenderBuffer(const std::shared_ptr<Api::GraphicsProvider>& graphic
     vk::ImageViewCreateInfo imageViewCreateInfo({}, **m_image, vk::ImageViewType::e2D,
                                                 ConvertTo<vk::Format>(m_format), componentMapping,
                                                 imageSubresourceRange);
-    m_imageView = std::make_shared<vk::raii::ImageView>(*m_graphicsProvider->GetDevice(),
-                                                        imageViewCreateInfo);
+    m_imageView =
+        std::make_shared<vk::raii::ImageView>(m_graphicsProvider->GetDevice(), imageViewCreateInfo);
 }
 const std::shared_ptr<vk::raii::ImageView>&
 RenderBuffer::GetImageView() const
