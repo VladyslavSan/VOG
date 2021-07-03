@@ -16,7 +16,7 @@ option(ENABLE_EXTERNAL_LIBRARIES_TESTS "Enable tests from external libraries" OF
 
 add_compile_definitions(NOMINMAX)
 
-set(PROJECT_DEPENDENCIES_DIR ${PROJECT_SOURCE_DIR}/dependencies)
-add_subdirectory(dependencies)
+set(PROJECT_DEPENDENCIES_DIR ${PROJECT_SOURCE_DIR}/subprojects)
+add_subdirectory(subprojects)
 
 add_subdirectory(src)
