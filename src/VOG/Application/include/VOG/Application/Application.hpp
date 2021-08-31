@@ -23,17 +23,20 @@ class Application
 public:
     typedef std::vector<std::string> str_list;
 
-    Application(std::string title, unsigned int height, unsigned int width,
-                str_list extensions = {}, str_list layers = {});
+    Application(std::string  title,
+                unsigned int height,
+                unsigned int width,
+                str_list     extensions = {},
+                str_list     layers     = {});
 
     bool Run();
 
 protected:
-    std::string m_windowTitle;
-    str_list m_extensions;
-    str_list m_layers;
+    std::string mWindowTitle;
+    str_list    mExtensions;
+    str_list    mLayers;
 
-    std::shared_ptr<sf::WindowBase> m_window;
-    std::shared_ptr<Engine::Renderer> m_renderer;
+    std::shared_ptr<sf::WindowBase>   mWindow;
+    std::shared_ptr<Engine::Renderer> mRenderer;
 };
 } // namespace VOG::Application

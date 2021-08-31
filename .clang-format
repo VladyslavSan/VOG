@@ -4,17 +4,39 @@ IndentWidth: 4
 UseTab: Never
 ---
 Language: Cpp
-BreakConstructorInitializers: BeforeComma
 AccessModifierOffset: -4
+NamespaceIndentation: None
 PointerAlignment: Left
 ColumnLimit: 100
 FixNamespaceComments: true
-NamespaceIndentation: None
+
 SortIncludes: true
 SortUsingDeclarations: true
+
 AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: Consecutive
+AlignConsecutiveBitFields: AcrossEmptyLinesAndComments
+AlignConsecutiveDeclarations: true
+AlignEscapedNewlines: Right
+AlignOperands: AlignAfterOperator
+AlignTrailingComments: true
+
+AllowAllArgumentsOnNextLine: true
+BinPackArguments: false
+BinPackParameters: false
+
+BreakConstructorInitializers: BeforeComma
+BreakStringLiterals: true
+
+# requires
+IndentRequires: true
+
+#PackConstructorInitializers: Never
+
 BreakBeforeBraces: Allman
 AlwaysBreakAfterDefinitionReturnType: All
+AlwaysBreakBeforeMultilineStrings: true
+AlwaysBreakTemplateDeclarations: Yes
 BreakInheritanceList: BeforeComma
 IncludeBlocks: Regroup
 IncludeIsMainRegex: ''

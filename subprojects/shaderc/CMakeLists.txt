@@ -6,7 +6,7 @@ if(WIN32)
         IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/lib/win64/release/shaderc_combined.lib
         )
     SET_PROPERTY(TARGET shaderc PROPERTY 
-    IMPORTED_LOCATION_DEBUG ${CMAKE_CURRENT_SOURCE_DIR}/lib/win64/debug/shaderc_combined.lib
+        IMPORTED_LOCATION_DEBUG ${CMAKE_CURRENT_SOURCE_DIR}/lib/win64/debug/shaderc_combined.lib
         )
 elseif(UNIX)
     find_library(SHADERC_LIBRARY libshaderc_combined.a)

@@ -1,12 +1,29 @@
 cmake_minimum_required(VERSION 3.10.0)
 
-file(GLOB_RECURSE COMMON_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
-file(GLOB_RECURSE COMMON_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp")
+utility_declare_project(VOG.Common)
 
-add_library(VOG.Common STATIC ${COMMON_SOURCES} ${COMMON_HEADERS})
-set_target_properties(VOG.Common PROPERTIES FOLDER "VOG")
+set(VOG_COMMON_HEADERS
+    ${INTERFACE_DIR}/VOG/Common/Assert.hpp
+    ${INTERFACE_DIR}/VOG/Common/JSONContainer.hpp
+    ${INTERFACE_DIR}/VOG/Common/NoCopyable.hpp
+    ${INTERFACE_DIR}/VOG/Common/Signals.hpp
+    ${INTERFACE_DIR}/VOG/Common/ThreadsafeWrapper.hpp
+    ${INTERFACE_DIR}/VOG/Common/Config/GLMConfig.hpp
+    ${INTERFACE_DIR}/VOG/Common/Config/PlatformConfig.hpp
+    ${INTERFACE_DIR}/VOG/Common/Math/Math.hpp
+)
 
-target_link_libraries(VOG.Common PUBLIC glm)
+set(VOG_COMMON_SOURCES
+    ${IMPLEMENTATION_DIR}/VOG/Common/JSONContainer.cpp
+    ${IMPLEMENTATION_DIR}/VOG/Common/Signals.cpp
+)
 
-target_include_directories(VOG.Common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include/)
-target_include_directories(VOG.Common PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/)
+utility_add_target(
+    LIBRARY
+    LINK_PUBLIC glm
+    FOLDER VOG
+    HEADERS ${VOG_COMMON_HEADERS}
+    SOURCES ${VOG_COMMON_SOURCES}
+)
+
+add_subdirectory(Test)

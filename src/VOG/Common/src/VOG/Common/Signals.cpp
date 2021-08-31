@@ -1,52 +1,54 @@
-#include <VOG/Common/Signals.hpp>
+#include "VOG/Common/Signals.hpp"
 
 #include <csignal>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 namespace VOG::Common
 {
 using SignalT = std::pair<std::uint64_t, std::function<void()>>;
-std::unordered_map<SignalType, std::vector<SignalT>> SignalMapping;
-std::mutex SignalLock;
-Signal::Handle NextSignalID = 0;
+std::unordered_map<SignalType, std::vector<SignalT>> gSignalMapping;
+std::mutex                                           gSignalLock;
+Signal::Handle                                       gNextSignalId   = 0;
+std::once_flag                                       gInitializeOnce = {};
 
 class SignalHandler
 {
 public:
     static void
-    SignalGlobalHandle(int signalCode)
+    signalGlobalHandle(int signalCode)
     {
         switch (signalCode)
         {
         case SIGABRT:
         {
-            Signal::Get().HandleSignal(SignalType::Abort);
+            Signal::handleSignal(SignalType::eAbort);
             break;
         }
         case SIGFPE:
         {
-            Signal::Get().HandleSignal(SignalType::FPE);
+            Signal::handleSignal(SignalType::eFpe);
             break;
         }
         case SIGILL:
         {
-            Signal::Get().HandleSignal(SignalType::ILL);
+            Signal::handleSignal(SignalType::eIll);
             break;
         }
         case SIGINT:
         {
-            Signal::Get().HandleSignal(SignalType::Interrupt);
+            Signal::handleSignal(SignalType::eInterrupt);
             break;
         }
         case SIGSEGV:
         {
-            Signal::Get().HandleSignal(SignalType::Segfault);
+            Signal::handleSignal(SignalType::eSegfault);
             break;
         }
         case SIGTERM:
         {
-            Signal::Get().HandleSignal(SignalType::Terminate);
+            Signal::handleSignal(SignalType::eTerminate);
             break;
         }
 
@@ -56,50 +58,51 @@ public:
     }
 };
 
-Signal::Signal()
+void
+Signal::handleSignal(SignalType type)
 {
-    std::signal(SIGABRT, SignalHandler::SignalGlobalHandle);
-    std::signal(SIGFPE, SignalHandler::SignalGlobalHandle);
-    std::signal(SIGILL, SignalHandler::SignalGlobalHandle);
-    std::signal(SIGINT, SignalHandler::SignalGlobalHandle);
-    std::signal(SIGSEGV, SignalHandler::SignalGlobalHandle);
-    std::signal(SIGTERM, SignalHandler::SignalGlobalHandle);
+    std::unique_lock<std::mutex> lock{gSignalLock};
+    auto&                        signalSlot = gSignalMapping[type];
+    for (auto& callback : signalSlot)
+    {
+        callback.second();
+    }
 }
 
 void
-Signal::HandleSignal(SignalType type)
+Signal::initializeImpl()
 {
-    std::unique_lock<std::mutex> lock{SignalLock};
-    auto& SignalSlot = SignalMapping[type];
-    for (auto& callback : SignalSlot)
-        callback.second();
+    std::signal(SIGABRT, SignalHandler::signalGlobalHandle);
+    std::signal(SIGFPE, SignalHandler::signalGlobalHandle);
+    std::signal(SIGILL, SignalHandler::signalGlobalHandle);
+    std::signal(SIGINT, SignalHandler::signalGlobalHandle);
+    std::signal(SIGSEGV, SignalHandler::signalGlobalHandle);
+    std::signal(SIGTERM, SignalHandler::signalGlobalHandle);
 }
 
-Signal&
-Signal::Get()
+void
+Signal::initialize()
 {
-    static Signal StaticSignal;
-
-    return StaticSignal;
+    std::call_once(gInitializeOnce, Signal::initializeImpl);
 }
 
 Signal::Handle
-Signal::RegisterSignal(SignalType type, std::function<void()> callback)
+Signal::registerSignal(SignalType type, std::function<void()> callback)
 {
-    std::unique_lock<std::mutex> lock{SignalLock};
+    std::unique_lock<std::mutex> lock{gSignalLock};
 
-    auto& SignalSlot = SignalMapping[type];
-    SignalSlot.push_back(std::make_pair(NextSignalID, std::move(callback)));
+    auto& signalSlot = gSignalMapping[type];
+    signalSlot.push_back(std::make_pair(gNextSignalId, std::move(callback)));
 
-    return NextSignalID++;
+    return gNextSignalId++;
 }
 
 bool
-Signal::UnregisterSignal(Handle handle)
+Signal::unregisterSignal(Handle handle)
 {
-    std::unique_lock<std::mutex> lock{SignalLock};
+    std::unique_lock<std::mutex> lock{gSignalLock};
 
-    for (auto& signalVector : SignalMapping)
+    for (auto& signalVector : gSignalMapping)
     {
         auto elementToRemove = signalVector.second.end();
         for (auto curr = signalVector.second.begin(); curr != signalVector.second.end(); ++curr)
@@ -121,10 +124,10 @@ Signal::UnregisterSignal(Handle handle)
 }
 
 void
-Signal::UnregisterAllSignals()
+Signal::unregisterAllSignals()
 {
-    std::unique_lock<std::mutex> lock{SignalLock};
+    std::unique_lock<std::mutex> lock{gSignalLock};
 
-    SignalMapping.clear();
+    gSignalMapping.clear();
 }
 } // namespace VOG::Common

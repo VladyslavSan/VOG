@@ -8,8 +8,8 @@ main()
 {
     try
     {
-        VOG::Application::Application app("My window", 1280, 720, {},
-                                          {"VK_LAYER_KHRONOS_validation"});
+        VOG::Application::Application app(
+            "My window", 1280, 720, {}, {"VK_LAYER_KHRONOS_validation"});
 
         app.Run();
     }

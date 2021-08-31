@@ -1,13 +1,9 @@
----
-Checks:          'clang-diagnostic-*,clang-analyzer-*,-*,readability-*,performance-*'
+Checks:          'clang-diagnostic-*,clang-analyzer-*,-*,readability-*,performance-*,-readability-uppercase-literal-suffix,-readability-convert-member-functions-to-static'
 WarningsAsErrors: ''
 HeaderFilterRegex: ''
 AnalyzeTemporaryDtors: false
 FormatStyle:     none
-User:            positivcheg
 CheckOptions:
-  - key:             cert-dcl16-c.NewSuffixes
-    value:           'L;LL;LU;LLU'
   - key:             cert-oop54-cpp.WarnOnlyIfThisHasSuspiciousField
     value:           '0'
   - key:             cppcoreguidelines-explicit-virtual-functions.IgnoreDestructors
@@ -114,4 +110,49 @@ CheckOptions:
     value:           '1'
   - key:             readability-uppercase-literal-suffix.NewSuffixes
     value:           ''
-...
+  - key:             cppcoreguidelines-pro-type-const-cast
+    value:           '1'
+
+  - key:    modernize-use-default-member-init.UseAssignment
+    value:  1
+
+  - key:    readability-identifier-naming.UnionCase
+    value:  CamelCase
+
+  # Class rules
+  - key:    readability-identifier-naming.ClassCase
+    value:  CamelCase
+  - key:    readability-identifier-naming.MethodCase
+    value:  camelBack
+  - key:    readability-identifier-naming.VariableCase
+    value:  camelBack
+  - key:    readability-identifier-naming.ClassMemberPrefix
+    value:  'm'
+
+  # Enum rules
+  - key:    readability-identifier-naming.EnumCase
+    value:  CamelCase
+  - key:    readability-identifier-naming.EnumConstantCase
+    value:  CamelCase
+  - key:    readability-identifier-naming.EnumConstantPrefix
+    value:  'e'
+  - key:    readability-identifier-naming.ScopedEnumConstantCase
+    value:  CamelCase
+  - key:    readability-identifier-naming.ScopedEnumConstantPrefix
+    value:  'e'
+
+  # Constants
+  - key:    readability-identifier-naming.StaticConstantCase
+    value:  CamelCase
+  - key:    readability-identifier-naming.StaticConstantPrefix
+    value:  'k'
+  - key:    readability-identifier-naming.ClassConstantCase
+    value:  CamelCase
+  - key:    readability-identifier-naming.ClassConstantPrefix
+    value:  'k'
+  - key:    readability-identifier-naming.GlobalVariableCase
+    value:  CamelCase
+  - key:    readability-identifier-naming.GlobalConstantPrefix
+    value:  'g'
+  - key:    readability-identifier-naming.GlobalVariablePrefix
+    value:  'g'    

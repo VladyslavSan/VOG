@@ -1,7 +1,9 @@
-#include <VOG/Graphics/Resources/Shader.hpp>
+#include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 #include <gtest/gtest.h>
 
-#include "Api/GraphicsApiFixture.hpp"
+#include "GraphicsApiFixture.hpp"
+
+using namespace VOG::Graphics::Vulkan;
 
 namespace VOG::Tests::Shader
 {
@@ -16,6 +18,13 @@ layout(location = 0) in vec4 inPosition;
 layout(location = 1) in vec4 inColor;
 
 layout(location = 0) out vec4 fragColor;
+
+layout(set = 2, binding = 3) uniform SomeUniform
+{
+  vec4 someVector;
+  int someInt;
+} u_UniformBuffer;
+
 
 void main() {
     gl_Position = inPosition;
@@ -38,19 +47,22 @@ void main() {
 
 TEST_F(GraphicsProviderFixture, Shader_instantiate_vertex_shader)
 {
-    std::shared_ptr<VOG::Graphics::Resources::Shader> shader;
-    EXPECT_NO_THROW(shader = std::make_shared<VOG::Graphics::Resources::Shader>(
-                        m_graphicsProvider, "default",
-                        VOG::Graphics::Resources::Shader::ShaderStage::Vertex,
-                        kVertexShaderString));
+    EXPECT_NO_THROW({
+        auto shader = VOG::Graphics::Vulkan::Shader::create(
+            mGraphicsProvider->getDevice(), ShadingStage::eVertex, kVertexShaderString);
+        auto reflection = shader->reflect();
+
+        EXPECT_EQ(reflection.uniformBuffers.size(), 1u);
+        EXPECT_EQ(reflection.uniformBuffers[0].location.set, 2u);
+        EXPECT_EQ(reflection.uniformBuffers[0].location.binding, 3u);
+    });
 }
 
 TEST_F(GraphicsProviderFixture, Shader_instantiate_fragment_shader)
 {
-    std::shared_ptr<VOG::Graphics::Resources::Shader> shader;
-    EXPECT_NO_THROW(shader = std::make_shared<VOG::Graphics::Resources::Shader>(
-                        m_graphicsProvider, "default",
-                        VOG::Graphics::Resources::Shader::ShaderStage::Fragment,
-                        kFragmentShaderString));
+    EXPECT_NO_THROW({
+        auto shader = VOG::Graphics::Vulkan::Shader::create(
+            mGraphicsProvider->getDevice(), ShadingStage::eFragment, kFragmentShaderString);
+    });
 }
 } // namespace VOG::Tests::Shader

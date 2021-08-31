@@ -7,12 +7,12 @@ namespace VOG::Common
 {
 enum class SignalType : std::uint8_t
 {
-    Abort = 0,
-    FPE,
-    ILL,
-    Interrupt,
-    Segfault,
-    Terminate
+    eAbort = 0,
+    eFpe,
+    eIll,
+    eInterrupt,
+    eSegfault,
+    eTerminate
 };
 
 class SignalHandler;
@@ -21,19 +21,19 @@ class Signal
 {
     friend class SignalHandler;
 
-    Signal();
+    static void handleSignal(SignalType type);
 
-    void HandleSignal(SignalType type);
+    static void initializeImpl();
 
 public:
     using Handle = std::uint64_t;
 
-    static Signal& Get();
+    static void initialize();
 
-    Handle RegisterSignal(SignalType type, std::function<void()> callback);
+    static Handle registerSignal(SignalType type, std::function<void()> callback);
 
-    bool UnregisterSignal(Handle handle);
+    static bool unregisterSignal(Handle handle);
 
-    void UnregisterAllSignals();
+    static void unregisterAllSignals();
 };
 } // namespace VOG::Common

@@ -1,12 +1,23 @@
 #pragma once
 
 #define VULKAN_HPP_ENABLE_DYNAMIC_LOADER_TOOL 1
+#define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #define VK_NO_PROTOTYPES
 
 #include <VOG/Common/Config/PlatformConfig.hpp>
 
 #ifdef PLATFORM_VIDEO_WINDOWS
 #define VK_USE_PLATFORM_WIN32_KHR
+#endif
+
+#ifdef PLATFORM_VIDEO_APPLE
+// Generic metal extension name
+#define VK_USE_PLATFORM_METAL_EXT
+#ifdef TARGET_OS_MAC
+#define VK_USE_PLATFORM_MACOS_MVK
+#elif TARGET_OS_IPHONE
+#define VK_USE_PLATFORM_IOS_MVK
+#endif
 #endif
 
 #ifdef PLATFORM_VIDEO_ANDROID

@@ -12,6 +12,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 project(vulkan_dev)
 
+include(cmake/project.cmake)
+
+enable_testing()
 option(ENABLE_EXTERNAL_LIBRARIES_TESTS "Enable tests from external libraries" OFF)
 
 add_compile_definitions(NOMINMAX)

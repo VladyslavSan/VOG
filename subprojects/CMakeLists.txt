@@ -10,6 +10,7 @@ SET(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 SET(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 add_subdirectory(googletest)
 
+set(SFML_BUILD_GRAPHICS OFF CACHE BOOL "" FORCE)
 add_subdirectory(sfml)
 add_subdirectory(shaderc)
 
@@ -20,3 +21,5 @@ SET(SPIRV_CROSS_ENABLE_MSL OFF CACHE BOOL "" FORCE)
 SET(SPIRV_CROSS_ENABLE_CPP OFF CACHE BOOL "" FORCE)
 SET(SPIRV_CROSS_ENABLE_C_API OFF CACHE BOOL "" FORCE)
 add_subdirectory(spirv-cross)
+
+add_subdirectory(vma)

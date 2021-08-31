@@ -1,13 +1,11 @@
 cmake_minimum_required(VERSION 3.10.0)
 
-enable_testing()
-
 set(UnitTestSources 
         ${CMAKE_CURRENT_SOURCE_DIR}/Resources/ShaderTest.cpp
     )
 
 set(UnitTestHeaders
-        ${CMAKE_CURRENT_SOURCE_DIR}/Api/GraphicsApiFixture.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/GraphicsApiFixture.hpp
     )
 
 add_executable(VOG.Graphics.Unit ${UnitTestSources} ${UnitTestHeaders})

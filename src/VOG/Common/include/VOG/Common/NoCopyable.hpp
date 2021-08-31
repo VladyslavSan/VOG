@@ -4,11 +4,10 @@ namespace VOG::Common
 {
 class NoCopyable
 {
-    NoCopyable(const NoCopyable&) = delete;
-    NoCopyable& operator=(const NoCopyable&) = delete;
-
 public:
     NoCopyable() = default;
-    ~NoCopyable() = default;
+
+    NoCopyable(const NoCopyable&) = delete;
+    NoCopyable(NoCopyable&&)      = default;
 };
 } // namespace VOG::Common
