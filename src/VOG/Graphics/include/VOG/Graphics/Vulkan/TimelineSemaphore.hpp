@@ -34,6 +34,6 @@ public:
 
 protected:
     const Vulkan::Device& mDevice;
-    std::uint64_t         mCurrentValue;
+    std::uint64_t         mCurrentValue = 0u;
 };
 } // namespace VOG::Graphics::Vulkan

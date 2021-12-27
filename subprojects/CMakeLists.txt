@@ -12,7 +12,6 @@ add_subdirectory(googletest)
 
 set(SFML_BUILD_GRAPHICS OFF CACHE BOOL "" FORCE)
 add_subdirectory(sfml)
-add_subdirectory(shaderc)
 
 SET(SPIRV_CROSS_CLI OFF CACHE BOOL "" FORCE)
 SET(SPIRV_CROSS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
@@ -23,3 +22,7 @@ SET(SPIRV_CROSS_ENABLE_C_API OFF CACHE BOOL "" FORCE)
 add_subdirectory(spirv-cross)
 
 add_subdirectory(vma)
+
+# Third party projects are synced to the build directory, built at configure step and used
+# as an imported target.
+add_subdirectory(third_party)
