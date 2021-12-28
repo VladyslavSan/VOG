@@ -16,11 +16,19 @@ RenderCommandRecorder::RenderCommandRecorder(const Device&          device,
 }
 
 void
-RenderCommandRecorder::beginRenderPass(std::shared_ptr<RenderPass> renderPass)
+RenderCommandRecorder::beginRenderPass(RenderPassPtr  renderPass,
+                                       FramebufferPtr framebuffer,
+                                       ClearValues    clearValues)
 {
-
+    vk::RenderPassBeginInfo beginInfo{
+        .renderPass      = **renderPass,
+        .framebuffer     = **framebuffer,
+        .renderArea      = {.offset = {.x = 0u, .y = 0u}, .extent = framebuffer->size()},
+        .clearValueCount = static_cast<std::uint32_t>(clearValues.size()),
+        .pClearValues    = clearValues.data()};
     mCommandBuffer.addBoundResource(renderPass);
-    mCommandBuffer.beginRenderPass(renderPass->getBeginInfo(), {});
+    mCommandBuffer.addBoundResource(framebuffer);
+    mCommandBuffer.beginRenderPass(beginInfo, {});
 }
 
 void

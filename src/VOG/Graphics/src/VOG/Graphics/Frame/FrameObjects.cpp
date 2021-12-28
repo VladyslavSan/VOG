@@ -20,6 +20,8 @@ FrameObjects::FrameObjects(const GraphicsProvider& graphicsProvider, std::size_t
     }
 }
 
+FrameObjects::~FrameObjects() { waitAndReset(); }
+
 const vk::raii::Semaphore&
 FrameObjects::getFramePresentWaitSemaphore() const
 {
@@ -49,17 +51,7 @@ FrameObjects::getThreadObjects(std::size_t threadId)
 void
 FrameObjects::onFrameStart()
 {
-    const auto timelineValue = mTimelineSemaphore.getCurrentWaitValue();
-    // Wait for pending command buffers to finish.
-    mTimelineSemaphore.waitOnCPU(timelineValue, std::numeric_limits<std::uint64_t>::max());
-
-    // Free used command buffers handles so that they are released to back to pools.
-    mUsedCommandBuffers.clear();
-
-    // Now reset the thread objects and those will reset the pools.
-    std::for_each(mThreadObjects.begin(),
-                  mThreadObjects.end(),
-                  [](ThreadObjects& threadObject) { threadObject.reset(); });
+    waitAndReset();
 }
 
 void
@@ -108,5 +100,21 @@ FrameObjects::submit(Vulkan::CommandBufferHandle              handle,
 
     // Add command buffer handle to list of submited ones.
     mUsedCommandBuffers.push_back(std::move(handle));
+}
+
+void
+FrameObjects::waitAndReset()
+{
+    const auto timelineValue = mTimelineSemaphore.getCurrentWaitValue();
+    // Wait for pending command buffers to finish.
+    mTimelineSemaphore.waitOnCPU(timelineValue, std::numeric_limits<std::uint64_t>::max());
+
+    // Free used command buffers handles so that they are released to back to pools.
+    mUsedCommandBuffers.clear();
+
+    // Now reset the thread objects and those will reset the pools.
+    std::for_each(mThreadObjects.begin(),
+                  mThreadObjects.end(),
+                  [](ThreadObjects& threadObject) { threadObject.reset(); });
 }
 } // namespace VOG::Graphics::Frame

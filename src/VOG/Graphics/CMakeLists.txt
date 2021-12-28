@@ -16,6 +16,7 @@ set(GRAPHICS_HEADERS
     ${INTERFACE_DIR}/VOG/Graphics/Vulkan/CommandBuffer.hpp
     ${INTERFACE_DIR}/VOG/Graphics/Vulkan/CommandBufferPool.hpp
     ${INTERFACE_DIR}/VOG/Graphics/Vulkan/Device.hpp
+    ${INTERFACE_DIR}/VOG/Graphics/Vulkan/Framebuffer.hpp
     ${INTERFACE_DIR}/VOG/Graphics/Vulkan/GraphicsPipeline.hpp
     ${INTERFACE_DIR}/VOG/Graphics/Vulkan/MemoryAllocator.hpp
     ${INTERFACE_DIR}/VOG/Graphics/Vulkan/Queue.hpp
@@ -42,6 +43,7 @@ set(GRAPHICS_SOURCE
     ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/Attachment/Swapchain.cpp
     ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/CommandBuffer.cpp
     ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/CommandBufferPool.cpp
+    ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/Framebuffer.cpp
     ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/GraphicsPipeline.cpp
     ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/MemoryAllocator.cpp
     ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/RenderCommandRecorder.cpp

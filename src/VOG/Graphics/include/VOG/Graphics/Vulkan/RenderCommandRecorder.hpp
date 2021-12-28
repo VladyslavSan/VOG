@@ -3,32 +3,30 @@
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/RenderStates.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
+#include <VOG/Graphics/Vulkan/Framebuffer.hpp>
 
 #include <array>
 #include <functional>
-#include <optional>
-
-namespace VOG::Graphics::Resources
-{
-VOG_DECLARE_PTR(Attachment);
-VOG_DECLARE_PTR(RenderSurface);
-} // namespace VOG::Graphics::Resources
 
 namespace VOG::Graphics::Vulkan
 {
 class CommandBuffer;
 class Device;
-class RenderPass;
+VOG_DECLARE_PTR(Framebuffer);
+VOG_DECLARE_PTR(RenderPass);
 class RenderCommandRecorder
 {
     static constexpr std::size_t kMaxAttachments = 1;
 
 public:
+    using ClearValues =
+        boost::container::small_vector<vk::ClearValue, Framebuffer::kMaxNumAttachments>;
     RenderCommandRecorder(const Device& device, Vulkan::CommandBuffer& commandBuffer);
 
     Vulkan::CommandBuffer* operator->();
 
-    void beginRenderPass(std::shared_ptr<RenderPass> renderPass);
+    void
+    beginRenderPass(RenderPassPtr renderPass, FramebufferPtr framebuffer, ClearValues clearValues);
 
     void endRenderPass();
 

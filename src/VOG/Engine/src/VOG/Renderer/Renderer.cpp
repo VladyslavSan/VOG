@@ -93,14 +93,20 @@ Renderer::Render()
 
     const std::array clearColor = {red, 1.0f, blue, 1.0f};
 
-    auto renderPass = Graphics::Vulkan::RenderPass::create(mGraphicsProvider->getDevice(),
-                                                           {.attachment = mSwapchain,
-                                                            .loadOp = vk::AttachmentLoadOp::eClear,
-                                                            .clearColor = clearColor},
-                                                           {});
+    auto renderPass = Graphics::Vulkan::RenderPass::create(
+        mGraphicsProvider->getDevice(),
+        {{.format        = mSwapchain->getFormat(),
+          .loadOp        = vk::AttachmentLoadOp::eClear,
+          .storeOp       = vk::AttachmentStoreOp::eStore,
+          .initialLayout = vk::ImageLayout::eUndefined,
+          .finalLayout   = vk::ImageLayout::eColorAttachmentOptimal}},
+        {});
+
+    auto framebuffer = Graphics::Vulkan::Framebuffer::create(
+        mGraphicsProvider->getDevice(), {mSwapchain}, *renderPass);
 
     {
-        recorder.beginRenderPass(renderPass);
+        recorder.beginRenderPass(renderPass, framebuffer, {vk::ClearColorValue{clearColor}});
 
         vk::raii::PipelineLayout layout{mGraphicsProvider->getDevice(),
                                         vk::PipelineLayoutCreateInfo{}};
@@ -161,7 +167,7 @@ Renderer::Render()
             vk::PipelineMultisampleStateCreateInfo{},
             {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
             *layout,
-            renderPass->getRenderPassHandle(),
+            **renderPass,
             0u);
         recorder->addBoundResource(pipeline);
         recorder->bindPipeline(vk::PipelineBindPoint::eGraphics, **pipeline);

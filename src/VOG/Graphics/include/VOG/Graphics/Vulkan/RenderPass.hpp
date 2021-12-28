@@ -1,57 +1,34 @@
 #pragma once
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
-#include <VOG/Graphics/Typedefs.hpp>
+
+#include <boost/container/small_vector.hpp>
 
 namespace VOG::Graphics::Vulkan
 {
-VOG_DECLARE_PTR(AttachmentInterface);
 class Device;
-class RenderPass
+class RenderPass : public vk::raii::RenderPass
 {
 public:
-    struct ColorAttachmentInfo
-    {
-        const AttachmentInterfacePtr attachment = {};
-        vk::AttachmentLoadOp         loadOp     = vk::AttachmentLoadOp::eDontCare;
-        vk::AttachmentStoreOp        storeOp    = vk::AttachmentStoreOp::eDontCare;
-        vk::ClearColorValue          clearColor = {};
-    };
-
-    struct DepthStencilAttachmentInfo
-    {
-        const AttachmentInterfacePtr attachment        = {};
-        vk::AttachmentLoadOp         loadOp            = vk::AttachmentLoadOp::eDontCare;
-        vk::AttachmentStoreOp        storeOp           = vk::AttachmentStoreOp::eDontCare;
-        vk::ClearDepthStencilValue   clearDepthStencil = {};
-    };
+    using AttachmentsDescription  = vk::AttachmentDescription;
+    using AttachmentsDescriptions = boost::container::small_vector<AttachmentsDescription, 3>;
+    using AttachmentsDescriptionsInternal =
+        boost::container::small_vector<AttachmentsDescription, 4>;
 
     static std::shared_ptr<RenderPass>
-    create(const Device&              device,
-           ColorAttachmentInfo        mainColor,
-           DepthStencilAttachmentInfo depthStencil)
+    create(const Device&                  device,
+           const AttachmentsDescriptions& colorAttachments,
+           const AttachmentsDescription&  depthStencil)
     {
-        return std::make_shared<RenderPass>(device, mainColor, depthStencil);
+        return std::make_shared<RenderPass>(device, colorAttachments, depthStencil);
     }
 
-    RenderPass(const Device&              device,
-               ColorAttachmentInfo        mainColor,
-               DepthStencilAttachmentInfo depthstencil);
-
-    vk::RenderPass
-    getRenderPassHandle() const
-    {
-        return *mRenderPass;
-    }
-
-    vk::RenderPassBeginInfo getBeginInfo() const;
+    RenderPass(const Device&                  device,
+               const AttachmentsDescriptions& colorAttachments,
+               const AttachmentsDescription&  depthStencil);
 
 protected:
-    ColorAttachmentInfo        mColorAttachment;
-    DepthStencilAttachmentInfo mDepthStencilAttachment;
-    const vk::ClearValue       mClearValues[2];
-
-    vk::raii::RenderPass  mRenderPass;
-    vk::raii::Framebuffer mFramebuffer;
+    AttachmentsDescriptionsInternal mAttachmentDescriptions;
+    const bool                      mDepthStencilProvided;
 };
 } // namespace VOG::Graphics::Vulkan

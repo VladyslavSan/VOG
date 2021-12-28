@@ -28,6 +28,7 @@ class FrameObjectManager;
 namespace VOG::Graphics::Vulkan
 {
 class Swapchain;
+class GraphicsPipeline;
 } // namespace VOG::Graphics::Vulkan
 
 namespace VOG::Engine

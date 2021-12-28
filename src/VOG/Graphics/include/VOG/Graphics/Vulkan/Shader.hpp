@@ -61,7 +61,7 @@ struct Shader
     create(const Device& device, ShadingStage stage, const std::string& source);
 
     /**
-     * Construct from glsl shader code.
+     * Construct from glsl shader code. Very expensive as it involves glsl to spirv compilation.
      *
      * @param device Vulkan device to construct the shader module.
      * @param stage Shading stage.

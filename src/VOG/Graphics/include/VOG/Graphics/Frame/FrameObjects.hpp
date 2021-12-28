@@ -18,6 +18,10 @@ class FrameObjects
 public:
     FrameObjects(const GraphicsProvider& graphicsProvider, std::size_t threadCount);
 
+    FrameObjects(FrameObjects&&) = default;
+
+    ~FrameObjects();
+
     const vk::raii::Semaphore& getFramePresentWaitSemaphore() const;
 
     Vulkan::TimelineSemaphore&       getTimelineSemaphore();
@@ -42,6 +46,9 @@ public:
                 Vulkan::TimelineSemaphore::WaitRequest   wait,
                 Vulkan::TimelineSemaphore::SignalRequest signal,
                 const vk::raii::Semaphore&               signalBinary);
+
+protected:
+    void waitAndReset();
 
 protected:
     /** Graphics provider */
