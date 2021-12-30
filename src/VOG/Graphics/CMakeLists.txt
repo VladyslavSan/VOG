@@ -1,7 +1,10 @@
 cmake_minimum_required(VERSION 3.10.0)
 
-find_package(Vulkan REQUIRED)
-find_package(Boost REQUIRED COMPONENTS container)
+find_package(VulkanHeaders REQUIRED)
+find_package(vulkan-memory-allocator REQUIRED)
+find_package(Boost COMPONENTS container REQUIRED)
+find_package(spirv-cross REQUIRED)
+find_package(shaderc REQUIRED)
 
 utility_declare_project(VOG.Graphics)
 
@@ -55,20 +58,29 @@ set(GRAPHICS_SOURCE
 )
 
 set(GRAPHICS_RESOURCES
-    ${RESOURCES_DIR}/src/BasicTriangle.frag
-    ${RESOURCES_DIR}/src/BasicTriangle.vert
-    ${RESOURCES_DIR}/src/TestVertexAttribute.vert
-    ${RESOURCES_DIR}/src/TestVertexAttribute.frag
+    ${RESOURCES_DIR}/shaders/src/BasicTriangle.frag
+    ${RESOURCES_DIR}/shaders/src/BasicTriangle.vert
+    ${RESOURCES_DIR}/shaders/src/TestVertexAttribute.vert
+    ${RESOURCES_DIR}/shaders/src/TestVertexAttribute.frag
 )
 
-set(LINK_PUBLIC VOG.Common Vulkan::Vulkan Boost::container)
+set(LINK_PUBLIC
+    VOG.Common
+    Vulkan::Headers
+    Boost::container
+)
 
-# spirv-cross-reflect doesn't work without spirv-cross-core
-set(LINK_PRIVATE shaderc vma spirv-cross-core spirv-cross-reflect)
+set(LINK_PRIVATE
+    vulkan-memory-allocator::vulkan-memory-allocator
+    shaderc::shaderc
+    # spirv-cross-reflect doesn't work without spirv-cross-core
+    spirv-cross::spirv-cross-core
+    spirv-cross::spirv-cross-reflect)
 
 if(APPLE)
     find_library(QUARTZ_CORE QuartzCore REQUIRED)
-    list(APPEND LINK_PUBLIC ${QUARTZ_CORE})
+    find_library(APPKIT AppKit REQUIRED)
+    list(APPEND LINK_PRIVATE ${QUARTZ_CORE} ${APPKIT})
     
     # For apple compile this file as an obj-c file.
     set_property(SOURCE src/VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.cpp PROPERTY LANGUAGE OBJCXX)
@@ -83,7 +95,5 @@ utility_add_target(
     SOURCES ${GRAPHICS_SOURCE}
     RESOURCES ${GRAPHICS_RESOURCES}
 )
-
-target_include_directories(VOG.Graphics PUBLIC ${PROJECT_DEPENDENCIES_DIR}/vma/)
 
 add_subdirectory(Test)

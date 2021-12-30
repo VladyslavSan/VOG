@@ -1,28 +1,10 @@
-cmake_minimum_required(VERSION 3.10.0)
+cmake_minimum_required(VERSION 3.11.0)
 
-SET(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-SET(GLM_TEST_ENABLE OFF CACHE BOOL "" FORCE)
-set(GLM_ROOT_DIR ${PROJECT_DEPENDENCIES_DIR}/glm)
-add_subdirectory(glm)
+include(FetchContent)
 
-SET(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
-SET(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
-SET(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-add_subdirectory(googletest)
-
-set(SFML_BUILD_GRAPHICS OFF CACHE BOOL "" FORCE)
-add_subdirectory(sfml)
-
-SET(SPIRV_CROSS_CLI OFF CACHE BOOL "" FORCE)
-SET(SPIRV_CROSS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
-SET(SPIRV_CROSS_ENABLE_HLSL OFF CACHE BOOL "" FORCE)
-SET(SPIRV_CROSS_ENABLE_MSL OFF CACHE BOOL "" FORCE)
-SET(SPIRV_CROSS_ENABLE_CPP OFF CACHE BOOL "" FORCE)
-SET(SPIRV_CROSS_ENABLE_C_API OFF CACHE BOOL "" FORCE)
-add_subdirectory(spirv-cross)
-
-add_subdirectory(vma)
-
-# Third party projects are synced to the build directory, built at configure step and used
-# as an imported target.
-add_subdirectory(third_party)
+FetchContent_Declare(
+    sfml
+    GIT_REPOSITORY  https://github.com/SFML/SFML.git
+    GIT_TAG         5ba65805688f86093464f6dc32b8a768a76dedb1 # free some "stable" commit
+)
+FetchContent_MakeAvailable(sfml)

@@ -50,7 +50,7 @@ compileGLSLShader(ShadingStage stage, const std::string& glslCode)
     options.SetTargetSpirv(shaderc_spirv_version_1_3);
 
     const shaderc::SpvCompilationResult resultCompile =
-        compiler.CompileGlslToSpv(glslCode, ConvertShadingStage(stage), "", options);
+        compiler.CompileGlslToSpv(glslCode, ConvertShadingStage(stage), "d", options);
     if (resultCompile.GetCompilationStatus() != shaderc_compilation_status_success)
     {
         throw std::runtime_error{"failed to compile shader"};

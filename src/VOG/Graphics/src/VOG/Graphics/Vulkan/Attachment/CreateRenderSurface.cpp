@@ -34,8 +34,8 @@ CreateRenderSurface(GraphicsProviderPtr          graphicsProvider,
 
 #if defined(PLATFORM_VIDEO_WINDOWS)
     {
-        void* windowHandle = parameters["window"]->getValueOr<void*>(nullptr);
-        void* instance     = parameters["insntace"]->getValueOr<void*>(nullptr);
+        void* windowHandle = parameters["window"].getOr<void*>(nullptr);
+        void* instance     = parameters["insntace"].getOr<void*>(nullptr);
 
         if (windowHandle != nullptr)
         {

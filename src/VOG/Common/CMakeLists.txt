@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.10.0)
 
+find_package(glm REQUIRED)
+
 utility_declare_project(VOG.Common)
 
 set(VOG_COMMON_HEADERS
@@ -20,7 +22,7 @@ set(VOG_COMMON_SOURCES
 
 utility_add_target(
     LIBRARY
-    LINK_PUBLIC glm
+    LINK_PUBLIC glm::glm
     FOLDER VOG
     HEADERS ${VOG_COMMON_HEADERS}
     SOURCES ${VOG_COMMON_SOURCES}

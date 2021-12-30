@@ -50,7 +50,7 @@
 #endif
 
 #define VMA_IMPLEMENTATION
-#include "vma/vk_mem_alloc.h"
+#include <vk_mem_alloc.h>
 
 #ifdef __clang__
 #pragma clang diagnostic pop

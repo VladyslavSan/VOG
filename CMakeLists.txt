@@ -15,11 +15,10 @@ project(vulkan_dev)
 include(cmake/project.cmake)
 
 enable_testing()
-option(ENABLE_EXTERNAL_LIBRARIES_TESTS "Enable tests from external libraries" OFF)
 
-add_compile_definitions(NOMINMAX)
+include(${CMAKE_BINARY_DIR}/conan_paths.cmake)
+include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
+conan_basic_setup(TARGETS)
 
-set(PROJECT_DEPENDENCIES_DIR ${PROJECT_SOURCE_DIR}/subprojects)
 add_subdirectory(subprojects)
-
 add_subdirectory(src)
