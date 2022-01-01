@@ -1,6 +1,4 @@
 # Generic project utilities
-include(cmake/clang-tools.cmake)
-
 macro(utility_declare_project)
     # declare project
     project(${ARGN})
@@ -13,7 +11,7 @@ endmacro(utility_declare_project)
 
 # Add new target
 function(utility_add_target)
-    cmake_parse_arguments(ARG "TEST;LIBRARY;EXECUTABLE" "TARGET_NAME;FOLDER" "HEADERS;SOURCES;RESOURCES;LINK_PUBLIC;LINK_PRIVATE;PUBLIC_FRAMEWORKS;PRIVATE_FRAMEWORKS" ${ARGN})
+    cmake_parse_arguments(ARG "TEST;LIBRARY;SHARED_LIBRARY;EXECUTABLE" "TARGET_NAME;FOLDER" "HEADERS;SOURCES;RESOURCES;LINK_PUBLIC;LINK_PRIVATE;PUBLIC_FRAMEWORKS;PRIVATE_FRAMEWORKS" ${ARGN})
     if((NOT ARG_TARGET_NAME) AND (${CMAKE_PROJECT_NAME} STREQUAL ${PROJECT_NAME}))
         message(FATAL_ERROR "target name is not set")
     endif()
@@ -32,6 +30,8 @@ function(utility_add_target)
 
     if(ARG_LIBRARY)
         add_library(${ARG_TARGET_NAME} STATIC ${ARG_HEADERS} ${ARG_SOURCES})
+    elseif(ARG_SHARED_LIBRARY)
+        add_library(${ARG_TARGET_NAME} SHARED ${ARG_HEADERS} ${ARG_SOURCES})
     elseif(ARG_EXECUTABLE)
         add_executable(${ARG_TARGET_NAME} ${ARG_HEADERS} ${ARG_SOURCES})
     elseif(ARG_TEST)
@@ -70,8 +70,4 @@ function(utility_add_target)
 
     set_property(TARGET ${ARG_TARGET_NAME} PROPERTY INTERFACE_DIR ${INTERFACE_DIR})
     set_property(TARGET ${ARG_TARGET_NAME} PROPERTY IMPLEMENTATION_DIR ${IMPLEMENTATION_DIR})
-
-
-    add_clang_tidy(TARGET ${ARG_TARGET_NAME} FOLDER "clang-tidy-checks")
-
 endfunction(utility_add_target)
