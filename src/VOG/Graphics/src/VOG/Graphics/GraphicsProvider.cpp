@@ -11,8 +11,8 @@ namespace VOG::Graphics
 {
 namespace
 {
-const char* kPortabilityExtensionName  = "VK_KHR_portability_subset";
-const char* kSynchronizationLayer2Name = "VK_LAYER_KHRONOS_synchronization2";
+const char* gPortabilityExtensionName  = "VK_KHR_portability_subset";
+const char* gSynchronizationLayer2Name = "VK_LAYER_KHRONOS_synchronization2";
 
 std::vector<const char*>
 getInstanceRequiredExtensions()
@@ -57,7 +57,7 @@ MakeInstance(vk::raii::Context& context, const Common::JSONContainer& options)
     std::transform(
         layers.begin(), layers.end(), layersAll.begin(), [](auto& e) { return e.c_str(); });
 #ifdef PLATFORM_VIDEO_APPLE
-    layersAll.push_back(kSynchronizationLayer2Name);
+    layersAll.push_back(gSynchronizationLayer2Name);
 #endif
 
     const auto extensions         = options["extensions"].getArrayOfType<std::string>();
@@ -168,13 +168,13 @@ MakeDevice(vk::raii::PhysicalDevice& physicalDevice, const GraphicsProvider::Que
                                         [](const auto& extension)
                                         {
                                             return std::strncmp(extension.extensionName,
-                                                                kPortabilityExtensionName,
+                                                                gPortabilityExtensionName,
                                                                 VK_MAX_EXTENSION_NAME_SIZE) == 0;
                                         });
         const bool portabilityExtensionFound = found != availableExtensions.end();
         if (portabilityExtensionFound)
         {
-            extensions.push_back(kPortabilityExtensionName);
+            extensions.push_back(gPortabilityExtensionName);
         }
     }
 

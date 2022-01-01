@@ -12,10 +12,7 @@ namespace VOG::Graphics::Vulkan
 {
 namespace
 {
-const std::shared_ptr<vk::raii::ImageView> kNullImage      = nullptr;
-const std::uint64_t                        kAcquireTimeout = 10000u;
-
-vk::ImageMemoryBarrier2KHR omg;
+constexpr std::uint64_t gAcquireTimeout = 10000u;
 
 std::uint32_t
 FindPresentQueueFamilyIndex(const GraphicsProvider&     graphicsProvider,
@@ -255,7 +252,7 @@ Swapchain::acquireNextImage()
     mSwapchainImageSyncIndex = (mSwapchainImageSyncIndex + 1u) % mSwapchainImageSyncData.size();
     auto& syncData           = mSwapchainImageSyncData[mSwapchainImageSyncIndex];
 
-    auto [result, index] = mSwapchain.acquireNextImage(kAcquireTimeout, {}, *syncData.fence);
+    auto [result, index] = mSwapchain.acquireNextImage(gAcquireTimeout, {}, *syncData.fence);
 
     {
         const vk::Result waitResult = mGraphicsProvider->getDevice().waitForFences(

@@ -5,7 +5,6 @@
 #include <concepts>
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
 #include <typeinfo>
 #include <variant>

@@ -6,13 +6,13 @@ namespace VOG::Graphics::Vulkan
 {
 namespace
 {
-inline constexpr vk::SemaphoreTypeCreateInfo kTypeCreateInfo{
+inline constexpr vk::SemaphoreTypeCreateInfo gTypeCreateInfo{
     .semaphoreType = vk::SemaphoreType::eTimeline, .initialValue = 0};
-inline constexpr vk::SemaphoreCreateInfo kCreateInfo{.pNext = &kTypeCreateInfo};
+inline constexpr vk::SemaphoreCreateInfo gCreateInfo{.pNext = &gTypeCreateInfo};
 } // namespace
 
 TimelineSemaphore::TimelineSemaphore(const Vulkan::Device& device)
-    : vk::raii::Semaphore{device, kCreateInfo}
+    : vk::raii::Semaphore{device, gCreateInfo}
     , mDevice{device}
 {
 }

@@ -8,7 +8,7 @@ namespace VOG::Graphics::Frame
 {
 namespace
 {
-constexpr std::size_t kDefaultPoolSize = 32;
+constexpr std::size_t gDefaultPoolSize = 32;
 }
 
 FrameObjectManager::FrameObjectManager(const GraphicsProviderPtr& graphicsProvider,
