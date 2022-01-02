@@ -3,7 +3,7 @@ from conans import ConanFile, CMake
 class VOGConan(ConanFile):
     build_policy = "always"
     shared = False
-    settings = "os", "compiler", "build_type", "arch"
+    settings = ["os", "compiler", "build_type", "arch"]
     requires = [
         "boost/1.78.0",
         "glm/0.9.9.8",
@@ -11,7 +11,8 @@ class VOGConan(ConanFile):
         "shaderc/2021.1",
         "spirv-cross/cci.20211113",
         "vulkan-headers/1.2.198.0",
-        "vulkan-memory-allocator/2.3.0"
+        "vulkan-memory-allocator/2.3.0",
+        "sdl/2.0.18"
         ]
     
     generators = ["cmake", "cmake_find_package", "cmake_paths", "cmake_multi"]
@@ -36,7 +37,15 @@ class VOGConan(ConanFile):
         "spirv-cross:cpp" : False,
         "spirv-cross:c_api" : False,
         "spirv-cross:util" : False,
+        "sdl:sdl2main" : False,
+        "sdl:opengl" : False,
+        "sdl:opengles" : False,
+        "sdl:vulkan" : False
         }
+
+    def config_options(self):
+        if self.settings.os == "Windows":
+            self.options["sdl"].directx = False
     
     def imports(self):
         pass

@@ -20,5 +20,4 @@ include(${CMAKE_BINARY_DIR}/conan_paths.cmake)
 include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
 conan_basic_setup(TARGETS)
 
-add_subdirectory(subprojects)
 add_subdirectory(src)

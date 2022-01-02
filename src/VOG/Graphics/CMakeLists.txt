@@ -83,7 +83,7 @@ if(APPLE)
     list(APPEND LINK_PRIVATE ${QUARTZ_CORE} ${APPKIT})
     
     # For apple compile this file as an obj-c file.
-    set_property(SOURCE src/VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.cpp PROPERTY LANGUAGE OBJCXX)
+    set_property(SOURCE ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.cpp PROPERTY LANGUAGE OBJCXX)
 endif()
 
 utility_add_target(

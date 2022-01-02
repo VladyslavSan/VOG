@@ -19,13 +19,13 @@ class CommandBufferPool;
 class CommandBufferHandle
 {
 public:
-    inline CommandBufferHandle(CommandBufferPool* pool, CommandBuffer commandBuffer)
+    inline CommandBufferHandle(CommandBufferPool* pool, CommandBuffer commandBuffer) noexcept
         : mPool{pool}
         , mCommandBuffer{std::move(commandBuffer)}
     {
     }
 
-    inline CommandBufferHandle(CommandBufferHandle&& handle)
+    inline CommandBufferHandle(CommandBufferHandle&& handle) noexcept
         : mPool{handle.mPool}
         , mCommandBuffer{std::move(handle.mCommandBuffer)}
     {
@@ -35,13 +35,13 @@ public:
     ~CommandBufferHandle();
 
     inline CommandBuffer*
-    operator*()
+    operator*() noexcept
     {
         return std::addressof(mCommandBuffer);
     }
 
     inline CommandBuffer*
-    operator->()
+    operator->() noexcept
     {
         return std::addressof(mCommandBuffer);
     }
