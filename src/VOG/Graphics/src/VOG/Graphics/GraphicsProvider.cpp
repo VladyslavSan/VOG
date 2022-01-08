@@ -17,8 +17,7 @@ const char* gSynchronizationLayer2Name = "VK_LAYER_KHRONOS_synchronization2";
 std::vector<const char*>
 getInstanceRequiredExtensions()
 {
-    std::vector<const char*> requiredExtensions{
-        VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME};
+    std::vector<const char*> requiredExtensions{VK_KHR_SURFACE_EXTENSION_NAME};
 
 #if defined(PLATFORM_VIDEO_WINDOWS)
     requiredExtensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
@@ -33,8 +32,7 @@ std::vector<const char*>
 getDeviceRequiredExtensions()
 {
     std::vector<const char*> requiredExtensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-                                                VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-                                                VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME};
+                                                VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME};
 
     return requiredExtensions;
 }
@@ -72,10 +70,11 @@ MakeInstance(vk::raii::Context& context, const Common::JSONContainer& options)
                    requiredExtensions.end(),
                    std::back_inserter(extensionsAll),
                    [](auto& e) { return e; });
-    std::unique(extensionsAll.begin(),
-                extensionsAll.end(),
-                [](const auto& first, const auto& second)
-                { return std::strcmp(first, second) == 0; });
+
+    [[maybe_unused]] const auto unique = std::unique(extensionsAll.begin(),
+                                                     extensionsAll.end(),
+                                                     [](const auto& first, const auto& second)
+                                                     { return std::strcmp(first, second) == 0; });
 
     vk::InstanceCreateInfo instanceCreateInfo{
         .pApplicationInfo        = &appInfo,

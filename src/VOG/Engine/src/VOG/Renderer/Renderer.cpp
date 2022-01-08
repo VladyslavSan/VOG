@@ -27,14 +27,13 @@ Renderer::~Renderer()
 Renderer::Renderer(const Common::JSONContainer& parameters)
     : mRenderThread{}
     , mCurrentState{RenderJobState::Inactive}
-    , mNextState{RenderJobState::Inactive}
     , mMaxFramesInFlight{std::clamp(parameters["frames_in_flight"].getOr<std::uint8_t>(1u),
                                     std::uint8_t{1},
                                     MaxFramesInFlight)}
     , mRenderFrame{0}
     , mGraphicsProvider{std::make_shared<Graphics::GraphicsProvider>(parameters)}
     , mResourceManager{std::make_shared<Graphics::ResourceManager>(mGraphicsProvider)}
-    , mSwapchain{mResourceManager->createRenderSurface(parameters)}
+    , mSwapchain{mResourceManager->createRenderSurface(parameters["surface"])}
     , mFrameObjectManager{std::make_shared<Graphics::Frame::FrameObjectManager>(
           mGraphicsProvider, mMaxFramesInFlight, 1u)}
     , mScene{std::make_shared<Scene::Scene>()}
@@ -72,10 +71,10 @@ Renderer::Render()
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .image               = mSwapchain->getImage(),
             .subresourceRange    = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                    .baseMipLevel   = 0,
-                                    .levelCount     = VK_REMAINING_ARRAY_LAYERS,
-                                    .baseArrayLayer = 0,
-                                    .layerCount     = VK_REMAINING_ARRAY_LAYERS}};
+                                 .baseMipLevel   = 0,
+                                 .levelCount     = VK_REMAINING_ARRAY_LAYERS,
+                                 .baseArrayLayer = 0,
+                                 .layerCount     = VK_REMAINING_ARRAY_LAYERS}};
 
         vk::DependencyInfoKHR info{};
         const auto            imageBariers = {barier};
@@ -196,10 +195,10 @@ Renderer::Render()
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .image               = mSwapchain->getImage(),
             .subresourceRange    = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                    .baseMipLevel   = 0,
-                                    .levelCount     = VK_REMAINING_ARRAY_LAYERS,
-                                    .baseArrayLayer = 0,
-                                    .layerCount     = VK_REMAINING_ARRAY_LAYERS}};
+                                 .baseMipLevel   = 0,
+                                 .levelCount     = VK_REMAINING_ARRAY_LAYERS,
+                                 .baseArrayLayer = 0,
+                                 .layerCount     = VK_REMAINING_ARRAY_LAYERS}};
 
         vk::DependencyInfoKHR info{};
         const auto            imageBariers = {barier};
@@ -236,35 +235,29 @@ Renderer::GetCurrentRenderState() const
     return mCurrentState.load();
 }
 
-Renderer::RenderJobState
-Renderer::GetNextRenderState() const
-{
-    return mNextState.load();
-}
-
 bool
 Renderer::RequestRenderChangeState(RenderJobState newState)
 {
-    if (newState == mCurrentState.load() || newState == mNextState.load())
+    if (newState == mCurrentState.load())
         return false;
-
-    mNextState.store(newState);
 
     switch (newState)
     {
     case RenderJobState::Active:
     {
-        mRenderThread = std::thread{&Renderer::Run, weak_from_this()};
+        mRenderThread = std::jthread{&Renderer::Run, weak_from_this()};
         break;
     }
     case RenderJobState::Inactive:
     {
-        mRenderThread.join();
+        mRenderThread = {};
         break;
     }
     default:
         break;
     }
+
+    mCurrentState.store(newState);
 
     return true;
 }
@@ -276,32 +269,13 @@ Renderer::GetFrameInFlightIndex() const
 }
 
 void
-Renderer::Run(std::weak_ptr<Renderer> renderer)
+Renderer::Run(std::stop_token stopToken, std::weak_ptr<Renderer> renderer)
 {
+    while (!stopToken.stop_requested())
     {
         auto locked = renderer.lock();
-        if (locked)
-        {
-            locked->mCurrentState.store(locked->mNextState.load());
-        }
-    }
-
-    while (true)
-    {
-        auto locked = renderer.lock();
-        if (!locked || locked->mNextState.load() != RenderJobState::Active)
-        {
-            // Shutdown properly here. Should wait for pending frames to end rendering.
-            break;
-        }
 
         locked->Render();
     }
-
-    auto locked = renderer.lock();
-    if (!locked)
-        return;
-
-    locked->mCurrentState.store(locked->mNextState.load());
 }
 } // namespace VOG::Engine

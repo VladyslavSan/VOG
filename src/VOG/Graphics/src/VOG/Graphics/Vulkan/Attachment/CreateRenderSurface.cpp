@@ -30,22 +30,23 @@ CreateRenderSurface(GraphicsProviderPtr          graphicsProvider,
                     const Common::JSONContainer& parameters,
                     bool                         throwOnFail)
 {
+    VOG_ASSERT_MSG(parameters.isValid(), "Parameters should be not empty.");
+
     std::shared_ptr<vk::raii::SurfaceKHR> surfaceHandle;
 
 #if defined(PLATFORM_VIDEO_WINDOWS)
     {
         void* windowHandle = parameters["window"].getOr<void*>(nullptr);
-        void* instance     = parameters["insntace"].getOr<void*>(nullptr);
+        void* hinstance    = parameters["hinstance"].getOr<void*>(nullptr);
 
-        if (windowHandle != nullptr)
-        {
-            vk::Win32SurfaceCreateInfoKHR createInfo{};
-            createInfo.setHwnd(reinterpret_cast<HWND>(windowHandle))
-                .setHinstance(GetModuleHandleA(0));
+        VOG_ASSERT(windowHandle != nullptr);
+        VOG_ASSERT(hinstance != nullptr);
 
-            surfaceHandle =
-                std::make_shared<vk::raii::SurfaceKHR>(graphicsProvider->getInstance(), createInfo);
-        }
+        vk::Win32SurfaceCreateInfoKHR createInfo{.hinstance = static_cast<HINSTANCE>(hinstance),
+                                                 .hwnd      = static_cast<HWND>(windowHandle)};
+
+        surfaceHandle =
+            std::make_shared<vk::raii::SurfaceKHR>(graphicsProvider->getInstance(), createInfo);
     }
 #elif defined(PLATFORM_VIDEO_APPLE)
     {
@@ -80,7 +81,7 @@ CreateRenderSurface(GraphicsProviderPtr          graphicsProvider,
     }
 #endif
 
-    if (throwOnFail && !surfaceHandle)
+    if (throwOnFail && (!surfaceHandle || !**surfaceHandle))
         throw std::runtime_error("CreateSurface failed");
 
     return surfaceHandle;

@@ -44,15 +44,32 @@ TEST(JSONContainer, lifetime_value_sharedvoidptr)
     ASSERT_TRUE(container.holdsType<std::shared_ptr<void>>());
 }
 
-TEST(JSONContainer, lifetime_dictionary)
+TEST(JSONContainer, lifetime_array)
+{
+    JSONContainer container{1, -2, 3.f, "4", {5, 6, 7}};
+    ASSERT_TRUE(container.isArray());
+
+    const auto& arr = container.getArray();
+    ASSERT_EQ(arr.size(), 5);
+}
+
+TEST(JSONContainer, lifetime_object)
+{
+    JSONContainer container{{"int", 10}};
+    ASSERT_TRUE(container.isObject());
+
+    ASSERT_EQ(container["int"].getOr<JSONContainer::SignedInt>(42), 10);
+}
+
+TEST(JSONContainer, lifetime_dictionary_complex)
 {
     JSONContainer container{{"int", 10},
                             {"uint", 10u},
                             {"string", "string"},
                             {"float", 10.f},
-                            {"array_of_string", AsArray({"string1", "string2", "string3"})},
-                            {"object", {{"string", "string"}}}};
-    ASSERT_TRUE(container.isDictionary());
+                            {"array_of_string", {"string1", "string2", "string3"}},
+                            {"object", {{"string1", "string1"}, {"string2", "string2"}}}};
+    ASSERT_TRUE(container.isObject());
 
     // Check correct keys and the values.
     ASSERT_EQ(container["int"].getOr<int>(20), 10);
@@ -63,5 +80,8 @@ TEST(JSONContainer, lifetime_dictionary)
     ASSERT_EQ(container["int10"].getOr<int>(20), 20);
     ASSERT_EQ(container["uint10"].getOr<unsigned>(20u), 20u);
     ASSERT_EQ(container["string10"].getOr<std::string>("nostring"), "nostring");
+
+    ASSERT_TRUE(container["array_of_string"].isArray());
+    ASSERT_TRUE(container["object"].isObject());
 }
 } // namespace VOG::Common::Test

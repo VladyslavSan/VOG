@@ -27,7 +27,7 @@ Application::Application(const std::string& title,
           Common::JSONContainer{{"extensions", extensions},
                                 {"layers", layers},
                                 {"app_name", title},
-                                {"window", mWindow->getPlatformHandle()},
+                                {"surface", mWindow->getSurfaceHandles()},
                                 {"frames_in_flight", 2u}})}
 {
 }

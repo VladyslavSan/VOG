@@ -68,11 +68,10 @@ protected:
 
 protected:
     /// RenderThread run function
-    static void Run(std::weak_ptr<Renderer> renderer);
+    static void Run(std::stop_token stop_token, std::weak_ptr<Renderer> renderer);
 
-    std::thread                 mRenderThread;
+    std::jthread                mRenderThread;
     std::atomic<RenderJobState> mCurrentState;
-    std::atomic<RenderJobState> mNextState;
 
     std::uint8_t             mMaxFramesInFlight;
     std::atomic<std::size_t> mRenderFrame;

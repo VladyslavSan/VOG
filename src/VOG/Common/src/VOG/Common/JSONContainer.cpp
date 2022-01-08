@@ -49,7 +49,7 @@ JSONContainer::operator std::string() const
 }
 
 const JSONContainer&
-JSONContainer::operator[](std::string_view key) const
+JSONContainer::operator[](const JSONContainer::KeyType& key) const
 {
     if (!std::holds_alternative<ObjectType>(mValueHolder))
     {
@@ -57,10 +57,7 @@ JSONContainer::operator[](std::string_view key) const
     }
 
     const ObjectType& objectRef = std::get<ObjectType>(mValueHolder);
-    auto              found =
-        std::find_if(objectRef.begin(),
-                     objectRef.end(),
-                     [key](const auto& keyValue) -> bool { return key == keyValue.first; });
+    auto              found     = objectRef.find(key);
     if (found == objectRef.end())
     {
         return kEmptyJSONContainer;

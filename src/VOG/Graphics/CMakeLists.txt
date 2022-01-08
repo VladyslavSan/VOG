@@ -67,15 +67,13 @@ set(GRAPHICS_RESOURCES
 set(LINK_PUBLIC
     VOG.Common
     Vulkan::Headers
-    Boost::container
+    boost::container
 )
 
 set(LINK_PRIVATE
     vulkan-memory-allocator::vulkan-memory-allocator
     shaderc::shaderc
-    # spirv-cross-reflect doesn't work without spirv-cross-core
-    spirv-cross::spirv-cross-core
-    spirv-cross::spirv-cross-reflect)
+    spirv-cross::spirv-cross)
 
 if(APPLE)
     find_library(QUARTZ_CORE QuartzCore REQUIRED)

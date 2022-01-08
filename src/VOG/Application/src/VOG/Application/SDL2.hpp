@@ -1,6 +1,7 @@
 #pragma once
 
 #include <VOG/Common/Assert.hpp>
+#include <VOG/Common/JSONContainer.hpp>
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_syswm.h>
@@ -27,18 +28,22 @@ class SDLWindow
     using Handle = std::unique_ptr<SDL_Window, void (*)(SDL_Window*)>;
 
 public:
+    static Common::JSONContainer makeSurfaceHandles(const SDL_SysWMinfo&);
+
     SDLWindow(const char* title, int x, int y, int w, int h, Uint32 flags);
 
     Uint32 getWindowId() const;
 
     const SDL_SysWMinfo& getWMInfo() const;
 
-    void* getPlatformHandle() const;
+    const Common::JSONContainer& getSurfaceHandles() const;
 
 protected:
     Handle        mWindowHandle;
     Uint32        mWindowId;
     SDL_SysWMinfo mWmInfo;
+
+    Common::JSONContainer mSurfaceHandles;
 };
 
 inline SDLWindow::SDLWindow(const char* title, int x, int y, int w, int h, Uint32 flags)
@@ -50,6 +55,8 @@ inline SDLWindow::SDLWindow(const char* title, int x, int y, int w, int h, Uint3
     SDL_VERSION(&mWmInfo.version);
     VOG_ASSERT_MSG(SDL_GetWindowWMInfo(mWindowHandle.get(), &mWmInfo) == SDL_TRUE,
                    "Failed to retrieve window info.");
+
+    mSurfaceHandles = SDLWindow::makeSurfaceHandles(mWmInfo);
 }
 
 inline Uint32
@@ -62,5 +69,10 @@ inline const SDL_SysWMinfo&
 SDLWindow::getWMInfo() const
 {
     return mWmInfo;
+}
+inline const Common::JSONContainer&
+SDLWindow::getSurfaceHandles() const
+{
+    return mSurfaceHandles;
 }
 } // namespace VOG::Application

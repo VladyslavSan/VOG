@@ -2,15 +2,25 @@
 
 namespace VOG::Application
 {
-void*
-SDLWindow::getPlatformHandle() const
+Common::JSONContainer
+SDLWindow::makeSurfaceHandles(const SDL_SysWMinfo& wmInfo)
 {
 #if defined(SDL_VIDEO_DRIVER_WINDOWS)
-    return mWmInfo.info.win.window;
-#elif defined(SDL_VIDEO_DRIVER_COCOA)
-    return (__bridge void*)mWmInfo.info.cocoa.window;
-#elif defined(SDL_VIDEO_DRIVER_UIKIT)
-    return (__bridge void*)mWmInfo.info.uikit.window;
+    {
+        void* window    = static_cast<void*>(wmInfo.info.win.window);
+        void* hinstance = static_cast<void*>(wmInfo.info.win.hinstance);
+        return {{"type", "windows"}, {"window", window}, {"hinstance", hinstance}};
+    }
+#elif defined(SDL_VIDEO_DRIVER_COCOA) || defined(SDL_VIDEO_DRIVER_UIKIT)
+    {
+        void* windowHandle =
+#if defined(SDL_VIDEO_DRIVER_COCOA)
+            (__bridge void*)mWmInfo.info.cocoa.window;
+#else
+            (__bridge void*)mWmInfo.info.uikit.window
+#endif
+        return {{"type", "apple"}, {"window", windowHandle}};
+    }
 #endif
 
     return nullptr;
