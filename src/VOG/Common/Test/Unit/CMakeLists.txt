@@ -2,15 +2,25 @@ cmake_minimum_required(VERSION 3.10.0)
 
 find_package(GTest REQUIRED)
 
-set(UnitTestSources
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/JSONContainerTest.cpp
-)
-
-set(UnitTestHeaders
-)
-
-add_executable(VOG.Common.Unit ${UnitTestSources} ${UnitTestHeaders})
+add_executable(VOG.Common.Unit)
 set_target_properties(VOG.Common.Unit PROPERTIES FOLDER "VOG/Tests")
 
-target_link_libraries(VOG.Common.Unit PUBLIC VOG.Common GTest::gtest GTest::gtest_main)
-target_include_directories(VOG.Common.Unit PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(VOG.Common.Unit
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_sources(VOG.Common.Unit
+    PRIVATE
+        src/JSONContainerTest.cpp
+)
+
+target_link_libraries(VOG.Common.Unit
+    PUBLIC
+        VOG.Common GTest::gtest GTest::gtest_main
+)
+
+add_test(
+    NAME VOG.Common.Unit
+    COMMAND VOG.Common.Unit
+)

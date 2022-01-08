@@ -2,16 +2,26 @@ cmake_minimum_required(VERSION 3.10.0)
 
 find_package(GTest REQUIRED)
 
-set(UnitTestSources 
-        ${CMAKE_CURRENT_SOURCE_DIR}/Resources/ShaderTest.cpp
-    )
-
-set(UnitTestHeaders
-        ${CMAKE_CURRENT_SOURCE_DIR}/GraphicsApiFixture.hpp
-    )
-
-add_executable(VOG.Graphics.Unit ${UnitTestSources} ${UnitTestHeaders})
+add_executable(VOG.Graphics.Unit)
 set_target_properties(VOG.Graphics.Unit PROPERTIES FOLDER "VOG/Tests")
 
-target_link_libraries(VOG.Graphics.Unit PUBLIC VOG.Graphics GTest::gtest GTest::gtest_main)
-target_include_directories(VOG.Graphics.Unit PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(VOG.Graphics.Unit
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_sources(VOG.Graphics.Unit
+    PRIVATE
+        Resources/ShaderTest.cpp
+        GraphicsApiFixture.hpp
+)
+
+target_link_libraries(VOG.Graphics.Unit
+    PUBLIC
+        VOG.Graphics GTest::gtest GTest::gtest_main
+)
+
+add_test(
+    NAME VOG.Graphics.Unit
+    COMMAND VOG.Graphics.Unit
+)

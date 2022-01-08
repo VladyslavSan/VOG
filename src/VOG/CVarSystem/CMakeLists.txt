@@ -1,21 +1,28 @@
 cmake_minimum_required(VERSION 3.10.0)
 
-utility_declare_project(VOG.CVarSystem)
+find_package(GTest REQUIRED)
 
-set(VOG_CVARSYSTEM_HEADERS
-    ${INTERFACE_DIR}/VOG/CVarSystem/Api.hpp
-    ${INTERFACE_DIR}/VOG/CVarSystem/System.hpp
+add_executable(VOG.CVarSystem)
+set_target_properties(VOG.CVarSystem PROPERTIES FOLDER "VOG")
+
+target_include_directories(VOG.CVarSystem
+    PUBLIC
+        include
+    PRIVATE
+        src
 )
 
-set(VOG_CVARSYSTEM_SOURCES
-    ${IMPLEMENTATION_DIR}/VOG/CVarSystem/System.cpp
+target_sources(VOG.CVarSystem
+    PRIVATE
+        include/VOG/CVarSystem/Api.hpp
+        include/VOG/CVarSystem/System.hpp
+    PRIVATE
+        src/VOG/CVarSystem/System.cpp
 )
 
-utility_add_target(
-    SHARED_LIBRARY
-    FOLDER VOG
-    HEADERS ${VOG_CVARSYSTEM_HEADERS}
-    SOURCES ${VOG_CVARSYSTEM_SOURCES}
+target_link_libraries(VOG.CVarSystem
+    PUBLIC
+        VOG.Common GTest::gtest GTest::gtest_main
 )
 
 target_compile_definitions(VOG.CVarSystem PRIVATE CVARSYSTEM_API_EXPORT)

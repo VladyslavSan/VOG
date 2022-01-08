@@ -1,7 +1,6 @@
 #pragma once
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
-#include <VOG/Graphics/RenderStates.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Framebuffer.hpp>
 

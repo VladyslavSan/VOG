@@ -6,92 +6,94 @@ find_package(Boost COMPONENTS container REQUIRED)
 find_package(spirv-cross REQUIRED)
 find_package(shaderc REQUIRED)
 
-utility_declare_project(VOG.Graphics)
-
-set(GRAPHICS_HEADERS
-    ${INTERFACE_DIR}/VOG/Graphics/Config/VulkanConfig.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/Frame/FrameObjectManager.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/Frame/FrameObjects.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/Frame/ThreadObjects.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/Vulkan/Attachment/RenderBuffer.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/Vulkan/Attachment/Swapchain.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/Vulkan/CommandBuffer.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/Vulkan/CommandBufferPool.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/Vulkan/Device.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/Vulkan/Framebuffer.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/Vulkan/GraphicsPipeline.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/Vulkan/MemoryAllocator.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/Vulkan/Queue.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/Vulkan/RenderCommandRecorder.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/Vulkan/RenderPass.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/Vulkan/Shader.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/Vulkan/ShaderProgram.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/Vulkan/TimelineSemaphore.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/GraphicsProvider.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/RenderStates.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/ResourceManager.hpp
-    ${INTERFACE_DIR}/VOG/Graphics/Typedefs.hpp
+add_library(VOG.Graphics)
+set_target_properties(VOG.Graphics PROPERTIES
+    FOLDER VOG
 )
 
-set(GRAPHICS_SOURCE
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/Config/VMAConfig.hpp
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/Frame/FrameObjectManager.cpp
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/Frame/FrameObjects.cpp
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/Frame/ThreadObjects.cpp
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/Attachment/Converters.hpp
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.hpp
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.cpp
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/Attachment/RenderBuffer.cpp
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/Attachment/Swapchain.cpp
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/CommandBuffer.cpp
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/CommandBufferPool.cpp
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/Framebuffer.cpp
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/GraphicsPipeline.cpp
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/MemoryAllocator.cpp
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/RenderCommandRecorder.cpp
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/RenderPass.cpp
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/Shader.cpp
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/TimelineSemaphore.cpp
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/GraphicsProvider.cpp
-    ${IMPLEMENTATION_DIR}/VOG/Graphics/ResourceManager.cpp
+target_include_directories(VOG.Graphics
+    PUBLIC
+        include/
+    PRIVATE
+        src/
 )
 
-set(GRAPHICS_RESOURCES
-    ${RESOURCES_DIR}/shaders/src/BasicTriangle.frag
-    ${RESOURCES_DIR}/shaders/src/BasicTriangle.vert
-    ${RESOURCES_DIR}/shaders/src/TestVertexAttribute.vert
-    ${RESOURCES_DIR}/shaders/src/TestVertexAttribute.frag
+target_sources(VOG.Graphics
+    PRIVATE
+        include/VOG/Graphics/Config/VulkanConfig.hpp
+        include/VOG/Graphics/Frame/FrameObjectManager.hpp
+        include/VOG/Graphics/Frame/FrameObjects.hpp
+        include/VOG/Graphics/Frame/ThreadObjects.hpp
+        include/VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp
+        include/VOG/Graphics/Vulkan/Attachment/RenderBuffer.hpp
+        include/VOG/Graphics/Vulkan/Attachment/Swapchain.hpp
+        include/VOG/Graphics/Vulkan/CommandBuffer.hpp
+        include/VOG/Graphics/Vulkan/CommandBufferPool.hpp
+        include/VOG/Graphics/Vulkan/Device.hpp
+        include/VOG/Graphics/Vulkan/Framebuffer.hpp
+        include/VOG/Graphics/Vulkan/GraphicsPipeline.hpp
+        include/VOG/Graphics/Vulkan/MemoryAllocator.hpp
+        include/VOG/Graphics/Vulkan/Queue.hpp
+        include/VOG/Graphics/Vulkan/RenderCommandRecorder.hpp
+        include/VOG/Graphics/Vulkan/RenderPass.hpp
+        include/VOG/Graphics/Vulkan/Shader.hpp
+        include/VOG/Graphics/Vulkan/ShaderProgram.hpp
+        include/VOG/Graphics/Vulkan/TimelineSemaphore.hpp
+        include/VOG/Graphics/GraphicsProvider.hpp
+        include/VOG/Graphics/RenderStates.hpp
+        include/VOG/Graphics/ResourceManager.hpp
+        include/VOG/Graphics/Typedefs.hpp
+    
+    PRIVATE
+        src/VOG/Graphics/Config/VMAConfig.hpp
+        src/VOG/Graphics/Frame/FrameObjectManager.cpp
+        src/VOG/Graphics/Frame/FrameObjects.cpp
+        src/VOG/Graphics/Frame/ThreadObjects.cpp
+        src/VOG/Graphics/Vulkan/Attachment/Converters.hpp
+        src/VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.hpp
+        src/VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.cpp
+        src/VOG/Graphics/Vulkan/Attachment/RenderBuffer.cpp
+        src/VOG/Graphics/Vulkan/Attachment/Swapchain.cpp
+        src/VOG/Graphics/Vulkan/CommandBuffer.cpp
+        src/VOG/Graphics/Vulkan/CommandBufferPool.cpp
+        src/VOG/Graphics/Vulkan/Framebuffer.cpp
+        src/VOG/Graphics/Vulkan/GraphicsPipeline.cpp
+        src/VOG/Graphics/Vulkan/MemoryAllocator.cpp
+        src/VOG/Graphics/Vulkan/RenderCommandRecorder.cpp
+        src/VOG/Graphics/Vulkan/RenderPass.cpp
+        src/VOG/Graphics/Vulkan/Shader.cpp
+        src/VOG/Graphics/Vulkan/TimelineSemaphore.cpp
+        src/VOG/Graphics/GraphicsProvider.cpp
+        src/VOG/Graphics/ResourceManager.cpp
 )
 
-set(LINK_PUBLIC
-    VOG.Common
-    Vulkan::Headers
-    boost::container
+target_link_libraries(VOG.Graphics
+    PUBLIC
+        VOG.Common
+        Vulkan::Headers
+        boost::container
+    PRIVATE
+        vulkan-memory-allocator::vulkan-memory-allocator
+        shaderc::shaderc
+        spirv-cross::spirv-cross
 )
-
-set(LINK_PRIVATE
-    vulkan-memory-allocator::vulkan-memory-allocator
-    shaderc::shaderc
-    spirv-cross::spirv-cross)
 
 if(APPLE)
     find_library(QUARTZ_CORE QuartzCore REQUIRED)
     find_library(APPKIT AppKit REQUIRED)
     list(APPEND LINK_PRIVATE ${QUARTZ_CORE} ${APPKIT})
+
+    target_link_libraries(VOG.Graphics
+        PRIVATE
+            ${QUARTZ_CORE}
+            ${APPKIT}
+    )
     
     # For apple compile this file as an obj-c file.
-    set_property(SOURCE ${IMPLEMENTATION_DIR}/VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.cpp PROPERTY LANGUAGE OBJCXX)
+    set_property(
+        SOURCE src/VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.cpp
+        PROPERTY LANGUAGE OBJCXX
+    )
 endif()
-
-utility_add_target(
-    LIBRARY
-    LINK_PUBLIC ${LINK_PUBLIC}
-    LINK_PRIVATE ${LINK_PRIVATE}
-    FOLDER VOG
-    HEADERS ${GRAPHICS_HEADERS}
-    SOURCES ${GRAPHICS_SOURCE}
-    RESOURCES ${GRAPHICS_RESOURCES}
-)
 
 add_subdirectory(Test)

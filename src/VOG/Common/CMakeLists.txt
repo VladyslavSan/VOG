@@ -2,30 +2,36 @@ cmake_minimum_required(VERSION 3.10.0)
 
 find_package(glm REQUIRED)
 
-utility_declare_project(VOG.Common)
-
-set(VOG_COMMON_HEADERS
-    ${INTERFACE_DIR}/VOG/Common/Assert.hpp
-    ${INTERFACE_DIR}/VOG/Common/JSONContainer.hpp
-    ${INTERFACE_DIR}/VOG/Common/NoCopyable.hpp
-    ${INTERFACE_DIR}/VOG/Common/Signals.hpp
-    ${INTERFACE_DIR}/VOG/Common/ThreadsafeWrapper.hpp
-    ${INTERFACE_DIR}/VOG/Common/Config/GLMConfig.hpp
-    ${INTERFACE_DIR}/VOG/Common/Config/PlatformConfig.hpp
-    ${INTERFACE_DIR}/VOG/Common/Math/Math.hpp
-)
-
-set(VOG_COMMON_SOURCES
-    ${IMPLEMENTATION_DIR}/VOG/Common/JSONContainer.cpp
-    ${IMPLEMENTATION_DIR}/VOG/Common/Signals.cpp
-)
-
-utility_add_target(
-    LIBRARY
-    LINK_PUBLIC glm::glm
+add_library(VOG.Common)
+set_target_properties(VOG.Common PROPERTIES
     FOLDER VOG
-    HEADERS ${VOG_COMMON_HEADERS}
-    SOURCES ${VOG_COMMON_SOURCES}
+)
+
+target_include_directories(VOG.Common
+    PUBLIC
+        include/
+    PRIVATE
+        src/
+)
+
+target_sources(VOG.Common
+    PRIVATE
+        include/VOG/Common/Assert.hpp
+        include/VOG/Common/JSONContainer.hpp
+        include/VOG/Common/NoCopyable.hpp
+        include/VOG/Common/Signals.hpp
+        include/VOG/Common/ThreadsafeWrapper.hpp
+        include/VOG/Common/Config/GLMConfig.hpp
+        include/VOG/Common/Config/PlatformConfig.hpp
+        include/VOG/Common/Math/Math.hpp
+    PRIVATE
+        src/VOG/Common/JSONContainer.cpp
+        src/VOG/Common/Signals.cpp
+)
+
+target_link_libraries(VOG.Common
+    PUBLIC
+        glm::glm
 )
 
 add_subdirectory(Test)

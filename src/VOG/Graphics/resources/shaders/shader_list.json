@@ -1,0 +1,19 @@
+{
+    "shaders" :
+    [
+        {
+            "name" : "BasicTriangle",
+            "stages" : {
+                "vertex" : "src/BasicTriangle.vert",
+                "fragment" : "src/BasicTriangle.frag"
+            }
+        },
+        {
+            "name" : "TestVertexAttribute",
+            "stages" : {
+                "vertex" : "src/TestVertexAttribute.vert",
+                "fragment" : "src/TestVertexAttribute.frag"
+            }
+        }
+    ]
+}

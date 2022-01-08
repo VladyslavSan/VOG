@@ -72,5 +72,11 @@ class VOGConan(ConanFile):
 
     def build(self):
         cmake = CMake(self)
-        cmake.configure()
-        cmake.build()
+        if self.should_configure:
+            cmake.configure()
+        if self.should_build:
+            cmake.build()
+        if self.should_test:
+            cmake.test()
+        
+        
