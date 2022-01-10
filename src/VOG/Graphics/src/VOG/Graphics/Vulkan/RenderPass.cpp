@@ -30,7 +30,8 @@ RenderPass::RenderPass(const Device&                  device,
         attachmentReference[i] = {.attachment = i, .layout = attachmentDescription.finalLayout};
     }
 
-    const std::uint32_t attachmentsCount = mAttachmentDescriptions.size();
+    const std::uint32_t attachmentsCount =
+        static_cast<std::uint32_t>(mAttachmentDescriptions.size());
     const std::uint32_t colorAttachmentsCount =
         mDepthStencilProvided ? attachmentsCount - 1 : attachmentsCount;
     vk::SubpassDescription subpass = {.pipelineBindPoint    = vk::PipelineBindPoint::eGraphics,

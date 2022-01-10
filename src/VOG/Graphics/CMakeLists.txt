@@ -5,6 +5,7 @@ find_package(vulkan-memory-allocator REQUIRED)
 find_package(Boost COMPONENTS container REQUIRED)
 find_package(spirv-cross REQUIRED)
 find_package(shaderc REQUIRED)
+find_package(nlohmann_json REQUIRED)
 
 add_library(VOG.Graphics)
 set_target_properties(VOG.Graphics PROPERTIES
@@ -40,7 +41,6 @@ target_sources(VOG.Graphics
         include/VOG/Graphics/Vulkan/ShaderProgram.hpp
         include/VOG/Graphics/Vulkan/TimelineSemaphore.hpp
         include/VOG/Graphics/GraphicsProvider.hpp
-        include/VOG/Graphics/RenderStates.hpp
         include/VOG/Graphics/ResourceManager.hpp
         include/VOG/Graphics/Typedefs.hpp
     
@@ -65,6 +65,8 @@ target_sources(VOG.Graphics
         src/VOG/Graphics/Vulkan/TimelineSemaphore.cpp
         src/VOG/Graphics/GraphicsProvider.cpp
         src/VOG/Graphics/ResourceManager.cpp
+        src/VOG/Graphics/ShaderProgramCache.hpp
+        src/VOG/Graphics/ShaderProgramCache.cpp
 )
 
 target_link_libraries(VOG.Graphics
@@ -73,6 +75,7 @@ target_link_libraries(VOG.Graphics
         Vulkan::Headers
         boost::container
     PRIVATE
+        nlohmann_json::nlohmann_json
         vulkan-memory-allocator::vulkan-memory-allocator
         shaderc::shaderc
         spirv-cross::spirv-cross

@@ -26,48 +26,23 @@ ConvertShadingStage(ShadingStage stage)
     return shaderc_glsl_infer_from_source;
 }
 
-const char*
-ConvertShaderCompilationStage(Shader::CompilationError::CompilationStage stage)
-{
-    switch (stage)
-    {
-    case Shader::CompilationError::CompilationStage::ePreprocessGlsl:
-        return "PreprocessGLSL";
-    case Shader::CompilationError::CompilationStage::eGlsLtoSpirv:
-        return "GLSLtoSPIRV";
-    default:
-        return "Unknown";
-    }
-
-    return "Unknown";
-}
-
 std::vector<std::uint32_t>
 compileGLSLShader(ShadingStage stage, const std::string& glslCode)
 {
     shaderc::Compiler       compiler;
     shaderc::CompileOptions options;
-    options.SetTargetSpirv(shaderc_spirv_version_1_3);
 
     const shaderc::SpvCompilationResult resultCompile =
-        compiler.CompileGlslToSpv(glslCode, ConvertShadingStage(stage), "d", options);
+        compiler.CompileGlslToSpv(glslCode, ConvertShadingStage(stage), "main", options);
     if (resultCompile.GetCompilationStatus() != shaderc_compilation_status_success)
     {
-        throw std::runtime_error{"failed to compile shader"};
+        throw std::runtime_error{"Failed to compile shader with error:\n" +
+                                 resultCompile.GetErrorMessage()};
     }
 
     return {resultCompile.begin(), resultCompile.end()};
 }
 } // namespace
-
-Shader::CompilationError::CompilationError(std::string      shaderName,
-                                           CompilationStage stage,
-                                           std::string      shaderCompilationError)
-    : std::runtime_error{"Compilation failed for shader=" + shaderName +
-                         " on stage=" + ConvertShaderCompilationStage(stage) +
-                         " with error=" + shaderCompilationError}
-{
-}
 
 std::shared_ptr<Shader>
 Shader::create(const Device& device, ShadingStage stage, const std::string& source)
@@ -103,8 +78,8 @@ Shader::reflect() const
         const std::uint32_t binding =
             spirvCompiller.get_decoration(resource.id, spv::Decoration::DecorationBinding);
 
-        const auto&         baseType = spirvCompiller.get_type(resource.base_type_id);
-        const std::uint32_t size     = spirvCompiller.get_declared_struct_size(baseType);
+        const auto& baseType = spirvCompiller.get_type(resource.base_type_id);
+        const auto  size     = spirvCompiller.get_declared_struct_size(baseType);
 
         Reflection::UniformBuffer buffer{.location = {.set = set, .binding = binding},
                                          .size     = size};

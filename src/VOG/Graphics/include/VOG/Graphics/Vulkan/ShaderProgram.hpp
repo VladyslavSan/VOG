@@ -4,9 +4,10 @@
 
 namespace VOG::Graphics::Vulkan
 {
-struct ShadingStages
+class ShaderProgram
 {
-    ShaderPtr vertexFunction;
-    ShaderPtr fragmentFunction;
+public:
+    ShaderPtr vertexFunction = nullptr;
+    ShaderPtr fragmentFunction = nullptr;
 };
 } // namespace VOG::Graphics::Vulkan

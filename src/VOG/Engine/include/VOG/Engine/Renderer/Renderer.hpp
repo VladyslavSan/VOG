@@ -57,18 +57,16 @@ public:
 
     const std::shared_ptr<Scene::Scene>& getScene() const;
 
-    RenderJobState GetCurrentRenderState() const;
+    RenderJobState getRenderJobState() const;
 
-    RenderJobState GetNextRenderState() const;
-
-    bool RequestRenderChangeState(RenderJobState newState);
+    bool requestRenderChangeState(RenderJobState newState);
 
 protected:
-    std::size_t GetFrameInFlightIndex() const;
+    std::size_t getFrameInFlightIndex() const;
 
 protected:
     /// RenderThread run function
-    static void Run(std::stop_token stop_token, std::weak_ptr<Renderer> renderer);
+    static void renderThreadMain(std::stop_token stop_token, std::weak_ptr<Renderer> renderer);
 
     std::jthread                mRenderThread;
     std::atomic<RenderJobState> mCurrentState;

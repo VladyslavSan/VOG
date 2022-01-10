@@ -6,9 +6,12 @@ class VOGConan(ConanFile):
     shared = False
     settings = ["os", "compiler", "arch", "build_type"]
     requires = [
+        # generic c++
         "boost/1.78.0",
         "glm/0.9.9.8",
         "gtest/1.11.0",
+        "nlohmann_json/3.10.5",
+        # graphics
         "shaderc/2021.1",
         "spirv-cross/cci.20211113",
         "vulkan-headers/1.2.198.0",

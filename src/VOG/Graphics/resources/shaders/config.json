@@ -1,0 +1,15 @@
+{
+    "shaders" :
+    {
+        "BasicTriangle" :
+        {
+            "vertex" : "src/BasicTriangle.vert.glsl",
+            "fragment" : "src/BasicTriangle.frag.glsl"
+        },
+        "TestVertexAttribute" :
+        {
+            "vertex" : "src/TestVertexAttribute.vert.glsl",
+            "fragment" : "src/TestVertexAttribute.frag.glsl"
+        }
+    }
+}

@@ -17,12 +17,7 @@
 
 namespace VOG::Engine
 {
-Renderer::~Renderer()
-{
-    RequestRenderChangeState(RenderJobState::Inactive);
-    if (mRenderThread.joinable())
-        mRenderThread.join();
-}
+Renderer::~Renderer() {}
 
 Renderer::Renderer(const Common::JSONContainer& parameters)
     : mRenderThread{}
@@ -32,7 +27,8 @@ Renderer::Renderer(const Common::JSONContainer& parameters)
                                     MaxFramesInFlight)}
     , mRenderFrame{0}
     , mGraphicsProvider{std::make_shared<Graphics::GraphicsProvider>(parameters)}
-    , mResourceManager{std::make_shared<Graphics::ResourceManager>(mGraphicsProvider)}
+    , mResourceManager{std::make_shared<Graphics::ResourceManager>(mGraphicsProvider,
+                                                                   parameters["resource_manager"])}
     , mSwapchain{mResourceManager->createRenderSurface(parameters["surface"])}
     , mFrameObjectManager{std::make_shared<Graphics::Frame::FrameObjectManager>(
           mGraphicsProvider, mMaxFramesInFlight, 1u)}
@@ -48,7 +44,7 @@ Renderer::Render()
     if (mSwapchain->acquireNextImage() != vk::Result::eSuccess)
         throw std::runtime_error{"Could not acquire image"};
 
-    const std::size_t frameInFlightIndex = GetFrameInFlightIndex();
+    const std::size_t frameInFlightIndex = getFrameInFlightIndex();
 
     auto& frame = mFrameObjectManager->getFrameObjects(frameInFlightIndex);
     frame.onFrameStart();
@@ -110,43 +106,7 @@ Renderer::Render()
         vk::raii::PipelineLayout layout{mGraphicsProvider->getDevice(),
                                         vk::PipelineLayoutCreateInfo{}};
 
-        const auto kVertexShaderCode   = R"(
-            #version 450
-            vec2 positions[3] = {
-                vec2(0.0, -0.5),
-                vec2(0.5, 0.5),
-                vec2(-0.5, 0.5)
-            };
-            vec4 colors[3] = {
-                vec4(1.0, 0.0, 0.0, 1.0),
-                vec4(0.0, 1.0, 0.0, 1.0),
-                vec4(0.0, 0.0, 1.0, 1.0),
-            };
-            layout(location = 0) out vec4 color;
-            void main() {
-                gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
-                color = colors[gl_VertexIndex];
-            })";
-        const auto kFragmentShaderCode = R"(
-            #version 450
-            layout(location = 0) in vec4 color;
-            layout(location = 0) out vec4 outColor;
-            void main() {
-                outColor = color;
-            })";
-
-        auto vertexShader =
-            Graphics::Vulkan::Shader::create(mGraphicsProvider->getDevice(),
-                                             Graphics::Vulkan::ShadingStage::eVertex,
-                                             kVertexShaderCode);
-
-        auto fragmentShader =
-            Graphics::Vulkan::Shader::create(mGraphicsProvider->getDevice(),
-                                             Graphics::Vulkan::ShadingStage::eFragment,
-                                             kFragmentShaderCode);
-
-        Graphics::Vulkan::ShadingStages stages{.vertexFunction   = vertexShader,
-                                               .fragmentFunction = fragmentShader};
+        auto program = mResourceManager->createShaderProgram("BasicTriangle");
 
         vk::PipelineColorBlendAttachmentState blendState{
             .blendEnable    = false,
@@ -156,7 +116,7 @@ Renderer::Render()
         auto pipeline = Graphics::Vulkan::GraphicsPipeline::create(
             mGraphicsProvider->getDevice(),
             nullptr,
-            stages,
+            *program,
             {},
             {.cullMode = vk::CullModeFlagBits::eNone},
             {.viewportCount = 1u, .scissorCount = 1u},
@@ -230,13 +190,13 @@ Renderer::getScene() const
 }
 
 Renderer::RenderJobState
-Renderer::GetCurrentRenderState() const
+Renderer::getRenderJobState() const
 {
     return mCurrentState.load();
 }
 
 bool
-Renderer::RequestRenderChangeState(RenderJobState newState)
+Renderer::requestRenderChangeState(RenderJobState newState)
 {
     if (newState == mCurrentState.load())
         return false;
@@ -245,7 +205,7 @@ Renderer::RequestRenderChangeState(RenderJobState newState)
     {
     case RenderJobState::Active:
     {
-        mRenderThread = std::jthread{&Renderer::Run, weak_from_this()};
+        mRenderThread = std::jthread{&Renderer::renderThreadMain, weak_from_this()};
         break;
     }
     case RenderJobState::Inactive:
@@ -263,13 +223,13 @@ Renderer::RequestRenderChangeState(RenderJobState newState)
 }
 
 std::size_t
-Renderer::GetFrameInFlightIndex() const
+Renderer::getFrameInFlightIndex() const
 {
     return mRenderFrame.load() % mMaxFramesInFlight;
 }
 
 void
-Renderer::Run(std::stop_token stopToken, std::weak_ptr<Renderer> renderer)
+Renderer::renderThreadMain(std::stop_token stopToken, std::weak_ptr<Renderer> renderer)
 {
     while (!stopToken.stop_requested())
     {

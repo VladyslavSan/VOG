@@ -23,12 +23,15 @@ Application::Application(const std::string& title,
                                           static_cast<int>(width),
                                           static_cast<int>(height),
                                           SDL_WINDOW_SHOWN)}
-    , mRenderer{std::make_shared<Engine::Renderer>(
-          Common::JSONContainer{{"extensions", extensions},
-                                {"layers", layers},
-                                {"app_name", title},
-                                {"surface", mWindow->getSurfaceHandles()},
-                                {"frames_in_flight", 2u}})}
+    , mRenderer{std::make_shared<Engine::Renderer>(Common::JSONContainer{
+          {"extensions", extensions},
+          {"layers", layers},
+          {"app_name", title},
+          {"surface", mWindow->getSurfaceHandles()},
+          {"frames_in_flight", 2u},
+          {"resource_manager",
+           {"shader_source_dir",
+            R"(D:/git_clones/vulkan_dev/src/VOG/Graphics/resources/shaders)"}}})}
 {
 }
 
@@ -39,7 +42,7 @@ Application::Run()
 {
     using namespace VOG::Common;
 
-    if (!mRenderer->RequestRenderChangeState(VOG::Engine::Renderer::RenderJobState::Active))
+    if (!mRenderer->requestRenderChangeState(VOG::Engine::Renderer::RenderJobState::Active))
     {
         return false;
     }
@@ -51,7 +54,7 @@ Application::Run()
         if (waitEventSuccess && event.type == SDL_WINDOWEVENT &&
             event.window.event == SDL_WINDOWEVENT_CLOSE)
         {
-            mRenderer->RequestRenderChangeState(VOG::Engine::Renderer::RenderJobState::Inactive);
+            mRenderer->requestRenderChangeState(VOG::Engine::Renderer::RenderJobState::Inactive);
             mRenderer.reset();
             break;
         }

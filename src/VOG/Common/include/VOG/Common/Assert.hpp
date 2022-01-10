@@ -2,10 +2,10 @@
 
 #include <cassert>
 #include <concepts>
-#include <source_location>
 #include <stdexcept>
-
-//#define VOG_COMMON_ASSERT_AS_EXCEPTION
+#ifdef VOG_COMMON_ASSERT_AS_EXCEPTION
+#include <source_location>
+#endif
 
 namespace VOG::Common::Assert
 {

@@ -38,7 +38,7 @@ public:
     static std::shared_ptr<GraphicsPipeline>
     create(const Device&                               device,
            vk::Optional<const vk::raii::PipelineCache> cache,
-           const ShadingStages&                        shading,
+           const ShaderProgram&                        shading,
            const VertexLayout&                         vertexLayout,
            const RasterizationOptions&                 rasterizer,
            const ViewportState&                        viewportState,
@@ -52,7 +52,7 @@ public:
 
     GraphicsPipeline(const Device&                               device,
                      vk::Optional<const vk::raii::PipelineCache> cache,
-                     const ShadingStages&                        shading,
+                     const ShaderProgram&                        shading,
                      const VertexLayout&                         vertexLayout,
                      const RasterizationOptions&                 rasterizer,
                      const ViewportState&                        viewportState,

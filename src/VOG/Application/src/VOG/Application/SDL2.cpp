@@ -15,9 +15,9 @@ SDLWindow::makeSurfaceHandles(const SDL_SysWMinfo& wmInfo)
     {
         void* windowHandle =
 #if defined(SDL_VIDEO_DRIVER_COCOA)
-            (__bridge void*)mWmInfo.info.cocoa.window;
+            (__bridge void*)wmInfo.info.cocoa.window;
 #else
-            (__bridge void*)mWmInfo.info.uikit.window
+            (__bridge void*)wmInfo.info.uikit.window
 #endif
         return {{"type", "apple"}, {"window", windowHandle}};
     }

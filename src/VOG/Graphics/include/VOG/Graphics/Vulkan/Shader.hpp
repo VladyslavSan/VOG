@@ -18,21 +18,9 @@ enum class ShadingStage : std::uint8_t
     eUnknown
 };
 
-struct Shader
+class Shader
 {
-    class CompilationError : std::runtime_error
-    {
-    public:
-        enum class CompilationStage
-        {
-            ePreprocessGlsl,
-            eGlsLtoSpirv,
-            eSpirvCompile
-        };
-
-        CompilationError(std::string name, CompilationStage stage, std::string error);
-    };
-
+public:
     struct Reflection
     {
         enum class ResourceType : std::uint8_t

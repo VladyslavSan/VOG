@@ -9,7 +9,7 @@ namespace VOG::Graphics::Vulkan
 std::shared_ptr<GraphicsPipeline>
 GraphicsPipeline::create(const Device&                               device,
                          vk::Optional<const vk::raii::PipelineCache> cache,
-                         const ShadingStages&                        shading,
+                         const ShaderProgram&                        shading,
                          const VertexLayout&                         vertexLayout,
                          const RasterizationOptions&                 rasterizer,
                          const ViewportState&                        viewportState,
@@ -37,7 +37,7 @@ GraphicsPipeline::create(const Device&                               device,
 }
 GraphicsPipeline::GraphicsPipeline(const Device&                               device,
                                    vk::Optional<const vk::raii::PipelineCache> cache,
-                                   const ShadingStages&                        shading,
+                                   const ShaderProgram&                        shading,
                                    const VertexLayout&                         vertexLayout,
                                    const RasterizationOptions&                 rasterizer,
                                    const ViewportState&                        viewportState,
