@@ -1,7 +1,11 @@
-from conans import ConanFile
+from conan import ConanFile
 from conan.tools.cmake import CMake, CMakeToolchain, CMakeDeps
 
 class VOGConan(ConanFile):
+    name = "VOG"
+    author = "Vladyslav Odobesku (positivcheg94@gmail.com)"
+    topics = ("Graphics", "Vulkan")
+
     build_policy = "always"
     shared = False
     settings = ["os", "compiler", "arch", "build_type"]
@@ -9,15 +13,16 @@ class VOGConan(ConanFile):
         # generic c++
         "boost/1.78.0",
         "glm/0.9.9.8",
-        "gtest/1.11.0",
-        "nlohmann_json/3.10.5",
         # graphics
-        "shaderc/2021.1",
-        "spirv-cross/cci.20211113",
         "vulkan-headers/1.2.198.0",
-        "vulkan-memory-allocator/2.3.0",
-        "sdl/2.0.18"
-        ]
+        "sdl/2.0.18",
+        "gtest/1.11.0",
+        # private dependencies
+        ("nlohmann_json/3.10.5", "private"),
+        ("shaderc/2021.1", "private"),
+        ("spirv-cross/cci.20211113", "private"),
+        ("vulkan-memory-allocator/2.3.0", "private"),
+    ]
 
     def config_options(self):
         boost = self.options["boost"]

@@ -4,13 +4,13 @@ cmake_policy(SET CMP0076 NEW)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
-project(vulkan_dev)
+project(VOG)
+enable_testing()
 
 enable_language(CXX)
 if(APPLE)
-enable_language(OBJCXX)
+    enable_language(OBJCXX)
 endif()
 
-enable_testing()
-
 add_subdirectory(src)
+

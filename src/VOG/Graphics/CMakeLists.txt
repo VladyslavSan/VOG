@@ -99,4 +99,7 @@ if(APPLE)
     )
 endif()
 
-add_subdirectory(Test)
+
+if(BUILD_TESTING)
+    add_subdirectory(Test)
+endif()

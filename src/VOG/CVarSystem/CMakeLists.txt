@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10.0)
 
 find_package(GTest REQUIRED)
 
-add_executable(VOG.CVarSystem)
+add_library(VOG.CVarSystem SHARED)
 set_target_properties(VOG.CVarSystem PROPERTIES FOLDER "VOG")
 
 target_include_directories(VOG.CVarSystem
@@ -22,7 +22,7 @@ target_sources(VOG.CVarSystem
 
 target_link_libraries(VOG.CVarSystem
     PUBLIC
-        VOG.Common GTest::gtest GTest::gtest_main
+        VOG.Common
 )
 
 target_compile_definitions(VOG.CVarSystem PRIVATE CVARSYSTEM_API_EXPORT)
