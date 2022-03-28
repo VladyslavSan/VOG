@@ -28,7 +28,7 @@ public:
     auto
     Add(const T& value, Parameter param)
     {
-        this->emplace_back(std::make_unique<VariableStorage<T>>(value, value, param));
+        this->emplace_back(new VariableStorage<T>{value, value, param});
         return this->size();
     }
 };
@@ -53,7 +53,8 @@ getType()
     }
     else
     {
-        static_assert(false, "Not supported type");
+        []<bool flag = false>() { static_assert(flag, "Not supported type"); }
+        ();
     }
 }
 
@@ -68,53 +69,9 @@ class SystemImpl final : public SystemInterface
     };
 
 public:
-    VariableStorage<int32_t>*
-    registerConsoleVariable(const std::string& name,
-                            std::int32_t       defaultValue,
-                            const std::string& description,
-                            Flags              flags = Flags::eNone) override
-    {
-        auto added = tryAdd(name, defaultValue, description, flags);
-        if (!added.first)
-        {
-            // handle
-        }
-        return added.second;
-    }
-
-    VariableStorage<float>*
-    registerConsoleVariable(const std::string& name,
-                            float              defaultValue,
-                            const std::string& description,
-                            Flags              flags = Flags::eNone) override
-    {
-        auto added = tryAdd(name, defaultValue, description, flags);
-        if (!added.first)
-        {
-            // handle
-        }
-        return added.second;
-    }
-
-    VariableStorage<std::string>*
-    registerConsoleVariable(const std::string& name,
-                            const std::string& defaultValue,
-                            const std::string& description,
-                            Flags              flags = Flags::eNone) override
-    {
-        auto added = tryAdd(name, defaultValue, description, flags);
-        if (!added.first)
-        {
-            // handle
-        }
-        return added.second;
-    }
-
     template <class T>
-    auto constexpr tryAdd(const std::string& name,
-                          T                  defaultValue,
-                          const std::string& description,
-                          Flags              flags)
+    auto
+    tryAdd(const std::string& name, T defaultValue, const std::string& description, Flags flags)
     {
         auto emplaceResult = mVariables.try_emplace(name, VariableRecord{.type = getType<T>()});
         const bool addedNewVariable = emplaceResult.second == true;
@@ -167,6 +124,48 @@ public:
             return std::make_pair(addedNewVariable,
                                   stringVariables[emplaceResult.first->second.index].get());
         }
+    }
+
+    VariableStorage<int32_t>*
+    registerConsoleVariable(const std::string& name,
+                            std::int32_t       defaultValue,
+                            const std::string& description,
+                            Flags              flags = Flags::eNone) override
+    {
+        auto added = tryAdd(name, defaultValue, description, flags);
+        if (!added.first)
+        {
+            // handle
+        }
+        return added.second;
+    }
+
+    VariableStorage<float>*
+    registerConsoleVariable(const std::string& name,
+                            float              defaultValue,
+                            const std::string& description,
+                            Flags              flags = Flags::eNone) override
+    {
+        auto added = tryAdd(name, defaultValue, description, flags);
+        if (!added.first)
+        {
+            // handle
+        }
+        return added.second;
+    }
+
+    VariableStorage<std::string>*
+    registerConsoleVariable(const std::string& name,
+                            const std::string& defaultValue,
+                            const std::string& description,
+                            Flags              flags = Flags::eNone) override
+    {
+        auto added = tryAdd(name, defaultValue, description, flags);
+        if (!added.first)
+        {
+            // handle
+        }
+        return added.second;
     }
 
 protected:
