@@ -4,6 +4,7 @@
 #include <VOG/Engine/Scene/Scene.hpp>
 
 #include <boost/thread/scoped_thread.hpp>
+
 #include <memory>
 
 namespace VOG::Common

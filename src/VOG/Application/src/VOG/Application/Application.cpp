@@ -1,10 +1,11 @@
 #include "VOG/Application/Application.hpp"
 
 #include <VOG/Common/JSONContainer.hpp>
+#include <VOG/Application/SDL2.hpp>
 #include <VOG/Engine/Renderer/Renderer.hpp>
 
 #include <SDL2/SDL_vulkan.h>
-#include <VOG/Application/SDL2.hpp>
+
 #include <optional>
 
 namespace VOG::Application

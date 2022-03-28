@@ -10,6 +10,7 @@
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/RenderCommandRecorder.hpp>
 #include <VOG/Graphics/Vulkan/RenderPass.hpp>
+
 #include <boost/thread/thread.hpp>
 
 #include <chrono>

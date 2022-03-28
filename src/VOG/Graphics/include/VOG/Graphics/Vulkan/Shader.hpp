@@ -3,6 +3,7 @@
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 
 #include <boost/container/small_vector.hpp>
+
 #include <memory>
 #include <string>
 #include <vector>

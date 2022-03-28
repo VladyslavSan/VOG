@@ -1,8 +1,7 @@
 #include "VOG/Graphics/Frame/FrameObjectManager.hpp"
 
 #include <VOG/Common/Assert.hpp>
-
-#include "VOG/Graphics/GraphicsProvider.hpp"
+#include <VOG/Graphics/GraphicsProvider.hpp>
 
 namespace VOG::Graphics::Frame
 {

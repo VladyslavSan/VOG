@@ -41,14 +41,20 @@ BreakInheritanceList: BeforeComma
 IncludeBlocks: Regroup
 IncludeIsMainRegex: ''
 IncludeCategories:
-  # Headers in <> without extension.
-  - Regex:           '<([a-z_])>'
-    Priority:        100
-
-  # Headers in "" with extension.
-  - Regex:           '"([a-zA-Z\/])+(\.h|\.hpp)"'
-    Priority:        99
+  # VOG/Common headers
+  - Regex:           '^(\<|\")VOG/Common.*'
+    Priority:        3
+    SortPriority:    1
   
-  # Headers in <> with extension.
-  - Regex:           '<([a-zA-Z\/])+(\.h|\.hpp)>'
-    Priority:        2
+  # VOG headers
+  - Regex:           '^(\<|\")VOG.*'
+    Priority:        3
+    SortPriority:    2
+
+  # All non STL headers
+  - Regex:           '<[a-zA-Z0-9_\/]+\.h(pp)?>'
+    Priority:        10
+
+  # STL headers like <iostream>
+  - Regex:           '<[a-z_]+>'
+    Priority:        100

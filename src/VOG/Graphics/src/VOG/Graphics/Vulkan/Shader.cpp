@@ -2,8 +2,8 @@
 
 #include <VOG/Common/Assert.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
-#include <shaderc/shaderc.hpp>
 
+#include <shaderc/shaderc.hpp>
 #include <spirv_reflect.hpp>
 
 namespace VOG::Graphics::Vulkan

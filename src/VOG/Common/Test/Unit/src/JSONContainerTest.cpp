@@ -1,4 +1,5 @@
 #include <VOG/Common/JSONContainer.hpp>
+
 #include <gtest/gtest.h>
 
 namespace VOG::Common::Test

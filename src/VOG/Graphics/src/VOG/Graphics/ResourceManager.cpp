@@ -1,8 +1,7 @@
 #include "VOG/Graphics/ResourceManager.hpp"
 
+#include <VOG/Graphics/ShaderProgramCache.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
-
-#include "VOG/Graphics/ShaderProgramCache.hpp"
 
 namespace VOG::Graphics
 {

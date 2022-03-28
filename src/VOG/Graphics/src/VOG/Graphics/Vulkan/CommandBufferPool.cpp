@@ -1,8 +1,7 @@
 #include "VOG/Graphics/Vulkan/CommandBufferPool.hpp"
 
 #include <VOG/Common/Assert.hpp>
-
-#include "VOG/Graphics/GraphicsProvider.hpp"
+#include <VOG/Graphics/GraphicsProvider.hpp>
 
 namespace VOG::Graphics::Vulkan
 {

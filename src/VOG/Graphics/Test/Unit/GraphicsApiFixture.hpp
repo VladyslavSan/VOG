@@ -2,6 +2,7 @@
 
 #include <VOG/Common/JSONContainer.hpp>
 #include <VOG/Graphics/GraphicsProvider.hpp>
+
 #include <gtest/gtest.h>
 
 namespace VOG::Tests

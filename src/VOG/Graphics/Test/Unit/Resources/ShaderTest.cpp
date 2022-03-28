@@ -1,4 +1,5 @@
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
+
 #include <gtest/gtest.h>
 
 #include "GraphicsApiFixture.hpp"
