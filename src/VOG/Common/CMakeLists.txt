@@ -34,6 +34,4 @@ target_link_libraries(VOG.Common
         glm::glm
 )
 
-if(BUILD_TESTING)
-    add_subdirectory(Test)
-endif()
+add_subdirectory(Test)

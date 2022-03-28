@@ -100,6 +100,4 @@ if(APPLE)
 endif()
 
 
-if(BUILD_TESTING)
-    add_subdirectory(Test)
-endif()
+add_subdirectory(Test)
