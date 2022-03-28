@@ -10,6 +10,7 @@
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/RenderCommandRecorder.hpp>
 #include <VOG/Graphics/Vulkan/RenderPass.hpp>
+#include <boost/thread/thread.hpp>
 
 #include <chrono>
 #include <cmath>
@@ -67,10 +68,10 @@ Renderer::Render()
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .image               = mSwapchain->getImage(),
             .subresourceRange    = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                 .baseMipLevel   = 0,
-                                 .levelCount     = VK_REMAINING_ARRAY_LAYERS,
-                                 .baseArrayLayer = 0,
-                                 .layerCount     = VK_REMAINING_ARRAY_LAYERS}};
+                                    .baseMipLevel   = 0,
+                                    .levelCount     = VK_REMAINING_ARRAY_LAYERS,
+                                    .baseArrayLayer = 0,
+                                    .layerCount     = VK_REMAINING_ARRAY_LAYERS}};
 
         vk::DependencyInfoKHR info{};
         const auto            imageBariers = {barier};
@@ -155,10 +156,10 @@ Renderer::Render()
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .image               = mSwapchain->getImage(),
             .subresourceRange    = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                 .baseMipLevel   = 0,
-                                 .levelCount     = VK_REMAINING_ARRAY_LAYERS,
-                                 .baseArrayLayer = 0,
-                                 .layerCount     = VK_REMAINING_ARRAY_LAYERS}};
+                                    .baseMipLevel   = 0,
+                                    .levelCount     = VK_REMAINING_ARRAY_LAYERS,
+                                    .baseArrayLayer = 0,
+                                    .layerCount     = VK_REMAINING_ARRAY_LAYERS}};
 
         vk::DependencyInfoKHR info{};
         const auto            imageBariers = {barier};
@@ -205,13 +206,12 @@ Renderer::requestRenderChangeState(RenderJobState newState)
     {
     case RenderJobState::Active:
     {
-        mRenderThread = std::jthread{&Renderer::renderThreadMain, weak_from_this()};
+        mRenderThread = ThreadType{&Renderer::renderThreadMain, weak_from_this()};
         break;
     }
     case RenderJobState::Inactive:
     {
-        mRenderThread = {};
-        break;
+        mRenderThread = ThreadType{};
     }
     default:
         break;
@@ -229,12 +229,16 @@ Renderer::getFrameInFlightIndex() const
 }
 
 void
-Renderer::renderThreadMain(std::stop_token stopToken, std::weak_ptr<Renderer> renderer)
+Renderer::renderThreadMain(std::weak_ptr<Renderer> renderer)
 {
-    while (!stopToken.stop_requested())
+    while (true)
     {
-        auto locked = renderer.lock();
+        if (boost::this_thread::interruption_requested())
+        {
+            break;
+        }
 
+        auto locked = renderer.lock();
         locked->Render();
     }
 }

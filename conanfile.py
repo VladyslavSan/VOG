@@ -14,7 +14,7 @@ class VOGConan(ConanFile):
         "boost/1.78.0",
         "glm/0.9.9.8",
         # graphics
-        "vulkan-headers/1.2.198.0",
+        "vulkan-headers/1.3.204.0",
         "sdl/2.0.18",
         "gtest/1.11.0",
         # private dependencies

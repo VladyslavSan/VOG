@@ -7,7 +7,7 @@ namespace VOG::Graphics::Vulkan
 class ShaderProgram
 {
 public:
-    ShaderPtr vertexFunction = nullptr;
+    ShaderPtr vertexFunction   = nullptr;
     ShaderPtr fragmentFunction = nullptr;
 };
 } // namespace VOG::Graphics::Vulkan

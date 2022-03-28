@@ -27,11 +27,11 @@ Application::Application(const std::string& title,
           {"extensions", extensions},
           {"layers", layers},
           {"app_name", title},
-          {"surface", mWindow->getSurfaceHandles()},
+          {"surface", mWindow->getSurfaceHandle()},
           {"frames_in_flight", 2u},
           {"resource_manager",
            {"shader_source_dir",
-            R"(D:/git_clones/vulkan_dev/src/VOG/Graphics/resources/shaders)"}}})}
+            R"(/Users/vodobesku/git_projects/vulkan_dev/src/VOG/Graphics/resources/shaders)"}}})}
 {
 }
 

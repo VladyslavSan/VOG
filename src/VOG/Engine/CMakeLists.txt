@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.10.0)
 
+find_package(Boost COMPONENTS thread REQUIRED)
+
 add_library(VOG.Engine)
 set_target_properties(VOG.Engine PROPERTIES
     FOLDER VOG
@@ -25,6 +27,7 @@ target_sources(VOG.Engine
 target_link_libraries(VOG.Engine
     PUBLIC
         VOG.Common
+        boost::thread
     PRIVATE
         VOG.Graphics
 )

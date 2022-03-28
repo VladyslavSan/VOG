@@ -32,7 +32,8 @@ std::vector<const char*>
 getDeviceRequiredExtensions()
 {
     std::vector<const char*> requiredExtensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-                                                VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME};
+                                                VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+                                                VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME};
 
     return requiredExtensions;
 }
@@ -47,7 +48,7 @@ MakeInstance(vk::raii::Context& context, const Common::JSONContainer& options)
                                       .setApplicationVersion(1u)
                                       .setPEngineName(engineName.c_str())
                                       .setEngineVersion(1u)
-                                      .setApiVersion(VK_API_VERSION_1_2);
+                                      .setApiVersion(VK_API_VERSION_1_3);
 
     const auto layers = options["layers"].getArrayOfType<std::string>();
 

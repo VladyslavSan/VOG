@@ -3,11 +3,8 @@
 #include <VOG/Common/NoCopyable.hpp>
 #include <VOG/Engine/Scene/Scene.hpp>
 
-#include <functional>
+#include <boost/thread/scoped_thread.hpp>
 #include <memory>
-#include <thread>
-#include <unordered_map>
-#include <vector>
 
 namespace VOG::Common
 {
@@ -37,6 +34,8 @@ class Renderer
     : public std::enable_shared_from_this<Renderer>
     , public VOG::Common::NoCopyable
 {
+    using ThreadType = boost::scoped_thread<boost::interrupt_and_join_if_joinable, boost::thread>;
+
 public:
     static constexpr std::uint8_t MaxFramesInFlight = 3;
 
@@ -66,9 +65,9 @@ protected:
 
 protected:
     /// RenderThread run function
-    static void renderThreadMain(std::stop_token stop_token, std::weak_ptr<Renderer> renderer);
+    static void renderThreadMain(std::weak_ptr<Renderer> renderer);
 
-    std::jthread                mRenderThread;
+    ThreadType                  mRenderThread;
     std::atomic<RenderJobState> mCurrentState;
 
     std::uint8_t             mMaxFramesInFlight;

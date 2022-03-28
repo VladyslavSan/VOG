@@ -36,7 +36,7 @@ public:
 
     const SDL_SysWMinfo& getWMInfo() const;
 
-    const Common::JSONContainer& getSurfaceHandles() const;
+    const Common::JSONContainer& getSurfaceHandle() const;
 
 protected:
     Handle        mWindowHandle;
@@ -71,7 +71,7 @@ SDLWindow::getWMInfo() const
     return mWmInfo;
 }
 inline const Common::JSONContainer&
-SDLWindow::getSurfaceHandles() const
+SDLWindow::getSurfaceHandle() const
 {
     return mSurfaceHandles;
 }
