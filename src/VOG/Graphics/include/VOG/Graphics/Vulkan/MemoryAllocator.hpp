@@ -1,9 +1,10 @@
 #pragma once
 
+#include <VOG/Graphics/Config/VmaConfig.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 
-#include <cstddef>
 #include <cstdint>
+#include <memory>
 
 namespace VOG::Graphics
 {
@@ -12,63 +13,71 @@ class GraphicsProvider;
 
 namespace VOG::Graphics::Vulkan
 {
-class MemoryAllocator;
-class Allocation
+class Buffer;
+class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator>
 {
-public:
-    Allocation(MemoryAllocator* allocator,
-               std::uintptr_t   allocationHandle,
-               std::uintptr_t   allocationInfo);
-
-    ~Allocation();
-
-    std::uint32_t vulkanMemoryType() const;
-
-    VkDeviceMemory vulkanDeviceMemory() const;
-
-    std::uint64_t size() const;
-
-    std::uint64_t offset() const;
-
-    std::byte* mappedMemory() const;
-
-protected:
-    /** Allocator that created allocation */
-    MemoryAllocator* mAllocator;
-
-    /** In VMA terms this corresponds to VmaAllocation handle */
-    std::uintptr_t mAllocationHandle;
-
-    /** In VMA terms this corresponds to VmaAllocationInfo pointer */
-    std::uintptr_t mAllocationInfo;
-};
-
-class BufferAllocation : public Allocation
-{
-public:
-    using Allocation::Allocation;
-
-    ~BufferAllocation();
-};
-
-class MemoryAllocator
-{
-    friend class Allocation;
-
-public:
     MemoryAllocator(const GraphicsProvider& GraphicsProvider);
+
+public:
+    class Allocation;
+    struct AllocationInfo;
+
+    [[nodiscard]] static std::shared_ptr<MemoryAllocator>
+    create(const GraphicsProvider& graphicsProvider)
+    {
+        return std::shared_ptr<MemoryAllocator>{new MemoryAllocator{graphicsProvider}};
+    }
 
     ~MemoryAllocator();
 
-    Allocation allocateMemoryForBuffer(const vk::raii::Buffer& buffer);
+    operator VmaAllocator() const;
 
-    Allocation allocateMemoryForImage(const vk::raii::Image& image);
-
-protected:
-    std::uintptr_t getAllocatorHandle() const;
+    std::unique_ptr<Buffer> makeBuffer(const vk::BufferCreateInfo& createInfo,
+                                       const AllocationInfo&       allocationInfo);
 
 protected:
     const GraphicsProvider& mGraphicsProvider;
-    std::uintptr_t          mAllocatorHandle;
+    VmaAllocator            mAllocator;
+};
+
+struct MemoryAllocator::AllocationInfo
+{
+    VmaAllocationCreateFlags flags;
+    VmaMemoryUsage           usage;
+    const char*              tag = nullptr;
+};
+
+class MemoryAllocator::Allocation
+{
+public:
+    ~Allocation();
+
+    Allocation(const MemoryAllocator* _allocator,
+               VmaAllocation          _allocation,
+               VmaAllocationInfo      _info,
+               AllocationInfo         _createInfo);
+
+    Allocation(Allocation&&) noexcept;
+
+    Allocation(const Allocation&) = delete;
+
+protected:
+    /** Allocator that created allocation */
+    const MemoryAllocator* allocator;
+
+    /** Allocation struct */
+    VmaAllocation allocation;
+
+    /** Allocation info */
+    const VmaAllocationInfo info;
+
+    /** Creation info*/
+    const AllocationInfo createInfo;
+
+    /** Is this allocation is mapped persistently. If yes there - no need to call map/unmap */
+    const bool isPersistentlyMapped;
+
+    /** Vulkan memory property flags */
+    const vk::MemoryPropertyFlags memoryFlags;
 };
 } // namespace VOG::Graphics::Vulkan

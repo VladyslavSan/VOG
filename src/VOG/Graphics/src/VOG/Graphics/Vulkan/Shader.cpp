@@ -36,8 +36,7 @@ compileGLSLShader(ShadingStage stage, const std::string& glslCode)
         compiler.CompileGlslToSpv(glslCode, ConvertShadingStage(stage), "main", options);
     if (resultCompile.GetCompilationStatus() != shaderc_compilation_status_success)
     {
-        throw std::runtime_error{"Failed to compile shader with error:\n" +
-                                 resultCompile.GetErrorMessage()};
+        throw Shader::CompilationError{resultCompile.GetErrorMessage()};
     }
 
     return {resultCompile.begin(), resultCompile.end()};

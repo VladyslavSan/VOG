@@ -1,17 +1,19 @@
 #include "VOG/Engine/Renderer/Renderer.hpp"
 
 #include <VOG/Common/JSONContainer.hpp>
+#include <VOG/Common/Math/Math.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Frame/FrameObjectManager.hpp>
 #include <VOG/Graphics/GraphicsProvider.hpp>
 #include <VOG/Graphics/ResourceManager.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
+#include <VOG/Graphics/Vulkan/Buffer.hpp>
+#include <VOG/Graphics/Vulkan/CommandBufferRecorder.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
-#include <VOG/Graphics/Vulkan/RenderCommandRecorder.hpp>
 #include <VOG/Graphics/Vulkan/RenderPass.hpp>
 
-#include <boost/thread/thread.hpp>
+#include <stddef.h>
 
 #include <chrono>
 #include <cmath>
@@ -19,11 +21,10 @@
 
 namespace VOG::Engine
 {
-Renderer::~Renderer() {}
+Renderer::~Renderer() { requestRenderChangeState(RenderJobState::eInactive); }
 
 Renderer::Renderer(const Common::JSONContainer& parameters)
-    : mRenderThread{}
-    , mCurrentState{RenderJobState::Inactive}
+    : mCurrentState{RenderJobState::eInactive}
     , mMaxFramesInFlight{std::clamp(parameters["frames_in_flight"].getOr<std::uint8_t>(1u),
                                     std::uint8_t{1},
                                     MaxFramesInFlight)}
@@ -39,12 +40,36 @@ Renderer::Renderer(const Common::JSONContainer& parameters)
 }
 
 void
-Renderer::Render()
+Renderer::render()
 {
     constexpr std::size_t threadId = 0u;
 
+    struct VertexData
+    {
+        Common::Math::Vec2f position;
+        Common::Math::Vec4f color;
+    };
+    std::shared_ptr<Graphics::Vulkan::Buffer> triangleBuffer;
+    {
+        constexpr VertexData vertexData[] = {{{0.0, -0.5}, {1.0, 0.0, 0.0, 1.0}},
+                                             {{0.5, 0.5}, {0.0, 1.0, 0.0, 1.0}},
+                                             {{-0.5, 0.5}, {0.0, 0.0, 1.0, 1.0}}};
+
+        constexpr std::size_t kVertexDataSize = std::size(vertexData) * sizeof(VertexData);
+
+        triangleBuffer = mGraphicsProvider->getMemoryAllocator()->makeBuffer(
+            {.size = kVertexDataSize, .usage = vk::BufferUsageFlagBits::eVertexBuffer},
+            {.usage = VMA_MEMORY_USAGE_CPU_TO_GPU});
+
+        // clang-format on
+        auto mapping = triangleBuffer->mapForWrite();
+        std::memcpy(mapping.data, vertexData, kVertexDataSize);
+    }
+
     if (mSwapchain->acquireNextImage() != vk::Result::eSuccess)
+    {
         throw std::runtime_error{"Could not acquire image"};
+    }
 
     const std::size_t frameInFlightIndex = getFrameInFlightIndex();
 
@@ -55,30 +80,31 @@ Renderer::Render()
 
     auto commandBuffer = thread.getCommandBuffer(vk::CommandBufferLevel::ePrimary);
     commandBuffer->begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+    commandBuffer->bindVertexBuffers(0, {**triangleBuffer}, {0u});
+    commandBuffer->addBoundResource(triangleBuffer);
 
-    Graphics::Vulkan::RenderCommandRecorder recorder{mGraphicsProvider->getDevice(),
+    Graphics::Vulkan::CommandBufferRecorder recorder{mGraphicsProvider->getDevice(),
                                                      **commandBuffer};
 
-    {
-        vk::ImageMemoryBarrier2KHR barier{
-            .srcStageMask        = vk::PipelineStageFlagBits2KHR::eBottomOfPipe,
-            .dstStageMask        = vk::PipelineStageFlagBits2KHR::eColorAttachmentOutput,
-            .oldLayout           = vk::ImageLayout::eUndefined,
-            .newLayout           = vk::ImageLayout::eColorAttachmentOptimal,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image               = mSwapchain->getImage(),
-            .subresourceRange    = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                    .baseMipLevel   = 0,
-                                    .levelCount     = VK_REMAINING_ARRAY_LAYERS,
-                                    .baseArrayLayer = 0,
-                                    .layerCount     = VK_REMAINING_ARRAY_LAYERS}};
-
-        vk::DependencyInfoKHR info{};
-        const auto            imageBariers = {barier};
-        info.setImageMemoryBarriers(imageBariers);
-        commandBuffer->pipelineBarrier2KHR(info);
-    }
+    recorder.setBarriers({},
+                         {{.dstStageMask        = vk::PipelineStageFlagBits2::eVertexShader,
+                           .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                           .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                           .buffer              = **triangleBuffer,
+                           .offset              = 0u,
+                           .size                = VK_WHOLE_SIZE}},
+                         {{.srcStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe,
+                           .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                           .oldLayout    = vk::ImageLayout::eUndefined,
+                           .newLayout    = vk::ImageLayout::eColorAttachmentOptimal,
+                           .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                           .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                           .image               = mSwapchain->getImage(),
+                           .subresourceRange    = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
+                                                   .baseMipLevel   = 0,
+                                                   .levelCount     = VK_REMAINING_ARRAY_LAYERS,
+                                                   .baseArrayLayer = 0,
+                                                   .layerCount     = VK_REMAINING_ARRAY_LAYERS}}});
 
     const float time = std::chrono::duration_cast<std::chrono::milliseconds>(
                            std::chrono::high_resolution_clock::now() -
@@ -108,10 +134,10 @@ Renderer::Render()
         vk::raii::PipelineLayout layout{mGraphicsProvider->getDevice(),
                                         vk::PipelineLayoutCreateInfo{}};
 
-        auto program = mResourceManager->createShaderProgram("BasicTriangle");
+        auto program = mResourceManager->createShaderProgram("ScreenSpacePositionColor");
 
         vk::PipelineColorBlendAttachmentState blendState{
-            .blendEnable    = false,
+            .blendEnable    = 0u,
             .colorWriteMask = {vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
                                vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA}};
 
@@ -119,7 +145,20 @@ Renderer::Render()
             mGraphicsProvider->getDevice(),
             nullptr,
             *program,
-            {},
+            {.bindingDescription =
+                 {
+                     {.binding   = 0u,
+                      .stride    = sizeof(VertexData),
+                      .inputRate = vk::VertexInputRate::eVertex},
+                 },
+             .attributeDescription = {{.location = 0u,
+                                       .binding  = 0u,
+                                       .format   = vk::Format::eR32G32Sfloat,
+                                       .offset   = 0u},
+                                      {.location = 1u,
+                                       .binding  = 0u,
+                                       .format   = vk::Format::eR32G32B32A32Sfloat,
+                                       .offset   = offsetof(VertexData, color)}}},
             {.cullMode = vk::CullModeFlagBits::eNone},
             {.viewportCount = 1u, .scissorCount = 1u},
             vk::PipelineDepthStencilStateCreateInfo{},
@@ -130,8 +169,7 @@ Renderer::Render()
             *layout,
             **renderPass,
             0u);
-        recorder->addBoundResource(pipeline);
-        recorder->bindPipeline(vk::PipelineBindPoint::eGraphics, **pipeline);
+        recorder.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
 
         const auto extent = mSwapchain->getExtent();
         recorder->setViewport(0,
@@ -147,26 +185,20 @@ Renderer::Render()
         recorder.endRenderPass();
     }
 
-    {
-        vk::ImageMemoryBarrier2KHR barier{
-            .srcStageMask        = vk::PipelineStageFlagBits2KHR::eColorAttachmentOutput,
-            .dstStageMask        = vk::PipelineStageFlagBits2KHR::eTopOfPipe,
-            .oldLayout           = vk::ImageLayout::eColorAttachmentOptimal,
-            .newLayout           = vk::ImageLayout::ePresentSrcKHR,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image               = mSwapchain->getImage(),
-            .subresourceRange    = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                    .baseMipLevel   = 0,
-                                    .levelCount     = VK_REMAINING_ARRAY_LAYERS,
-                                    .baseArrayLayer = 0,
-                                    .layerCount     = VK_REMAINING_ARRAY_LAYERS}};
-
-        vk::DependencyInfoKHR info{};
-        const auto            imageBariers = {barier};
-        info.setImageMemoryBarriers(imageBariers);
-        commandBuffer->pipelineBarrier2KHR(info);
-    }
+    recorder.setBarriers({},
+                         {},
+                         {{.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                           .dstStageMask = vk::PipelineStageFlagBits2::eTopOfPipe,
+                           .oldLayout    = vk::ImageLayout::eColorAttachmentOptimal,
+                           .newLayout    = vk::ImageLayout::ePresentSrcKHR,
+                           .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                           .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                           .image               = mSwapchain->getImage(),
+                           .subresourceRange    = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
+                                                   .baseMipLevel   = 0,
+                                                   .levelCount     = VK_REMAINING_ARRAY_LAYERS,
+                                                   .baseArrayLayer = 0,
+                                                   .layerCount     = VK_REMAINING_ARRAY_LAYERS}}});
 
     commandBuffer->end();
 
@@ -175,7 +207,7 @@ Renderer::Render()
         const auto nextValue         = timelineSemaphore.getNextWaitValue();
         frame.submit(std::move(commandBuffer),
                      {},
-                     {.semapore = &timelineSemaphore, .value = nextValue},
+                     {.semaphore = &timelineSemaphore, .value = nextValue},
                      frame.getFramePresentWaitSemaphore());
     }
 
@@ -201,16 +233,18 @@ bool
 Renderer::requestRenderChangeState(RenderJobState newState)
 {
     if (newState == mCurrentState.load())
+    {
         return false;
+    }
 
     switch (newState)
     {
-    case RenderJobState::Active:
+    case RenderJobState::eActive:
     {
         mRenderThread = ThreadType{&Renderer::renderThreadMain, weak_from_this()};
         break;
     }
-    case RenderJobState::Inactive:
+    case RenderJobState::eInactive:
     {
         mRenderThread = ThreadType{};
     }
@@ -240,7 +274,7 @@ Renderer::renderThreadMain(std::weak_ptr<Renderer> renderer)
         }
 
         auto locked = renderer.lock();
-        locked->Render();
+        locked->render();
     }
 }
 } // namespace VOG::Engine

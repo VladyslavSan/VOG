@@ -50,7 +50,7 @@ GraphicsPipeline::GraphicsPipeline(const Device&                               d
                                    std::uint32_t                               subpass)
     : vk::raii::Pipeline{nullptr}
 {
-    std::array<vk::PipelineShaderStageCreateInfo, 2> stadingStages = {
+    std::array<vk::PipelineShaderStageCreateInfo, 2> shadingStages = {
         vk::PipelineShaderStageCreateInfo{.stage  = vk::ShaderStageFlagBits::eVertex,
                                           .module = *shading.vertexFunction->module,
                                           .pName  = "main"},
@@ -66,15 +66,16 @@ GraphicsPipeline::GraphicsPipeline(const Device&                               d
             static_cast<std::uint32_t>(vertexLayout.attributeDescription.size()),
         .pVertexAttributeDescriptions = vertexLayout.attributeDescription.data()};
     const vk::PipelineInputAssemblyStateCreateInfo inputAssemblyState{
-        .topology = rasterizer.topology, .primitiveRestartEnable = false};
+        .topology               = rasterizer.topology,
+        .primitiveRestartEnable = rasterizer.primitiveRestartEnabled};
 
     const vk::PipelineRasterizationStateCreateInfo rasterizationState{
-        .depthClampEnable        = false,
+        .depthClampEnable        = 0u,
         .rasterizerDiscardEnable = rasterizer.rasterizationDiscard,
         .polygonMode             = rasterizer.polygonMode,
         .cullMode                = rasterizer.cullMode,
         .frontFace               = rasterizer.frontFace,
-        .depthBiasEnable         = false,
+        .depthBiasEnable         = 0u,
         .lineWidth               = 1.0f};
     const vk::PipelineDynamicStateCreateInfo dynamicState{
         .dynamicStateCount = static_cast<std::uint32_t>(dynamicStates.size()),
@@ -91,7 +92,7 @@ GraphicsPipeline::GraphicsPipeline(const Device&                               d
                                         .layout              = pipelineLayout,
                                         .renderPass          = renderPass,
                                         .subpass             = subpass};
-    info.setStages(stadingStages);
+    info.setStages(shadingStages);
 
     static_cast<vk::raii::Pipeline&>(*this) = vk::raii::Pipeline{device, cache, info};
 }

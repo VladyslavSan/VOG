@@ -68,23 +68,23 @@ FrameObjects::submit(Vulkan::CommandBufferHandle              handle,
     submitInfo.setPSignalSemaphores(signalSemaphores.data());
 
     vk::TimelineSemaphoreSubmitInfo timeline{};
-    if (wait.semaphore)
+    if (wait.semaphore != nullptr)
     {
         submitInfo.setWaitSemaphores(**wait.semaphore);
         timeline.setWaitSemaphoreValues(wait.value);
     }
 
     std::array<std::uint64_t, 2> signalValues{};
-    if (signal.semapore)
+    if (signal.semaphore != nullptr)
     {
-        signalSemaphores[0] = **signal.semapore;
+        signalSemaphores[0] = **signal.semaphore;
         signalValues[0]     = signal.value;
         timeline.setSignalSemaphoreValues(signalValues);
 
         ++submitInfo.signalSemaphoreCount;
     }
 
-    if (wait.semaphore || signal.semapore)
+    if ((wait.semaphore != nullptr) || (signal.semaphore != nullptr))
     {
         submitInfo.pNext = &timeline;
     }
@@ -98,7 +98,7 @@ FrameObjects::submit(Vulkan::CommandBufferHandle              handle,
     // Submit work to queue.
     mGraphicsProvider.getGraphicsQueue().submit(submitInfo);
 
-    // Add command buffer handle to list of submited ones.
+    // Add command buffer handle to list of submitted ones.
     mUsedCommandBuffers.push_back(std::move(handle));
 }
 
@@ -109,7 +109,7 @@ FrameObjects::waitAndReset()
     // Wait for pending command buffers to finish.
     mTimelineSemaphore.waitOnCPU(timelineValue, std::numeric_limits<std::uint64_t>::max());
 
-    // Free used command buffers handles so that they are released to back to pools.
+    // Free used command buffers handles so that they are released back to pool.
     mUsedCommandBuffers.clear();
 
     // Now reset the thread objects and those will reset the pools.

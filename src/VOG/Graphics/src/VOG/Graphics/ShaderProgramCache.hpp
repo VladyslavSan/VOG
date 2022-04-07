@@ -30,10 +30,10 @@ public:
     std::shared_ptr<Vulkan::ShaderProgram> get(const std::string& name);
 
 protected:
-    const GraphicsProvider&               mGraphicsProvider;
-    const std::filesystem::path           mShaderSourcePath;
-    const nlohmann::json                  mShaderConfig;
-    const nlohmann::json::const_reference mShaderMap;
+    const GraphicsProvider&         mGraphicsProvider;
+    const std::filesystem::path     mShaderSourcePath;
+    const nlohmann::json            mShaderConfig;
+    nlohmann::json::const_reference mShaderMap;
 
     std::unordered_map<std::string, std::shared_ptr<Vulkan::ShaderProgram>> mCache;
 };

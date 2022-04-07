@@ -4,26 +4,33 @@
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 
 #include <boost/container/small_vector.hpp>
+#include <boost/container/static_vector.hpp>
 
 namespace VOG::Graphics::Vulkan
 {
+constexpr std::uint8_t gMaxNumVertexBuffers    = 4u;
+constexpr std::uint8_t gMaxNumVertexAttributes = 8u;
 class Device;
 
 struct VertexLayout
 {
-    boost::container::small_vector<vk::VertexInputBindingDescription, 2>   bindingDescription;
-    boost::container::small_vector<vk::VertexInputAttributeDescription, 8> attributeDescription;
+    template <class T, std::size_t N>
+    using Container = boost::container::static_vector<T, N>;
+
+    Container<vk::VertexInputBindingDescription, gMaxNumVertexBuffers>      bindingDescription;
+    Container<vk::VertexInputAttributeDescription, gMaxNumVertexAttributes> attributeDescription;
 };
 
 struct RasterizationOptions
 {
     // PipelineInputAssemblyStateCreateInfo
-    vk::PrimitiveTopology topology            : 4 = vk::PrimitiveTopology::eTriangleList;
+    vk::PrimitiveTopology topology               : 4 = vk::PrimitiveTopology::eTriangleList;
     // PipelineRasterizationStateCreateInfo
-    bool                 rasterizationDiscard : 1 = false;
-    vk::PolygonMode      polygonMode          : 2 = vk::PolygonMode::eFill;
-    vk::CullModeFlagBits cullMode             : 2 = vk::CullModeFlagBits::eBack;
-    vk::FrontFace        frontFace            : 1 = vk::FrontFace::eCounterClockwise;
+    vk::Bool32           rasterizationDiscard    : 1 = 0u;
+    vk::PolygonMode      polygonMode             : 2 = vk::PolygonMode::eFill;
+    vk::CullModeFlagBits cullMode                : 2 = vk::CullModeFlagBits::eBack;
+    vk::FrontFace        frontFace               : 1 = vk::FrontFace::eCounterClockwise;
+    vk::Bool32           primitiveRestartEnabled : 1 = 0u;
 };
 
 class GraphicsPipeline : public vk::raii::Pipeline

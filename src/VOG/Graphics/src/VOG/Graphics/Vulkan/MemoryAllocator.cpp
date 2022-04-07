@@ -1,7 +1,7 @@
 #include "VOG/Graphics/Vulkan/MemoryAllocator.hpp"
 
-#include <VOG/Graphics/Config/VMAConfig.hpp>
 #include <VOG/Graphics/GraphicsProvider.hpp>
+#include <VOG/Graphics/Vulkan/Buffer.hpp>
 
 #include <stdexcept>
 
@@ -9,76 +9,59 @@ namespace VOG::Graphics::Vulkan
 {
 namespace
 {
-template <typename T>
-T
-as(std::uintptr_t handle)
+vk::MemoryPropertyFlags
+getMemoryFlags(VmaAllocator allocator, std::uint32_t memoryIndex)
 {
-    return reinterpret_cast<T>(handle);
+    VkMemoryPropertyFlags flags{};
+    vmaGetMemoryTypeProperties(allocator, memoryIndex, &flags);
+
+    return vk::MemoryPropertyFlags{flags};
 }
 } // namespace
 
-Allocation::Allocation(MemoryAllocator* allocator,
-                       std::uintptr_t   allocationHandle,
-                       std::uintptr_t   allocationInfo)
-    : mAllocator(allocator)
-    , mAllocationHandle{allocationHandle}
-    , mAllocationInfo{allocationInfo}
+MemoryAllocator::Allocation::Allocation(const MemoryAllocator*  _allocator,
+                                        const VmaAllocation     _allocation,
+                                        const VmaAllocationInfo _info,
+                                        const AllocationInfo    _createInfo)
+    : allocator{_allocator}
+    , allocation{_allocation}
+    , info{_info}
+    , createInfo{_createInfo}
+    , isPersistentlyMapped{(_createInfo.flags & VMA_ALLOCATION_CREATE_MAPPED_BIT) != 0}
+    , memoryFlags{getMemoryFlags(*allocator, info.memoryType)}
 {
 }
 
-Allocation::~Allocation()
+MemoryAllocator::Allocation::~Allocation()
 {
-    if (mAllocationHandle != 0u)
+    if (allocation != nullptr)
     {
-        vmaFreeMemory(as<VmaAllocator>(mAllocator->getAllocatorHandle()),
-                      as<VmaAllocation>(mAllocationHandle));
+        vmaFreeMemory(*allocator, allocation);
     }
 }
-
-std::uint32_t
-Allocation::vulkanMemoryType() const
+MemoryAllocator::Allocation::Allocation(MemoryAllocator::Allocation&& other) noexcept
+    : allocator{other.allocator}
+    , allocation{std::exchange(other.allocation, nullptr)}
+    , info{other.info}
+    , createInfo{other.createInfo}
+    , isPersistentlyMapped{other.isPersistentlyMapped}
+    , memoryFlags{other.memoryFlags}
 {
-    return as<VmaAllocationInfo*>(mAllocationInfo)->memoryType;
 }
-
-VkDeviceMemory
-Allocation::vulkanDeviceMemory() const
-{
-    return as<VmaAllocationInfo*>(mAllocationInfo)->deviceMemory;
-}
-
-std::uint64_t
-Allocation::size() const
-{
-    return as<VmaAllocationInfo*>(mAllocationInfo)->size;
-}
-
-std::uint64_t
-Allocation::offset() const
-{
-    return as<VmaAllocationInfo*>(mAllocationInfo)->offset;
-}
-
-std::byte*
-Allocation::mappedMemory() const
-{
-    return reinterpret_cast<std::byte*>(as<VmaAllocationInfo*>(mAllocationInfo)->pMappedData);
-}
-
-BufferAllocation::~BufferAllocation() {}
 
 MemoryAllocator::MemoryAllocator(const GraphicsProvider& graphicsProvider)
     : mGraphicsProvider{graphicsProvider}
-    , mAllocatorHandle{0u}
+    , mAllocator{nullptr}
 {
 
     VmaAllocatorCreateInfo allocatorInfo = {};
     allocatorInfo.physicalDevice         = *mGraphicsProvider.getPhysicalDevice();
     allocatorInfo.device                 = *mGraphicsProvider.getDevice();
+    allocatorInfo.instance               = *mGraphicsProvider.getInstance();
 
     VmaVulkanFunctions vulkanFunctions;
     {
-        auto callDispatcherDevice = mGraphicsProvider.getDevice().getDispatcher();
+        const auto* callDispatcherDevice = mGraphicsProvider.getDevice().getDispatcher();
 
         vulkanFunctions.vkAllocateMemory   = callDispatcherDevice->vkAllocateMemory;
         vulkanFunctions.vkBindBufferMemory = callDispatcherDevice->vkBindBufferMemory;
@@ -102,7 +85,7 @@ MemoryAllocator::MemoryAllocator(const GraphicsProvider& graphicsProvider)
     }
 
     {
-        auto callDispatcherInstance = mGraphicsProvider.getInstance().getDispatcher();
+        const auto* callDispatcherInstance = mGraphicsProvider.getInstance().getDispatcher();
         vulkanFunctions.vkGetPhysicalDeviceMemoryProperties =
             callDispatcherInstance->vkGetPhysicalDeviceMemoryProperties;
         vulkanFunctions.vkGetPhysicalDeviceProperties =
@@ -111,20 +94,44 @@ MemoryAllocator::MemoryAllocator(const GraphicsProvider& graphicsProvider)
 
     allocatorInfo.pVulkanFunctions = &vulkanFunctions;
 
-    VmaAllocator allocator;
-    auto         result = vmaCreateAllocator(&allocatorInfo, &allocator);
+    auto result = vmaCreateAllocator(&allocatorInfo, &mAllocator);
     if (result != VK_SUCCESS)
+    {
         throw std::runtime_error("MemoryAllocator creation failed.");
-
-    static_assert(sizeof(VmaAllocator) == sizeof(decltype(mAllocatorHandle)), "");
-    mAllocatorHandle = reinterpret_cast<std::uintptr_t>(allocator);
+    }
 }
 
-MemoryAllocator::~MemoryAllocator() { vmaDestroyAllocator(as<VmaAllocator>(mAllocatorHandle)); }
+MemoryAllocator::~MemoryAllocator() { vmaDestroyAllocator(mAllocator); }
 
-std::uintptr_t
-MemoryAllocator::getAllocatorHandle() const
+std::unique_ptr<Buffer>
+MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
+                            const AllocationInfo&       allocationCreateInfo)
 {
-    return mAllocatorHandle;
+    VkBuffer                buffer;
+    VmaAllocation           allocation;
+    VmaAllocationInfo       allocationInfo;
+    VmaAllocationCreateInfo vmaAllocationCreateInfo{
+        .flags     = allocationCreateInfo.flags,
+        .usage     = allocationCreateInfo.usage,
+        .pUserData = const_cast<char*>(allocationCreateInfo.tag)};
+
+    vk::Result result =
+        static_cast<vk::Result>(vmaCreateBuffer(mAllocator,
+                                                &static_cast<const VkBufferCreateInfo&>(createInfo),
+                                                &vmaAllocationCreateInfo,
+                                                &buffer,
+                                                &allocation,
+                                                &allocationInfo));
+
+    if (result != vk::Result::eSuccess || buffer == VK_NULL_HANDLE)
+    {
+        throw std::runtime_error{""};
+    }
+
+    return std::make_unique<Buffer>(
+        Allocation{this, allocation, allocationInfo, allocationCreateInfo},
+        vk::raii::Buffer{mGraphicsProvider.getDevice(), buffer});
 }
+
+MemoryAllocator::operator VmaAllocator() const { return mAllocator; }
 } // namespace VOG::Graphics::Vulkan

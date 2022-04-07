@@ -64,7 +64,7 @@ public:
      *
      * @param type Type of the command buffer to return - primary or secondary.
      *
-     * @returns RenderCommandRecorder instance
+     * @returns CommandBufferRecorder instance
      */
     CommandBufferHandle get(CommandBufferType type);
 

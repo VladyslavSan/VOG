@@ -2,6 +2,7 @@
 
 #include <VOG/Common/JSONContainer.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
+#include <VOG/Graphics/Vulkan/MemoryAllocator.hpp>
 
 #include <cstring>
 #include <iostream>
@@ -116,7 +117,9 @@ FindGraphicsTransferQueues(vk::raii::PhysicalDevice& device)
         const auto& queue = queueFamilies[i];
         if ((queue.queueFlags & vk::QueueFlagBits::eGraphics) &&
             (queue.queueFlags & (vk::QueueFlagBits::eTransfer | vk::QueueFlagBits::eCompute)))
+        {
             return {.graphics = {i, queue}, .transfer = {i, queue}};
+        }
     }
 
     std::uint32_t graphicsIndex = std::numeric_limits<std::uint32_t>::max();
@@ -126,15 +129,21 @@ FindGraphicsTransferQueues(vk::raii::PhysicalDevice& device)
         const auto& queue = queueFamilies[i];
         if (graphicsIndex == std::numeric_limits<std::uint32_t>::max() &&
             (queue.queueFlags & vk::QueueFlagBits::eGraphics))
+        {
             graphicsIndex = i;
+        }
 
         if (transferIndex == std::numeric_limits<std::uint32_t>::max() &&
             (queue.queueFlags & vk::QueueFlagBits::eTransfer))
+        {
             transferIndex = i;
+        }
 
         if (graphicsIndex != std::numeric_limits<std::uint32_t>::max() &&
             transferIndex != std::numeric_limits<std::uint32_t>::max())
+        {
             break;
+        }
     }
 
     if (graphicsIndex == std::numeric_limits<std::uint32_t>::max() ||
@@ -201,8 +210,8 @@ MakeDevice(vk::raii::PhysicalDevice& physicalDevice, const GraphicsProvider::Que
         }
     }
 
-    vk::PhysicalDeviceVulkan12Features            vulkanDevice12Features{.timelineSemaphore = true};
-    vk::PhysicalDeviceSynchronization2FeaturesKHR syncFeatures{.synchronization2 = true};
+    vk::PhysicalDeviceVulkan12Features            vulkanDevice12Features{.timelineSemaphore = 1u};
+    vk::PhysicalDeviceSynchronization2FeaturesKHR syncFeatures{.synchronization2 = 1u};
     vulkanDevice12Features.pNext = &syncFeatures;
 
     vk::DeviceCreateInfo deviceCreateInfo{.pNext                = &vulkanDevice12Features,
@@ -229,6 +238,7 @@ GraphicsProvider::GraphicsProvider(const Common::JSONContainer& options)
     , mTransferQueue{vk::raii::Queue{mDevice, mQueueInfos.transfer.familyIndex, 0u},
                      mQueueInfos.transfer.familyIndex,
                      mQueueInfos.transfer.familyProperties}
+    , mMemoryAllocator{Vulkan::MemoryAllocator::create(*this)}
 {
 }
 

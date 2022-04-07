@@ -5,6 +5,7 @@
 #include <boost/container/small_vector.hpp>
 
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,11 @@ enum class ShadingStage : std::uint8_t
 class Shader
 {
 public:
+    class CompilationError : public std::runtime_error
+    {
+        using std::runtime_error::runtime_error;
+    };
+
     struct Reflection
     {
         enum class ResourceType : std::uint8_t

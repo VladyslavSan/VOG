@@ -93,7 +93,16 @@ ShaderProgramCache::ShaderProgramCache(const GraphicsProvider&      graphicsProv
             const std::string shaderSource = readFile(stagePath);
             VOG_ASSERT_MSG(!shaderSource.empty(), "Shader source file should not be empty.")
 
-            auto shader = Vulkan::Shader::create(device, shadingStage, shaderSource);
+            std::shared_ptr<Vulkan::Shader> shader = nullptr;
+            try
+            {
+                shader = Vulkan::Shader::create(device, shadingStage, shaderSource);
+            }
+            catch (const Vulkan::Shader::CompilationError& err)
+            {
+                throw std::runtime_error{"Failed to compile shader \"" + shaderName +
+                                         "\" with error:\n" + err.what()};
+            }
             switch (shadingStage)
             {
             case Vulkan::ShadingStage::eVertex:
@@ -101,6 +110,8 @@ ShaderProgramCache::ShaderProgramCache(const GraphicsProvider&      graphicsProv
                 break;
             case Vulkan::ShadingStage::eFragment:
                 program->fragmentFunction = shader;
+                break;
+            case Vulkan::ShadingStage::eUnknown:
                 break;
             }
         }

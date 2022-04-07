@@ -42,8 +42,8 @@ public:
 
     enum class RenderJobState : uint8_t
     {
-        Inactive = 0,
-        Active
+        eInactive = 0,
+        eActive
     };
 
     virtual ~Renderer();
@@ -53,7 +53,7 @@ public:
     Renderer(const Renderer&)  = delete;
     Renderer(Renderer&& other) = delete;
 
-    void Render();
+    void render();
 
     const std::shared_ptr<Scene::Scene>& getScene() const;
 

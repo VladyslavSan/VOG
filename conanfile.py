@@ -15,13 +15,13 @@ class VOGConan(ConanFile):
         "glm/0.9.9.8",
         # graphics
         "vulkan-headers/1.3.204.0",
+        "vulkan-memory-allocator/2.3.0",
         "sdl/2.0.18",
         "gtest/1.11.0",
         # private dependencies
         ("nlohmann_json/3.10.5", "private"),
         ("shaderc/2021.1", "private"),
         ("spirv-cross/cci.20211113", "private"),
-        ("vulkan-memory-allocator/2.3.0", "private"),
     ]
 
     def config_options(self):

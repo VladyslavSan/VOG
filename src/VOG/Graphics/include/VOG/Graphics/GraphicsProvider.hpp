@@ -3,7 +3,6 @@
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
-#include <VOG/Graphics/Vulkan/MemoryAllocator.hpp>
 #include <VOG/Graphics/Vulkan/Queue.hpp>
 
 #include <memory>
@@ -13,6 +12,11 @@
 namespace VOG::Common
 {
 class JSONContainer;
+}
+
+namespace VOG::Graphics::Vulkan
+{
+class MemoryAllocator;
 }
 
 namespace VOG::Graphics
@@ -59,25 +63,77 @@ public:
      */
     GraphicsProvider(const Common::JSONContainer& options);
 
-    // clang-format off
-    vk::raii::Context& getContext() { return mContext; }
-    const vk::raii::Context& getContext() const { return mContext; }
+    vk::raii::Context&
+    getContext()
+    {
+        return mContext;
+    }
+    const vk::raii::Context&
+    getContext() const
+    {
+        return mContext;
+    }
 
-    vk::raii::Instance& getInstance() { return mInstance; }
-    const vk::raii::Instance& getInstance() const { return mInstance; }
+    vk::raii::Instance&
+    getInstance()
+    {
+        return mInstance;
+    }
+    const vk::raii::Instance&
+    getInstance() const
+    {
+        return mInstance;
+    }
 
-    vk::raii::PhysicalDevice& getPhysicalDevice() { return mPhysicalDevice; }
-    const vk::raii::PhysicalDevice& getPhysicalDevice() const { return mPhysicalDevice; }
+    vk::raii::PhysicalDevice&
+    getPhysicalDevice()
+    {
+        return mPhysicalDevice;
+    }
+    const vk::raii::PhysicalDevice&
+    getPhysicalDevice() const
+    {
+        return mPhysicalDevice;
+    }
 
-    Vulkan::Device& getDevice() { return mDevice; }
-    const Vulkan::Device& getDevice() const { return mDevice; }
+    Vulkan::Device&
+    getDevice()
+    {
+        return mDevice;
+    }
+    const Vulkan::Device&
+    getDevice() const
+    {
+        return mDevice;
+    }
 
-    Vulkan::Queue& getGraphicsQueue() { return mGraphicsQueue; }
-    const Vulkan::Queue& getGraphicsQueue() const { return mGraphicsQueue; }
+    Vulkan::Queue&
+    getGraphicsQueue()
+    {
+        return mGraphicsQueue;
+    }
+    const Vulkan::Queue&
+    getGraphicsQueue() const
+    {
+        return mGraphicsQueue;
+    }
 
-    Vulkan::Queue& getTransferQueue() { return mTransferQueue; }
-    const Vulkan::Queue& getTransferQueue() const { return mTransferQueue; }
-    // clang-format on
+    Vulkan::Queue&
+    getTransferQueue()
+    {
+        return mTransferQueue;
+    }
+    const Vulkan::Queue&
+    getTransferQueue() const
+    {
+        return mTransferQueue;
+    }
+
+    const std::shared_ptr<Vulkan::MemoryAllocator>&
+    getMemoryAllocator() const
+    {
+        return mMemoryAllocator;
+    }
 
     vk::raii::CommandPool makeCommandPool(CommandPoolType commandPoolType) const;
 
@@ -89,6 +145,8 @@ protected:
     Vulkan::Device           mDevice;
     Vulkan::Queue            mGraphicsQueue;
     Vulkan::Queue            mTransferQueue;
+
+    std::shared_ptr<Vulkan::MemoryAllocator> mMemoryAllocator;
 };
 
 VOG_DECLARE_PTR(GraphicsProvider);

@@ -1,15 +1,16 @@
 {
-    "shaders" :
-    {
-        "BasicTriangle" :
-        {
-            "vertex" : "src/BasicTriangle.vert.glsl",
-            "fragment" : "src/BasicTriangle.frag.glsl"
-        },
-        "TestVertexAttribute" :
-        {
-            "vertex" : "src/TestVertexAttribute.vert.glsl",
-            "fragment" : "src/TestVertexAttribute.frag.glsl"
-        }
+  "shaders": {
+    "BasicTriangle": {
+      "vertex": "src/BasicTriangle.vert.glsl",
+      "fragment": "src/ScreenSpacePositionColor.frag.glsl"
+    },
+    "ScreenSpacePositionColor": {
+      "vertex": "src/ScreenSpacePositionColor.vert.glsl",
+      "fragment": "src/ScreenSpacePositionColor.frag.glsl"
+    },
+    "TestVertexAttribute": {
+      "vertex": "src/TestVertexAttribute.vert.glsl",
+      "fragment": "src/TestVertexAttribute.frag.glsl"
     }
+  }
 }

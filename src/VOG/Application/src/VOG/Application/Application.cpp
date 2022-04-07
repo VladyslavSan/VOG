@@ -43,7 +43,7 @@ Application::Run()
 {
     using namespace VOG::Common;
 
-    if (!mRenderer->requestRenderChangeState(VOG::Engine::Renderer::RenderJobState::Active))
+    if (!mRenderer->requestRenderChangeState(VOG::Engine::Renderer::RenderJobState::eActive))
     {
         return false;
     }
@@ -55,7 +55,7 @@ Application::Run()
         if (waitEventSuccess && event.type == SDL_WINDOWEVENT &&
             event.window.event == SDL_WINDOWEVENT_CLOSE)
         {
-            mRenderer->requestRenderChangeState(VOG::Engine::Renderer::RenderJobState::Inactive);
+            mRenderer->requestRenderChangeState(VOG::Engine::Renderer::RenderJobState::eInactive);
             mRenderer.reset();
             break;
         }

@@ -1,4 +1,4 @@
-#include "VOG/Graphics/Vulkan/Framebuffer.hpp"
+#include "VOG/Graphics/Vulkan/FrameBuffer.hpp"
 
 #include <VOG/Common/Assert.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp>

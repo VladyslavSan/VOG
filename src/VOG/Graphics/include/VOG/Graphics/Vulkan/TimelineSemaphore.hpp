@@ -20,8 +20,8 @@ public:
     };
     struct SignalRequest
     {
-        const TimelineSemaphore* semapore = nullptr;
-        const std::uint64_t      value    = 0u;
+        const TimelineSemaphore* semaphore = nullptr;
+        const std::uint64_t      value     = 0u;
     };
 
     TimelineSemaphore(const Vulkan::Device& device);
