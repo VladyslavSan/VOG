@@ -10,7 +10,7 @@ namespace VOG::Tests::Shader
 {
 namespace
 {
-const std::string kVertexShaderString = R"(
+const std::string gVertexShaderString = R"(
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_include : enable
@@ -26,6 +26,12 @@ layout(set = 2, binding = 3) uniform SomeUniform
   int someInt;
 } u_UniformBuffer;
 
+layout( push_constant ) uniform constants
+{
+  int index;
+  vec4 vector;
+  mat4 matrix;
+} PushConstants;
 
 void main() {
     gl_Position = inPosition;
@@ -33,7 +39,7 @@ void main() {
 }
 )";
 
-const std::string kFragmentShaderString = R"(
+const std::string gFragmentShaderString = R"(
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_include : enable
@@ -50,12 +56,17 @@ TEST_F(GraphicsProviderFixture, Shader_instantiate_vertex_shader)
 {
     EXPECT_NO_THROW({
         auto shader = VOG::Graphics::Vulkan::Shader::create(
-            mGraphicsProvider->getDevice(), ShadingStage::eVertex, kVertexShaderString);
+            mGraphicsProvider->getDevice(), ShadingStage::eVertex, gVertexShaderString);
         auto reflection = shader->reflect();
 
         EXPECT_EQ(reflection.uniformBuffers.size(), 1u);
         EXPECT_EQ(reflection.uniformBuffers[0].location.set, 2u);
         EXPECT_EQ(reflection.uniformBuffers[0].location.binding, 3u);
+
+        EXPECT_EQ(reflection.pushConstants.variables.size(), 3u);
+        EXPECT_EQ(reflection.pushConstants.variables[0].name, "index");
+        EXPECT_EQ(reflection.pushConstants.variables[1].name, "vector");
+        EXPECT_EQ(reflection.pushConstants.variables[2].name, "matrix");
     });
 }
 
@@ -63,7 +74,7 @@ TEST_F(GraphicsProviderFixture, Shader_instantiate_fragment_shader)
 {
     EXPECT_NO_THROW({
         auto shader = VOG::Graphics::Vulkan::Shader::create(
-            mGraphicsProvider->getDevice(), ShadingStage::eFragment, kFragmentShaderString);
+            mGraphicsProvider->getDevice(), ShadingStage::eFragment, gFragmentShaderString);
     });
 }
 } // namespace VOG::Tests::Shader

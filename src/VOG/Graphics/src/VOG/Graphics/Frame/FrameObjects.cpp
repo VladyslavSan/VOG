@@ -105,9 +105,16 @@ FrameObjects::submit(Vulkan::CommandBufferHandle              handle,
 void
 FrameObjects::waitAndReset()
 {
-    const auto timelineValue = mTimelineSemaphore.getCurrentWaitValue();
+    const auto timelineValue = mTimelineSemaphore.getCounter();
     // Wait for pending command buffers to finish.
-    mTimelineSemaphore.waitOnCPU(timelineValue, std::numeric_limits<std::uint64_t>::max());
+    const auto waitResult =
+        mTimelineSemaphore.waitOnCPU(timelineValue, std::numeric_limits<std::uint64_t>::max());
+
+    if (waitResult != vk::Result::eSuccess)
+    {
+        throw std::runtime_error{
+            "FrameObjects::waitAndReset failed to wait for previous frame to finish."};
+    }
 
     // Free used command buffers handles so that they are released back to pool.
     mUsedCommandBuffers.clear();

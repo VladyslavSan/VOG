@@ -20,7 +20,8 @@ FindPresentQueueFamilyIndex(const GraphicsProvider&     graphicsProvider,
 {
     {
         const std::uint32_t graphicsQueueIndex = graphicsProvider.getGraphicsQueue().familyIndex;
-        if (graphicsProvider.getPhysicalDevice().getSurfaceSupportKHR(graphicsQueueIndex, *surface))
+        if (graphicsProvider.getPhysicalDevice().getSurfaceSupportKHR(graphicsQueueIndex,
+                                                                      *surface) != 0u)
         {
             return graphicsQueueIndex;
         }
@@ -29,38 +30,13 @@ FindPresentQueueFamilyIndex(const GraphicsProvider&     graphicsProvider,
     auto queueFamiliesProperty = graphicsProvider.getPhysicalDevice().getQueueFamilyProperties();
     for (std::uint32_t i = 0; i < queueFamiliesProperty.size(); ++i)
     {
-        if (graphicsProvider.getPhysicalDevice().getSurfaceSupportKHR(i, *surface))
+        if (graphicsProvider.getPhysicalDevice().getSurfaceSupportKHR(i, *surface) != 0u)
+        {
             return i;
+        }
     }
 
     throw std::runtime_error("No present queue found.");
-
-    return std::numeric_limits<std::uint32_t>::max();
-}
-
-bool
-QueueFamilySupportsPresent(const vk::raii::PhysicalDevice& device,
-                           std::uint32_t                   queueFamilyIndex,
-                           const vk::raii::SurfaceKHR&     surface)
-{
-    return device.getSurfaceSupportKHR(queueFamilyIndex, *surface) != 0U;
-}
-
-std::shared_ptr<vk::raii::Queue>
-CreatePresentQueue(const vk::raii::PhysicalDevice& physicalDevice,
-                   const vk::raii::Device&         device,
-                   const vk::raii::SurfaceKHR&     surface)
-{
-    auto queueFamiliesProperty = physicalDevice.getQueueFamilyProperties();
-    for (std::uint32_t i = 0; i < queueFamiliesProperty.size(); ++i)
-    {
-        if (physicalDevice.getSurfaceSupportKHR(i, *surface))
-            return std::make_shared<vk::raii::Queue>(device, i, 0);
-    }
-
-    throw std::runtime_error("CreatePresentQueue failed. No present queues found.");
-
-    return nullptr;
 }
 
 bool
@@ -87,19 +63,9 @@ Swapchain::Swapchain(const std::shared_ptr<GraphicsProvider>& graphicsProvider,
                                          graphicsProvider->getGraphicsQueue().familyIndex}
     , mPresentQueue{mGraphicsProvider->getDevice(), mPresentQueueFamilyIndex, 0}
     , mSwapchain{nullptr}
+    , mSurfaceFormat{mGraphicsProvider->getPhysicalDevice().getSurfaceFormatsKHR(**mSurface).at(0u)}
 {
-    auto surfaceFormats = mGraphicsProvider->getPhysicalDevice().getSurfaceFormatsKHR(**mSurface);
-    auto surfaceColorFormat = vk::Format::eUndefined;
-    vk::ColorSpaceKHR surfaceColorSpace;
-    if (surfaceFormats.empty())
-    {
-        throw std::runtime_error("Surface creation failed. Could not retrieve surface formats.");
-    }
-
-    mSurfaceFormat     = surfaceFormats[0];
-    mFormat            = mSurfaceFormat.format;
-    surfaceColorFormat = surfaceFormats[0].format;
-    surfaceColorSpace  = surfaceFormats[0].colorSpace;
+    mFormat = mSurfaceFormat.format;
 
     auto surfaceCapabilities =
         mGraphicsProvider->getPhysicalDevice().getSurfaceCapabilitiesKHR(**mSurface);
@@ -122,17 +88,17 @@ Swapchain::Swapchain(const std::shared_ptr<GraphicsProvider>& graphicsProvider,
     mExtent.depth  = 1;
 
     vk::PresentModeKHR presentMode              = vk::PresentModeKHR::eImmediate;
-    const std::string  preferedPresentationMode = parameters["present-mode"].getOr<std::string>("");
-    if (!preferedPresentationMode.empty())
+    const std::string preferredPresentationMode = parameters["present-mode"].getOr<std::string>("");
+    if (!preferredPresentationMode.empty())
     {
-        std::cout << "Requested presentation mode :" << preferedPresentationMode << std::endl;
+        std::cout << "Requested presentation mode :" << preferredPresentationMode << std::endl;
         bool foundPresentMode = false;
-        for (auto& pm : surfacePresentModes)
+        for (const auto& spm : surfacePresentModes)
         {
-            if (preferedPresentationMode == vk::to_string(pm))
+            if (preferredPresentationMode == vk::to_string(spm))
             {
                 foundPresentMode = true;
-                presentMode      = pm;
+                presentMode      = spm;
             }
         }
         if (!foundPresentMode)
@@ -142,9 +108,9 @@ Swapchain::Swapchain(const std::shared_ptr<GraphicsProvider>& graphicsProvider,
     }
     else
     {
-        for (auto& pm : surfacePresentModes)
+        for (auto& spm : surfacePresentModes)
         {
-            if (pm == vk::PresentModeKHR::eMailbox)
+            if (spm == vk::PresentModeKHR::eMailbox)
             {
                 presentMode = vk::PresentModeKHR::eMailbox;
                 break;
@@ -157,8 +123,8 @@ Swapchain::Swapchain(const std::shared_ptr<GraphicsProvider>& graphicsProvider,
         vk::SwapchainCreateInfoKHR swapchainCreateInfo;
         swapchainCreateInfo.setSurface(**mSurface)
             .setMinImageCount(minImageCount)
-            .setImageFormat(surfaceColorFormat)
-            .setImageColorSpace(surfaceColorSpace)
+            .setImageFormat(mFormat)
+            .setImageColorSpace(mSurfaceFormat.colorSpace)
             .setImageExtent(surfaceSize)
             .setImageArrayLayers(1)
             .setImageUsage(vk::ImageUsageFlagBits::eColorAttachment)

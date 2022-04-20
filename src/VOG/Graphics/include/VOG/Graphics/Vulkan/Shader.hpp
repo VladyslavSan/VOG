@@ -1,10 +1,12 @@
 #pragma once
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
+#include <VOG/Graphics/Vulkan/Limits.hpp>
 
-#include <boost/container/small_vector.hpp>
+#include <boost/container/static_vector.hpp>
 
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -23,6 +25,9 @@ enum class ShadingStage : std::uint8_t
 class Shader
 {
 public:
+    template <class T, std::size_t N>
+    using Container = boost::container::static_vector<T, N>;
+
     class CompilationError : public std::runtime_error
     {
         using std::runtime_error::runtime_error;
@@ -32,8 +37,26 @@ public:
     {
         enum class ResourceType : std::uint8_t
         {
-            eUniformBuffer = 0,
+            eVertexBuffer = 0,
+            eUniformBuffer,
             eTexture
+        };
+
+        struct VertexAttribute
+        {
+        };
+
+        struct PushConstant
+        {
+            std::string  name;
+            std::uint8_t offset;
+            std::uint8_t size;
+        };
+
+        struct PushConstants
+        {
+            std::uint8_t                                          size;
+            Container<PushConstant, Limits::gMaxNumPushConstants> variables;
         };
 
         struct ResourceLocation
@@ -48,8 +71,10 @@ public:
             std::size_t      size;
         };
 
-        boost::container::small_vector<UniformBuffer, 2> uniformBuffers;
-        boost::container::small_vector<UniformBuffer, 2> storageBuffers;
+        Container<VertexAttribute, Limits::gMaxNumVertexAttributes> vertexAttributes;
+        PushConstants                                               pushConstants;
+        Container<UniformBuffer, Limits::gMaxNumUniformBuffers>     uniformBuffers;
+        Container<UniformBuffer, Limits::gMaxNumUniformBuffers>     storageBuffers;
     };
 
     static std::shared_ptr<Shader>

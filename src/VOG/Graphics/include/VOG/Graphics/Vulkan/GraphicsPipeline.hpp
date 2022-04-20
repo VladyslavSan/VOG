@@ -1,6 +1,7 @@
 #pragma once
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
+#include <VOG/Graphics/Vulkan/Limits.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 
 #include <boost/container/small_vector.hpp>
@@ -8,8 +9,6 @@
 
 namespace VOG::Graphics::Vulkan
 {
-constexpr std::uint8_t gMaxNumVertexBuffers    = 4u;
-constexpr std::uint8_t gMaxNumVertexAttributes = 8u;
 class Device;
 
 struct VertexLayout
@@ -17,8 +16,9 @@ struct VertexLayout
     template <class T, std::size_t N>
     using Container = boost::container::static_vector<T, N>;
 
-    Container<vk::VertexInputBindingDescription, gMaxNumVertexBuffers>      bindingDescription;
-    Container<vk::VertexInputAttributeDescription, gMaxNumVertexAttributes> attributeDescription;
+    Container<vk::VertexInputBindingDescription, Limits::gMaxNumVertexBuffers> bindingDescription;
+    Container<vk::VertexInputAttributeDescription, Limits::gMaxNumVertexAttributes>
+        attributeDescription;
 };
 
 struct RasterizationOptions

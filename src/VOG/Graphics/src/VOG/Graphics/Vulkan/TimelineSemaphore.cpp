@@ -25,14 +25,23 @@ TimelineSemaphore::waitOnCPU(std::uint64_t value, std::uint64_t timeout)
 }
 
 std::uint64_t
-TimelineSemaphore::getCurrentWaitValue()
+TimelineSemaphore::getCounter() const
 {
     return mCurrentValue;
 }
 
-std::uint64_t
-TimelineSemaphore::getNextWaitValue()
+void
+TimelineSemaphore::incrementCounter()
 {
-    return ++mCurrentValue;
+    ++mCurrentValue;
+}
+TimelineSemaphore::operator WaitRequest() const
+{
+    return {.semaphore = this, .value = mCurrentValue};
+}
+
+TimelineSemaphore::operator SignalRequest() const
+{
+    return {.semaphore = this, .value = mCurrentValue};
 }
 } // namespace VOG::Graphics::Vulkan

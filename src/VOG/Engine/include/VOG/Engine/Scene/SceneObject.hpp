@@ -10,6 +10,7 @@ namespace VOG::Scene
 class SceneObject
 {
 public:
-    virtual bool onDraw(Engine::Renderer& renderer) const = 0;
+    virtual void prepare(Engine::Renderer& renderer) = 0;
+    virtual void draw(Engine::Renderer& renderer)    = 0;
 };
 } // namespace VOG::Scene

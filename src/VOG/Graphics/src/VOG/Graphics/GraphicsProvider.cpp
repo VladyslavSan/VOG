@@ -40,7 +40,7 @@ getDeviceRequiredExtensions()
 }
 
 vk::raii::Instance
-MakeInstance(vk::raii::Context& context, const Common::JSONContainer& options)
+MakeInstance(const vk::raii::Context& context, const Common::JSONContainer& options)
 {
     const auto          appName    = options["app_name"].getOr<std::string>("");
     const auto          engineName = options["engine_name"].getOr<std::string>("");
@@ -54,8 +54,10 @@ MakeInstance(vk::raii::Context& context, const Common::JSONContainer& options)
     const auto layers = options["layers"].getArrayOfType<std::string>();
 
     std::vector<const char*> layersAll(layers.size());
-    std::transform(
-        layers.begin(), layers.end(), layersAll.begin(), [](auto& e) { return e.c_str(); });
+    std::transform(layers.begin(),
+                   layers.end(),
+                   layersAll.begin(),
+                   [](auto& extension) { return extension.c_str(); });
 #ifdef PLATFORM_VIDEO_APPLE
     layersAll.push_back(gSynchronizationLayer2Name);
 #endif
@@ -67,11 +69,11 @@ MakeInstance(vk::raii::Context& context, const Common::JSONContainer& options)
     std::transform(extensions.begin(),
                    extensions.end(),
                    extensionsAll.begin(),
-                   [](auto& e) { return e.c_str(); });
+                   [](auto& extension) { return extension.c_str(); });
     std::transform(requiredExtensions.begin(),
                    requiredExtensions.end(),
                    std::back_inserter(extensionsAll),
-                   [](auto& e) { return e; });
+                   [](auto& extension) { return extension; });
 
     [[maybe_unused]] const auto unique = std::unique(extensionsAll.begin(),
                                                      extensionsAll.end(),
@@ -91,8 +93,8 @@ MakeInstance(vk::raii::Context& context, const Common::JSONContainer& options)
 vk::raii::PhysicalDevice
 makePhysicalDevice(const vk::raii::Instance& instance)
 {
-    std::stringstream ss{};
-    ss << "Available devices:" << std::endl;
+    std::stringstream stream{};
+    stream << "Available devices:" << std::endl;
 
     vk::raii::PhysicalDevices physicalDevices{instance};
     for (std::size_t i = 0; i < physicalDevices.size(); ++i)
@@ -100,16 +102,16 @@ makePhysicalDevice(const vk::raii::Instance& instance)
         const auto& device     = physicalDevices[i];
         const auto  properties = device.getProperties();
 
-        ss << "[" << i << "] - " << properties.deviceName << std::endl;
+        stream << "[" << i << "] - " << properties.deviceName << std::endl;
     }
 
-    std::cout << ss.str();
+    std::cout << stream.str();
 
     return std::move(physicalDevices[0]);
 }
 
 GraphicsProvider::QueueInfos
-FindGraphicsTransferQueues(vk::raii::PhysicalDevice& device)
+FindGraphicsTransferQueues(const vk::raii::PhysicalDevice& device)
 {
     auto queueFamilies = device.getQueueFamilyProperties();
     for (std::uint32_t i = 0; i < queueFamilies.size(); ++i)
@@ -157,7 +159,8 @@ FindGraphicsTransferQueues(vk::raii::PhysicalDevice& device)
 }
 
 vk::raii::Device
-MakeDevice(vk::raii::PhysicalDevice& physicalDevice, const GraphicsProvider::QueueInfos& infos)
+MakeDevice(const vk::raii::PhysicalDevice&     physicalDevice,
+           const GraphicsProvider::QueueInfos& infos)
 {
     const auto availableExtensions = physicalDevice.enumerateDeviceExtensionProperties();
 
@@ -245,16 +248,16 @@ GraphicsProvider::GraphicsProvider(const Common::JSONContainer& options)
 vk::raii::CommandPool
 GraphicsProvider::makeCommandPool(CommandPoolType commandPoolType) const
 {
-    vk::CommandPoolCreateInfo ci{.queueFamilyIndex = mQueueInfos.graphics.familyIndex};
+    vk::CommandPoolCreateInfo createInfo{.queueFamilyIndex = mQueueInfos.graphics.familyIndex};
     switch (commandPoolType)
     {
     case CommandPoolType::eGraphics:
-        ci.setQueueFamilyIndex(mQueueInfos.graphics.familyIndex);
+        createInfo.setQueueFamilyIndex(mQueueInfos.graphics.familyIndex);
         break;
     case CommandPoolType::eTransfer:
-        ci.setQueueFamilyIndex(mQueueInfos.transfer.familyIndex);
+        createInfo.setQueueFamilyIndex(mQueueInfos.transfer.familyIndex);
         break;
     }
-    return {mDevice, ci};
+    return {mDevice, createInfo};
 }
 } // namespace VOG::Graphics

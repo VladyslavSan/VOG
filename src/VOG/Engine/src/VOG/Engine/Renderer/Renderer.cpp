@@ -53,6 +53,9 @@ Renderer::render()
     {
         constexpr VertexData vertexData[] = {{{0.0, -0.5}, {1.0, 0.0, 0.0, 1.0}},
                                              {{0.5, 0.5}, {0.0, 1.0, 0.0, 1.0}},
+                                             {{-0.5, 0.5}, {0.0, 0.0, 1.0, 1.0}},
+                                             {{0.0, -0.5}, {1.0, 0.0, 0.0, 1.0}},
+                                             {{0.5, 0.5}, {0.0, 1.0, 0.0, 1.0}},
                                              {{-0.5, 0.5}, {0.0, 0.0, 1.0, 1.0}}};
 
         constexpr std::size_t kVertexDataSize = std::size(vertexData) * sizeof(VertexData);
@@ -72,8 +75,7 @@ Renderer::render()
     }
 
     const std::size_t frameInFlightIndex = getFrameInFlightIndex();
-
-    auto& frame = mFrameObjectManager->getFrameObjects(frameInFlightIndex);
+    auto&             frame              = mFrameObjectManager->getFrameObjects(frameInFlightIndex);
     frame.onFrameStart();
 
     auto& thread = frame.getThreadObjects(threadId);
@@ -87,12 +89,7 @@ Renderer::render()
                                                      **commandBuffer};
 
     recorder.setBarriers({},
-                         {{.dstStageMask        = vk::PipelineStageFlagBits2::eVertexShader,
-                           .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                           .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                           .buffer              = **triangleBuffer,
-                           .offset              = 0u,
-                           .size                = VK_WHOLE_SIZE}},
+                         {},
                          {{.srcStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe,
                            .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
                            .oldLayout    = vk::ImageLayout::eUndefined,
@@ -203,12 +200,10 @@ Renderer::render()
     commandBuffer->end();
 
     {
-        auto&      timelineSemaphore = frame.getTimelineSemaphore();
-        const auto nextValue         = timelineSemaphore.getNextWaitValue();
-        frame.submit(std::move(commandBuffer),
-                     {},
-                     {.semaphore = &timelineSemaphore, .value = nextValue},
-                     frame.getFramePresentWaitSemaphore());
+        auto& timelineSemaphore = frame.getTimelineSemaphore();
+        timelineSemaphore.incrementCounter();
+        frame.submit(
+            std::move(commandBuffer), {}, timelineSemaphore, frame.getFramePresentWaitSemaphore());
     }
 
     auto waitSemaphores = {*frame.getFramePresentWaitSemaphore()};

@@ -20,6 +20,8 @@ void
 Scene::drawScene(Engine::Renderer& renderer)
 {
     for (auto& sceneObject : m_sceneObjects)
-        sceneObject.second->onDraw(renderer);
+    {
+        sceneObject.second->draw(renderer);
+    }
 }
 } // namespace VOG::Scene

@@ -9,19 +9,10 @@ namespace VOG::Tests
 {
 class GraphicsProviderFixture : public testing::Test
 {
-
 public:
-    void
-    SetUp() override
+    GraphicsProviderFixture()
+        : mGraphicsProvider{Graphics::GraphicsProvider::create({})}
     {
-        Common::JSONContainer parameters;
-        mGraphicsProvider = std::make_shared<Graphics::GraphicsProvider>(parameters);
-    }
-
-    void
-    TearDown() override
-    {
-        mGraphicsProvider.reset();
     }
 
 protected:

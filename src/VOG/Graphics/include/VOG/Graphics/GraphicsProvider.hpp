@@ -63,91 +63,89 @@ public:
      */
     GraphicsProvider(const Common::JSONContainer& options);
 
-    vk::raii::Context&
-    getContext()
-    {
-        return mContext;
-    }
-    const vk::raii::Context&
-    getContext() const
-    {
-        return mContext;
-    }
+    /**
+     * Create method that just calls constructor.
+     *
+     * @param options Dictionary with initialisation values
+     *
+     * @return shared pointer to GraphicsProvider
+     */
+    static std::shared_ptr<GraphicsProvider> create(const Common::JSONContainer& options);
 
-    vk::raii::Instance&
-    getInstance()
-    {
-        return mInstance;
-    }
-    const vk::raii::Instance&
-    getInstance() const
-    {
-        return mInstance;
-    }
+    const vk::raii::Context& getContext() const;
 
-    vk::raii::PhysicalDevice&
-    getPhysicalDevice()
-    {
-        return mPhysicalDevice;
-    }
-    const vk::raii::PhysicalDevice&
-    getPhysicalDevice() const
-    {
-        return mPhysicalDevice;
-    }
+    const vk::raii::Instance& getInstance() const;
 
-    Vulkan::Device&
-    getDevice()
-    {
-        return mDevice;
-    }
-    const Vulkan::Device&
-    getDevice() const
-    {
-        return mDevice;
-    }
+    const vk::raii::PhysicalDevice& getPhysicalDevice() const;
 
-    Vulkan::Queue&
-    getGraphicsQueue()
-    {
-        return mGraphicsQueue;
-    }
-    const Vulkan::Queue&
-    getGraphicsQueue() const
-    {
-        return mGraphicsQueue;
-    }
+    const Vulkan::Device& getDevice() const;
 
-    Vulkan::Queue&
-    getTransferQueue()
-    {
-        return mTransferQueue;
-    }
-    const Vulkan::Queue&
-    getTransferQueue() const
-    {
-        return mTransferQueue;
-    }
+    const Vulkan::Queue& getGraphicsQueue() const;
 
-    const std::shared_ptr<Vulkan::MemoryAllocator>&
-    getMemoryAllocator() const
-    {
-        return mMemoryAllocator;
-    }
+    const Vulkan::Queue& getTransferQueue() const;
+
+    const std::shared_ptr<Vulkan::MemoryAllocator>& getMemoryAllocator() const;
 
     vk::raii::CommandPool makeCommandPool(CommandPoolType commandPoolType) const;
 
 protected:
-    vk::raii::Context        mContext;
-    vk::raii::Instance       mInstance;
-    vk::raii::PhysicalDevice mPhysicalDevice;
-    const QueueInfos         mQueueInfos;
-    Vulkan::Device           mDevice;
-    Vulkan::Queue            mGraphicsQueue;
-    Vulkan::Queue            mTransferQueue;
+    const vk::raii::Context        mContext;
+    const vk::raii::Instance       mInstance;
+    const vk::raii::PhysicalDevice mPhysicalDevice;
+    const QueueInfos               mQueueInfos;
+    Vulkan::Device                 mDevice;
+    Vulkan::Queue                  mGraphicsQueue;
+    Vulkan::Queue                  mTransferQueue;
 
     std::shared_ptr<Vulkan::MemoryAllocator> mMemoryAllocator;
 };
-
 VOG_DECLARE_PTR(GraphicsProvider);
+
+inline const vk::raii::Context&
+GraphicsProvider::getContext() const
+{
+    return mContext;
+}
+
+inline const vk::raii::Instance&
+GraphicsProvider::getInstance() const
+{
+    return mInstance;
+}
+
+inline std::shared_ptr<GraphicsProvider>
+GraphicsProvider::create(const Common::JSONContainer& options)
+{
+    return std::make_shared<GraphicsProvider>(options);
+}
+
+inline const vk::raii::PhysicalDevice&
+GraphicsProvider::getPhysicalDevice() const
+{
+    return mPhysicalDevice;
+}
+
+inline const Vulkan::Device&
+GraphicsProvider::getDevice() const
+{
+    return mDevice;
+}
+
+inline const Vulkan::Queue&
+GraphicsProvider::getGraphicsQueue() const
+{
+    return mGraphicsQueue;
+}
+
+inline const Vulkan::Queue&
+GraphicsProvider::getTransferQueue() const
+{
+    return mTransferQueue;
+}
+
+inline const std::shared_ptr<Vulkan::MemoryAllocator>&
+GraphicsProvider::getMemoryAllocator() const
+{
+    return mMemoryAllocator;
+}
 } // namespace VOG::Graphics
