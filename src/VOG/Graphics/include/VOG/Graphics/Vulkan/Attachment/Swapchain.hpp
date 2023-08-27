@@ -4,41 +4,39 @@
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp>
+#include <VOG/Graphics/Vulkan/Fence.hpp>
 
 #include <memory>
 #include <optional>
 
-namespace VOG::Graphics
-{
-class GraphicsProvider;
-}
-
 namespace VOG::Graphics::Vulkan
 {
+VOG_DECLARE_PTR(Device);
+
 class Swapchain : public AttachmentInterface
 {
     struct SwapchainImageSyncData
     {
-        SwapchainImageSyncData(const GraphicsProvider&);
+        SwapchainImageSyncData(const DevicePtr& device);
 
-        vk::raii::Fence fence;
+        Fence fence;
     };
 
 public:
     ~Swapchain();
 
-    Swapchain(const std::shared_ptr<GraphicsProvider>& graphicsProvider,
-              const Common::JSONContainer&             parameters);
-
-    const vk::Image&                            getImage() const override;
-    const std::shared_ptr<vk::raii::ImageView>& getImageView() const override;
+    Swapchain(DevicePtr device, const Common::JSONContainer& parameters);
 
     vk::Result acquireNextImage();
 
-    vk::Result present(const vk::ArrayProxyNoTemporaries<const vk::Semaphore> waitSemaphores);
+    vk::Result present(vk::ArrayProxyNoTemporaries<const vk::Semaphore> waitSemaphores);
+
+public: // from AttachmentInterface
+    const vk::Image&                            getImage() const override;
+    const std::shared_ptr<vk::raii::ImageView>& getImageView() const override;
 
 protected:
-    std::shared_ptr<GraphicsProvider>     mGraphicsProvider;
+    DevicePtr                             mDevice;
     std::shared_ptr<vk::raii::SurfaceKHR> mSurface;
 
     const std::uint32_t mPresentQueueFamilyIndex;
@@ -59,5 +57,4 @@ protected:
 
     std::optional<std::uint32_t> mCurrentSwapchainImageIndex;
 };
-VOG_DECLARE_PTR(Swapchain);
 } // namespace VOG::Graphics::Vulkan

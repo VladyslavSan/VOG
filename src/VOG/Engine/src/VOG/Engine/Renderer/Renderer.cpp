@@ -4,13 +4,15 @@
 #include <VOG/Common/Math/Math.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Frame/FrameObjectManager.hpp>
-#include <VOG/Graphics/GraphicsProvider.hpp>
-#include <VOG/Graphics/ResourceManager.hpp>
+#include <VOG/Graphics/ShaderProgramCache.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
+#include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferRecorder.hpp>
+#include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
+#include <VOG/Graphics/Vulkan/Instance.hpp>
 #include <VOG/Graphics/Vulkan/RenderPass.hpp>
 
 #include <stddef.h>
@@ -27,14 +29,21 @@ Renderer::Renderer(const Common::JSONContainer& parameters)
     : mCurrentState{RenderJobState::eInactive}
     , mMaxFramesInFlight{std::clamp(parameters["frames_in_flight"].getOr<std::uint8_t>(1u),
                                     std::uint8_t{1},
-                                    MaxFramesInFlight)}
-    , mRenderFrame{0}
-    , mGraphicsProvider{std::make_shared<Graphics::GraphicsProvider>(parameters)}
-    , mResourceManager{std::make_shared<Graphics::ResourceManager>(mGraphicsProvider,
-                                                                   parameters["resource_manager"])}
-    , mSwapchain{mResourceManager->createRenderSurface(parameters["surface"])}
+                                    kMaxFramesInFlight)}
+    , mVulkanInstance{Graphics::Vulkan::Instance::create({
+          .appName    = parameters["app_name"].getOr<std::string>(""),
+          .engineName = parameters["engine_name"].getOr<std::string>(""),
+          .layers     = parameters["layers"].getArrayOfType<std::string>(),
+          .extensions = parameters["extensions"].getArrayOfType<std::string>(),
+      })}
+    , mVulkanDevice{mVulkanInstance->makeDevice()}
+    , mShaderProgramCache{std::make_shared<Graphics::ShaderProgramCache>(
+          mVulkanDevice,
+          std::filesystem::path{parameters["shader_source_path"].getOr<std::string>("")})}
+    , mSwapchain{std::make_shared<Graphics::Vulkan::Swapchain>(mVulkanDevice,
+                                                               parameters["surface"])}
     , mFrameObjectManager{std::make_shared<Graphics::Frame::FrameObjectManager>(
-          mGraphicsProvider, mMaxFramesInFlight, 1u)}
+          mVulkanDevice, mMaxFramesInFlight, 1u)}
     , mScene{std::make_shared<Scene::Scene>()}
 {
 }
@@ -42,6 +51,7 @@ Renderer::Renderer(const Common::JSONContainer& parameters)
 void
 Renderer::render()
 {
+    using namespace VOG::Graphics::Vulkan;
     constexpr std::size_t threadId = 0u;
 
     struct VertexData
@@ -51,20 +61,21 @@ Renderer::render()
     };
     std::shared_ptr<Graphics::Vulkan::Buffer> triangleBuffer;
     {
-        constexpr VertexData vertexData[] = {{{0.0, -0.5}, {1.0, 0.0, 0.0, 1.0}},
-                                             {{0.5, 0.5}, {0.0, 1.0, 0.0, 1.0}},
-                                             {{-0.5, 0.5}, {0.0, 0.0, 1.0, 1.0}},
-                                             {{0.0, -0.5}, {1.0, 0.0, 0.0, 1.0}},
-                                             {{0.5, 0.5}, {0.0, 1.0, 0.0, 1.0}},
-                                             {{-0.5, 0.5}, {0.0, 0.0, 1.0, 1.0}}};
+        // clang-format off
+        constexpr VertexData vertexData[] = {{{ 0.0, -0.5}, {1.0, 0.0, 0.0, 1.0}},
+                                             {{ 0.5,  0.5}, {0.0, 1.0, 0.0, 1.0}},
+                                             {{-0.5,  0.5}, {0.0, 0.0, 1.0, 1.0}},
+                                             {{ 0.0, -0.5}, {1.0, 0.0, 0.0, 1.0}},
+                                             {{ 0.5,  0.5}, {0.0, 1.0, 0.0, 1.0}},
+                                             {{-0.5,  0.5}, {0.0, 0.0, 1.0, 1.0}}};
+        // clang-format on
 
         constexpr std::size_t kVertexDataSize = std::size(vertexData) * sizeof(VertexData);
 
-        triangleBuffer = mGraphicsProvider->getMemoryAllocator()->makeBuffer(
+        triangleBuffer = mVulkanDevice->memoryAllocator->makeBuffer(
             {.size = kVertexDataSize, .usage = vk::BufferUsageFlagBits::eVertexBuffer},
             {.usage = VMA_MEMORY_USAGE_CPU_TO_GPU});
 
-        // clang-format on
         auto mapping = triangleBuffer->mapForWrite();
         std::memcpy(mapping.data, vertexData, kVertexDataSize);
     }
@@ -74,19 +85,14 @@ Renderer::render()
         throw std::runtime_error{"Could not acquire image"};
     }
 
-    const std::size_t frameInFlightIndex = getFrameInFlightIndex();
-    auto&             frame              = mFrameObjectManager->getFrameObjects(frameInFlightIndex);
-    frame.onFrameStart();
+    auto& frame = mFrameObjectManager->acquireNextFrame();
+    auto& pool  = frame.getCommandBufferPoolForThread(threadId);
 
-    auto& thread = frame.getThreadObjects(threadId);
-
-    auto commandBuffer = thread.getCommandBuffer(vk::CommandBufferLevel::ePrimary);
+    auto commandBuffer = pool.get(vk::CommandBufferLevel::ePrimary);
     commandBuffer->begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-    commandBuffer->bindVertexBuffers(0, {**triangleBuffer}, {0u});
-    commandBuffer->addBoundResource(triangleBuffer);
+    commandBuffer->bindVertexBuffers(0u, {{.buffer = triangleBuffer, .offset = 0u}});
 
-    Graphics::Vulkan::CommandBufferRecorder recorder{mGraphicsProvider->getDevice(),
-                                                     **commandBuffer};
+    Graphics::Vulkan::CommandBufferRecorder recorder{*mVulkanDevice, **commandBuffer};
 
     recorder.setBarriers({},
                          {},
@@ -114,7 +120,7 @@ Renderer::render()
     const std::array clearColor = {red, 1.0f, blue, 1.0f};
 
     auto renderPass = Graphics::Vulkan::RenderPass::create(
-        mGraphicsProvider->getDevice(),
+        *mVulkanDevice,
         {{.format        = mSwapchain->getFormat(),
           .loadOp        = vk::AttachmentLoadOp::eClear,
           .storeOp       = vk::AttachmentStoreOp::eStore,
@@ -122,51 +128,47 @@ Renderer::render()
           .finalLayout   = vk::ImageLayout::eColorAttachmentOptimal}},
         {});
 
-    auto framebuffer = Graphics::Vulkan::Framebuffer::create(
-        mGraphicsProvider->getDevice(), {mSwapchain}, *renderPass);
+    auto framebuffer =
+        Graphics::Vulkan::Framebuffer::create(*mVulkanDevice, *renderPass, {mSwapchain}, nullptr);
 
     {
         recorder.beginRenderPass(renderPass, framebuffer, {vk::ClearColorValue{clearColor}});
 
-        vk::raii::PipelineLayout layout{mGraphicsProvider->getDevice(),
-                                        vk::PipelineLayoutCreateInfo{}};
+        vk::raii::PipelineLayout layout{*mVulkanDevice, vk::PipelineLayoutCreateInfo{}};
 
-        auto program = mResourceManager->createShaderProgram("ScreenSpacePositionColor");
+        auto program = mShaderProgramCache->get("ScreenSpacePositionColor");
 
-        vk::PipelineColorBlendAttachmentState blendState{
-            .blendEnable    = 0u,
-            .colorWriteMask = {vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-                               vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA}};
-
-        auto pipeline = Graphics::Vulkan::GraphicsPipeline::create(
-            mGraphicsProvider->getDevice(),
-            nullptr,
-            *program,
-            {.bindingDescription =
-                 {
-                     {.binding   = 0u,
-                      .stride    = sizeof(VertexData),
-                      .inputRate = vk::VertexInputRate::eVertex},
-                 },
-             .attributeDescription = {{.location = 0u,
-                                       .binding  = 0u,
-                                       .format   = vk::Format::eR32G32Sfloat,
-                                       .offset   = 0u},
-                                      {.location = 1u,
-                                       .binding  = 0u,
-                                       .format   = vk::Format::eR32G32B32A32Sfloat,
-                                       .offset   = offsetof(VertexData, color)}}},
-            {.cullMode = vk::CullModeFlagBits::eNone},
-            {.viewportCount = 1u, .scissorCount = 1u},
-            vk::PipelineDepthStencilStateCreateInfo{},
-            vk::PipelineColorBlendStateCreateInfo{.attachmentCount = 1,
-                                                  .pAttachments    = &blendState},
-            vk::PipelineMultisampleStateCreateInfo{},
-            {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
-            *layout,
-            **renderPass,
-            0u);
-        recorder.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
+        auto pipeline = std::make_shared<GraphicsPipeline>(GraphicsPipeline::CreateInfo{
+            .device         = *mVulkanDevice,
+            .cache          = nullptr,
+            .shading        = *program,
+            .vertexLayout   = {.bindingDescription =
+                                   {
+                                     {.binding   = 0u,
+                                        .stride    = sizeof(VertexData),
+                                        .inputRate = vk::VertexInputRate::eVertex},
+                                 },
+                               .attributeDescription = {{.location = 0u,
+                                                         .binding  = 0u,
+                                                         .format   = vk::Format::eR32G32Sfloat,
+                                                         .offset   = 0u},
+                                                        {.location = 1u,
+                                                         .binding  = 0u,
+                                                         .format   = vk::Format::eR32G32B32A32Sfloat,
+                                                         .offset   = offsetof(VertexData, color)}}},
+            .rasterizer     = {.cullMode = CullMode::eNone},
+            .viewportState  = {.viewportCount = 1u, .scissorCount = 1u},
+            .depthStencil   = {},
+            .blending       = {.attachments = {{.blendEnable = 0u,
+                                                .colorWriteMask =
+                                                    ColorComponent::eR | ColorComponent::eG |
+                                                    ColorComponent::eB | ColorComponent::eA}}},
+            .multisample    = {},
+            .dynamicStates  = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
+            .pipelineLayout = *layout,
+            .renderPass     = *renderPass,
+            .subpass        = 0u});
+        recorder.bindPipeline(pipeline);
 
         const auto extent = mSwapchain->getExtent();
         recorder->setViewport(0,
@@ -202,14 +204,11 @@ Renderer::render()
     {
         auto& timelineSemaphore = frame.getTimelineSemaphore();
         timelineSemaphore.incrementCounter();
-        frame.submit(
-            std::move(commandBuffer), {}, timelineSemaphore, frame.getFramePresentWaitSemaphore());
+        commandBuffer.submit({}, timelineSemaphore, frame.getFramePresentWaitSemaphore());
     }
 
     auto waitSemaphores = {*frame.getFramePresentWaitSemaphore()};
     mSwapchain->present(waitSemaphores);
-
-    ++mRenderFrame;
 }
 
 const std::shared_ptr<Scene::Scene>&
@@ -250,12 +249,6 @@ Renderer::requestRenderChangeState(RenderJobState newState)
     mCurrentState.store(newState);
 
     return true;
-}
-
-std::size_t
-Renderer::getFrameInFlightIndex() const
-{
-    return mRenderFrame.load() % mMaxFramesInFlight;
 }
 
 void

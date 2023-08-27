@@ -9,7 +9,7 @@ class Buffer
     , public vk::raii::Buffer
 {
 public:
-    template <class PtrType>
+    template <class PtrType = std::byte*>
     struct MemoryMapping
     {
         /** Pointer for read/write operations. */

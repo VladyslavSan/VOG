@@ -14,17 +14,18 @@ class JSONContainer;
 
 namespace VOG::Graphics
 {
-class GraphicsProvider;
-class ResourceManager;
+class ShaderProgramCache;
 } // namespace VOG::Graphics
 
 namespace VOG::Graphics::Frame
 {
 class FrameObjectManager;
-}
+} // namespace VOG::Graphics::Frame
 
 namespace VOG::Graphics::Vulkan
 {
+class Instance;
+class Device;
 class Swapchain;
 class GraphicsPipeline;
 } // namespace VOG::Graphics::Vulkan
@@ -38,7 +39,7 @@ class Renderer
     using ThreadType = boost::scoped_thread<boost::interrupt_and_join_if_joinable, boost::thread>;
 
 public:
-    static constexpr std::uint8_t MaxFramesInFlight = 3;
+    static constexpr std::uint8_t kMaxFramesInFlight = 3;
 
     enum class RenderJobState : uint8_t
     {
@@ -62,20 +63,17 @@ public:
     bool requestRenderChangeState(RenderJobState newState);
 
 protected:
-    std::size_t getFrameInFlightIndex() const;
-
-protected:
     /// RenderThread run function
     static void renderThreadMain(std::weak_ptr<Renderer> renderer);
 
     ThreadType                  mRenderThread;
     std::atomic<RenderJobState> mCurrentState;
 
-    std::uint8_t             mMaxFramesInFlight;
-    std::atomic<std::size_t> mRenderFrame;
+    std::uint8_t mMaxFramesInFlight;
 
-    std::shared_ptr<Graphics::GraphicsProvider>          mGraphicsProvider;
-    std::shared_ptr<Graphics::ResourceManager>           mResourceManager;
+    std::shared_ptr<Graphics::Vulkan::Instance>          mVulkanInstance;
+    std::shared_ptr<Graphics::Vulkan::Device>            mVulkanDevice;
+    std::shared_ptr<Graphics::ShaderProgramCache>        mShaderProgramCache;
     std::shared_ptr<Graphics::Vulkan::Swapchain>         mSwapchain;
     std::shared_ptr<Graphics::Frame::FrameObjectManager> mFrameObjectManager;
 

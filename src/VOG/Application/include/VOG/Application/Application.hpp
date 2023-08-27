@@ -30,7 +30,7 @@ public:
 
     ~Application();
 
-    bool Run();
+    bool run();
 
 protected:
     std::unique_ptr<SDLHandle>        mSDLHandle;

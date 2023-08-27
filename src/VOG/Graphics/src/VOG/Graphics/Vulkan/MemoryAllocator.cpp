@@ -1,7 +1,7 @@
 #include "VOG/Graphics/Vulkan/MemoryAllocator.hpp"
 
-#include <VOG/Graphics/GraphicsProvider.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
+#include <VOG/Graphics/Vulkan/Device.hpp>
 
 #include <stdexcept>
 
@@ -19,11 +19,11 @@ getMemoryFlags(VmaAllocator allocator, std::uint32_t memoryIndex)
 }
 } // namespace
 
-MemoryAllocator::Allocation::Allocation(const MemoryAllocator*  _allocator,
+MemoryAllocator::Allocation::Allocation(MemoryAllocatorPtr      _allocator,
                                         const VmaAllocation     _allocation,
                                         const VmaAllocationInfo _info,
                                         const AllocationInfo    _createInfo)
-    : allocator{_allocator}
+    : allocator{std::move(_allocator)}
     , allocation{_allocation}
     , info{_info}
     , createInfo{_createInfo}
@@ -39,8 +39,9 @@ MemoryAllocator::Allocation::~Allocation()
         vmaFreeMemory(*allocator, allocation);
     }
 }
+
 MemoryAllocator::Allocation::Allocation(MemoryAllocator::Allocation&& other) noexcept
-    : allocator{other.allocator}
+    : allocator{std::move(other.allocator)}
     , allocation{std::exchange(other.allocation, nullptr)}
     , info{other.info}
     , createInfo{other.createInfo}
@@ -49,57 +50,54 @@ MemoryAllocator::Allocation::Allocation(MemoryAllocator::Allocation&& other) noe
 {
 }
 
-MemoryAllocator::MemoryAllocator(const GraphicsProvider& graphicsProvider)
-    : mGraphicsProvider{graphicsProvider}
+MemoryAllocator::MemoryAllocator(const DevicePtr& device)
+    : mDevice{device}
     , mAllocator{nullptr}
 {
+    const auto* instanceD = mDevice->instance->getDispatcher();
+    const auto* deviceD   = mDevice->getDispatcher();
 
-    VmaAllocatorCreateInfo allocatorInfo = {};
-    allocatorInfo.physicalDevice         = *mGraphicsProvider.getPhysicalDevice();
-    allocatorInfo.device                 = *mGraphicsProvider.getDevice();
-    allocatorInfo.instance               = *mGraphicsProvider.getInstance();
+    VmaVulkanFunctions vulkanFunctions = {
+        .vkGetPhysicalDeviceProperties           = instanceD->vkGetPhysicalDeviceProperties,
+        .vkGetPhysicalDeviceMemoryProperties     = instanceD->vkGetPhysicalDeviceMemoryProperties,
+        .vkAllocateMemory                        = deviceD->vkAllocateMemory,
+        .vkFreeMemory                            = deviceD->vkFreeMemory,
+        .vkMapMemory                             = deviceD->vkMapMemory,
+        .vkUnmapMemory                           = deviceD->vkUnmapMemory,
+        .vkFlushMappedMemoryRanges               = deviceD->vkFlushMappedMemoryRanges,
+        .vkInvalidateMappedMemoryRanges          = deviceD->vkInvalidateMappedMemoryRanges,
+        .vkBindBufferMemory                      = deviceD->vkBindBufferMemory,
+        .vkBindImageMemory                       = deviceD->vkBindImageMemory,
+        .vkGetBufferMemoryRequirements           = deviceD->vkGetBufferMemoryRequirements,
+        .vkGetImageMemoryRequirements            = deviceD->vkGetImageMemoryRequirements,
+        .vkCreateBuffer                          = deviceD->vkCreateBuffer,
+        .vkDestroyBuffer                         = deviceD->vkDestroyBuffer,
+        .vkCreateImage                           = deviceD->vkCreateImage,
+        .vkDestroyImage                          = deviceD->vkDestroyImage,
+        .vkCmdCopyBuffer                         = deviceD->vkCmdCopyBuffer,
+        .vkGetBufferMemoryRequirements2KHR       = deviceD->vkGetBufferMemoryRequirements2,
+        .vkGetImageMemoryRequirements2KHR        = deviceD->vkGetImageMemoryRequirements2,
+        .vkBindBufferMemory2KHR                  = deviceD->vkBindBufferMemory2,
+        .vkBindImageMemory2KHR                   = deviceD->vkBindImageMemory2,
+        .vkGetPhysicalDeviceMemoryProperties2KHR = instanceD->vkGetPhysicalDeviceMemoryProperties2,
+        .vkGetDeviceBufferMemoryRequirements     = deviceD->vkGetDeviceBufferMemoryRequirements,
+        .vkGetDeviceImageMemoryRequirements      = deviceD->vkGetDeviceImageMemoryRequirements,
+    };
 
-    VmaVulkanFunctions vulkanFunctions;
-    {
-        const auto* callDispatcherDevice = mGraphicsProvider.getDevice().getDispatcher();
-
-        vulkanFunctions.vkAllocateMemory   = callDispatcherDevice->vkAllocateMemory;
-        vulkanFunctions.vkBindBufferMemory = callDispatcherDevice->vkBindBufferMemory;
-        vulkanFunctions.vkBindImageMemory  = callDispatcherDevice->vkBindImageMemory;
-
-        vulkanFunctions.vkCmdCopyBuffer           = callDispatcherDevice->vkCmdCopyBuffer;
-        vulkanFunctions.vkCreateBuffer            = callDispatcherDevice->vkCreateBuffer;
-        vulkanFunctions.vkCreateImage             = callDispatcherDevice->vkCreateImage;
-        vulkanFunctions.vkDestroyBuffer           = callDispatcherDevice->vkDestroyBuffer;
-        vulkanFunctions.vkDestroyImage            = callDispatcherDevice->vkDestroyImage;
-        vulkanFunctions.vkFlushMappedMemoryRanges = callDispatcherDevice->vkFlushMappedMemoryRanges;
-        vulkanFunctions.vkFreeMemory              = callDispatcherDevice->vkFreeMemory;
-        vulkanFunctions.vkGetBufferMemoryRequirements =
-            callDispatcherDevice->vkGetBufferMemoryRequirements;
-        vulkanFunctions.vkGetImageMemoryRequirements =
-            callDispatcherDevice->vkGetImageMemoryRequirements;
-        vulkanFunctions.vkMapMemory   = callDispatcherDevice->vkMapMemory;
-        vulkanFunctions.vkUnmapMemory = callDispatcherDevice->vkUnmapMemory;
-        vulkanFunctions.vkInvalidateMappedMemoryRanges =
-            callDispatcherDevice->vkInvalidateMappedMemoryRanges;
-    }
-
-    {
-        const auto* callDispatcherInstance = mGraphicsProvider.getInstance().getDispatcher();
-        vulkanFunctions.vkGetPhysicalDeviceMemoryProperties =
-            callDispatcherInstance->vkGetPhysicalDeviceMemoryProperties;
-        vulkanFunctions.vkGetPhysicalDeviceProperties =
-            callDispatcherInstance->vkGetPhysicalDeviceProperties;
-    }
-
-    allocatorInfo.pVulkanFunctions = &vulkanFunctions;
+    VmaAllocatorCreateInfo allocatorInfo = {
+        .physicalDevice   = *mDevice->getPhysicalDevice(),
+        .device           = **mDevice,
+        .pVulkanFunctions = &vulkanFunctions,
+        .instance         = **mDevice->instance,
+        .vulkanApiVersion = mDevice->getPhysicalDevice().getProperties2().properties.apiVersion,
+    };
 
     auto result = vmaCreateAllocator(&allocatorInfo, &mAllocator);
     if (result != VK_SUCCESS)
     {
         throw std::runtime_error("MemoryAllocator creation failed.");
     }
-}
+} // namespace VOG::Graphics::Vulkan
 
 MemoryAllocator::~MemoryAllocator() { vmaDestroyAllocator(mAllocator); }
 
@@ -125,12 +123,12 @@ MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
 
     if (result != vk::Result::eSuccess || buffer == VK_NULL_HANDLE)
     {
-        throw std::runtime_error{""};
+        throw std::runtime_error{"Buffer creation failed."};
     }
 
     return std::make_unique<Buffer>(
-        Allocation{this, allocation, allocationInfo, allocationCreateInfo},
-        vk::raii::Buffer{mGraphicsProvider.getDevice(), buffer});
+        Allocation{shared_from_this(), allocation, allocationInfo, allocationCreateInfo},
+        vk::raii::Buffer{*mDevice, buffer});
 }
 
 MemoryAllocator::operator VmaAllocator() const { return mAllocator; }

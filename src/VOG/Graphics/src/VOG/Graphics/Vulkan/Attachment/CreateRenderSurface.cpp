@@ -2,7 +2,7 @@
 
 #include <VOG/Common/JSONContainer.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
-#include <VOG/Graphics/GraphicsProvider.hpp>
+#include <VOG/Graphics/Vulkan/Instance.hpp>
 
 #ifdef PLATFORM_VIDEO_WINDOWS
 #include <Windows.h>
@@ -26,7 +26,7 @@
 namespace VOG::Graphics::Vulkan
 {
 std::shared_ptr<vk::raii::SurfaceKHR>
-CreateRenderSurface(GraphicsProviderPtr          graphicsProvider,
+CreateRenderSurface(const Instance&              instance,
                     const Common::JSONContainer& parameters,
                     bool                         throwOnFail)
 {
@@ -45,8 +45,7 @@ CreateRenderSurface(GraphicsProviderPtr          graphicsProvider,
         vk::Win32SurfaceCreateInfoKHR createInfo{.hinstance = static_cast<HINSTANCE>(hinstance),
                                                  .hwnd      = static_cast<HWND>(windowHandle)};
 
-        surfaceHandle =
-            std::make_shared<vk::raii::SurfaceKHR>(graphicsProvider->getInstance(), createInfo);
+        surfaceHandle = std::make_shared<vk::raii::SurfaceKHR>(instance, createInfo);
     }
 #elif defined(PLATFORM_VIDEO_APPLE)
     {
@@ -72,8 +71,7 @@ CreateRenderSurface(GraphicsProviderPtr          graphicsProvider,
                 view.layer      = [CAMetalLayer layer];
 
                 vk::MetalSurfaceCreateInfoEXT createInfo{.pLayer = (CAMetalLayer*)view.layer};
-                surfaceHandle = std::make_shared<vk::raii::SurfaceKHR>(
-                    graphicsProvider->getInstance(), createInfo);
+                surfaceHandle = std::make_shared<vk::raii::SurfaceKHR>(instance, createInfo);
             }
 #elif defined(TARGET_OS_IPHONE)
 #endif
@@ -82,7 +80,9 @@ CreateRenderSurface(GraphicsProviderPtr          graphicsProvider,
 #endif
 
     if (throwOnFail && (!surfaceHandle || !**surfaceHandle))
+    {
         throw std::runtime_error("CreateSurface failed");
+    }
 
     return surfaceHandle;
 }

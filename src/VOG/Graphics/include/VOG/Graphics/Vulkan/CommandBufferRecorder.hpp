@@ -2,7 +2,9 @@
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
+#include <VOG/Graphics/Vulkan/Containers.hpp>
 #include <VOG/Graphics/Vulkan/FrameBuffer.hpp>
+#include <VOG/Graphics/Vulkan/Limits.hpp>
 
 #include <array>
 #include <functional>
@@ -13,13 +15,13 @@ class CommandBuffer;
 class Device;
 VOG_DECLARE_PTR(Framebuffer);
 VOG_DECLARE_PTR(RenderPass);
+VOG_DECLARE_PTR(GraphicsPipeline);
+
 class CommandBufferRecorder
 {
-    static constexpr std::size_t kMaxAttachments = 1;
-
 public:
-    using ClearValues =
-        boost::container::small_vector<vk::ClearValue, Framebuffer::kMaxNumAttachments>;
+    using ClearValues = StaticVector<vk::ClearValue, Limits::gMaxNumAttachments>;
+
     CommandBufferRecorder(const Device& device, Vulkan::CommandBuffer& commandBuffer);
 
     Vulkan::CommandBuffer* operator->();
@@ -30,12 +32,11 @@ public:
 
     void endRenderPass() noexcept;
 
-    void bindPipeline(vk::PipelineBindPoint                      pipelineBindPoint,
-                      const std::shared_ptr<vk::raii::Pipeline>& pipeline) noexcept;
+    void bindPipeline(GraphicsPipelinePtr pipeline) noexcept;
 
-    void setBarriers(std::initializer_list<vk::MemoryBarrier2>       memoryBarriers,
-                     std::initializer_list<vk::BufferMemoryBarrier2> bufferBarriers,
-                     std::initializer_list<vk::ImageMemoryBarrier2>  imageBarriers) noexcept;
+    void setBarriers(vk::ArrayProxy<vk::MemoryBarrier2>       memoryBarriers,
+                     vk::ArrayProxy<vk::BufferMemoryBarrier2> bufferBarriers,
+                     vk::ArrayProxy<vk::ImageMemoryBarrier2>  imageBarriers) noexcept;
 
 protected:
     const Device&  mDevice;

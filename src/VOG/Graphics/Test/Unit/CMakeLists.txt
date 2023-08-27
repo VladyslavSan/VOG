@@ -7,19 +7,20 @@ set_target_properties(VOG.Graphics.Unit PROPERTIES FOLDER "VOG/Tests")
 
 target_include_directories(VOG.Graphics.Unit
     PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}
-)
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    )
 
 target_sources(VOG.Graphics.Unit
     PRIVATE
-        Resources/ShaderTest.cpp
-        GraphicsApiFixture.hpp
-)
+    Vulkan/ShaderTest.cpp
+    Vulkan/GraphicsPipelineTest.cpp
+    GraphicsApiFixture.hpp
+    )
 
 target_link_libraries(VOG.Graphics.Unit
     PUBLIC
-        VOG.Graphics GTest::gtest GTest::gtest_main
-)
+    VOG.Graphics GTest::gtest GTest::gtest_main
+    )
 
 add_test(
     NAME VOG.Graphics.Unit

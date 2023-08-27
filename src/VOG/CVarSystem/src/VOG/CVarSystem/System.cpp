@@ -74,7 +74,7 @@ public:
     tryAdd(const std::string& name, T defaultValue, const std::string& description, Flags flags)
     {
         auto emplaceResult = mVariables.try_emplace(name, VariableRecord{.type = getType<T>()});
-        const bool addedNewVariable = emplaceResult.second == true;
+        const bool addedNewVariable = emplaceResult.second;
 
         if (!addedNewVariable && emplaceResult.first->second.type != getType<T>())
         {

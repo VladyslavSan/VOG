@@ -18,7 +18,6 @@ RenderPass::RenderPass(const Device&                  device,
     }
 
     VOG_ASSERT(mAttachmentDescriptions.size() > 0);
-    VOG_ASSERT(mAttachmentDescriptions.size() <= 4);
 
     std::array<vk::AttachmentReference, 4> attachmentReference;
 
@@ -50,5 +49,31 @@ RenderPass::RenderPass(const Device&                  device,
 
         static_cast<vk::raii::RenderPass&>(*this) = {device, ci};
     }
+}
+
+RenderpassDescription
+RenderPass::getRenderpassDescription() const
+{
+    RenderpassDescription description;
+
+    for (std::size_t i = 0; i < mAttachmentDescriptions.size() - mDepthStencilProvided; ++i)
+    {
+        description.colorAttachmentFormats.push_back(mAttachmentDescriptions[i].format);
+    }
+
+    if (mDepthStencilProvided)
+    {
+        const auto& depthStencilDescription = mAttachmentDescriptions.back();
+
+        description.depthAttachmentFormat = isDepthFormat(depthStencilDescription.format)
+                                              ? depthStencilDescription.format
+                                              : vk::Format::eUndefined;
+
+        description.stencilAttachmentFormat = isStencilFormat(depthStencilDescription.format)
+                                                ? depthStencilDescription.format
+                                                : vk::Format::eUndefined;
+    }
+
+    return description;
 }
 } // namespace VOG::Graphics::Vulkan

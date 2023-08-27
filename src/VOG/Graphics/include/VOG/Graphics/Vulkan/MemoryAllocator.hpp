@@ -2,31 +2,24 @@
 
 #include <VOG/Graphics/Config/VmaConfig.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
+#include <VOG/Graphics/Typedefs.hpp>
 
 #include <cstdint>
 #include <memory>
 
-namespace VOG::Graphics
-{
-class GraphicsProvider;
-}
-
 namespace VOG::Graphics::Vulkan
 {
 class Buffer;
+VOG_DECLARE_PTR(MemoryAllocator);
+VOG_DECLARE_PTR(Device);
 class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator>
 {
-    MemoryAllocator(const GraphicsProvider& GraphicsProvider);
+    friend class Device;
+    MemoryAllocator(const DevicePtr& device);
 
 public:
     class Allocation;
     struct AllocationInfo;
-
-    [[nodiscard]] static std::shared_ptr<MemoryAllocator>
-    create(const GraphicsProvider& graphicsProvider)
-    {
-        return std::shared_ptr<MemoryAllocator>{new MemoryAllocator{graphicsProvider}};
-    }
 
     ~MemoryAllocator();
 
@@ -35,9 +28,11 @@ public:
     std::unique_ptr<Buffer> makeBuffer(const vk::BufferCreateInfo& createInfo,
                                        const AllocationInfo&       allocationInfo);
 
+public:
+    const DevicePtr mDevice;
+
 protected:
-    const GraphicsProvider& mGraphicsProvider;
-    VmaAllocator            mAllocator;
+    VmaAllocator mAllocator;
 };
 
 struct MemoryAllocator::AllocationInfo
@@ -52,10 +47,10 @@ class MemoryAllocator::Allocation
 public:
     ~Allocation();
 
-    Allocation(const MemoryAllocator* _allocator,
-               VmaAllocation          _allocation,
-               VmaAllocationInfo      _info,
-               AllocationInfo         _createInfo);
+    Allocation(MemoryAllocatorPtr allocator,
+               VmaAllocation      allocation,
+               VmaAllocationInfo  info,
+               AllocationInfo     createInfo);
 
     Allocation(Allocation&&) noexcept;
 
@@ -63,7 +58,7 @@ public:
 
 protected:
     /** Allocator that created allocation */
-    const MemoryAllocator* allocator;
+    MemoryAllocatorPtr allocator;
 
     /** Allocation struct */
     VmaAllocation allocation;

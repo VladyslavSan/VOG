@@ -1,19 +1,23 @@
 #pragma once
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
-
-#include <boost/container/small_vector.hpp>
+#include <VOG/Graphics/Typedefs.hpp>
+#include <VOG/Graphics/Vulkan/Common.hpp>
+#include <VOG/Graphics/Vulkan/Containers.hpp>
+#include <VOG/Graphics/Vulkan/Limits.hpp>
 
 namespace VOG::Graphics::Vulkan
 {
-class Device;
+VOG_DECLARE_PTR(Device);
+
 class RenderPass : public vk::raii::RenderPass
 {
 public:
-    using AttachmentsDescription  = vk::AttachmentDescription;
-    using AttachmentsDescriptions = boost::container::small_vector<AttachmentsDescription, 3>;
+    using AttachmentsDescription = vk::AttachmentDescription;
+    using AttachmentsDescriptions =
+        StaticVector<AttachmentsDescription, Limits::gMaxNumAttachments - 1u>;
     using AttachmentsDescriptionsInternal =
-        boost::container::small_vector<AttachmentsDescription, 4>;
+        StaticVector<AttachmentsDescription, Limits::gMaxNumAttachments>;
 
     static std::shared_ptr<RenderPass>
     create(const Device&                  device,
@@ -26,6 +30,8 @@ public:
     RenderPass(const Device&                  device,
                const AttachmentsDescriptions& colorAttachments,
                const AttachmentsDescription&  depthStencil);
+
+    RenderpassDescription getRenderpassDescription() const;
 
 protected:
     AttachmentsDescriptionsInternal mAttachmentDescriptions;

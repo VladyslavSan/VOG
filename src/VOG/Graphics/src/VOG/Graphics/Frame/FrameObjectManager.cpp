@@ -1,7 +1,8 @@
 #include "VOG/Graphics/Frame/FrameObjectManager.hpp"
 
 #include <VOG/Common/Assert.hpp>
-#include <VOG/Graphics/GraphicsProvider.hpp>
+
+#include <algorithm>
 
 namespace VOG::Graphics::Frame
 {
@@ -10,29 +11,40 @@ namespace
 constexpr std::size_t gDefaultPoolSize = 32;
 }
 
-FrameObjectManager::FrameObjectManager(const GraphicsProviderPtr& graphicsProvider,
-                                       std::size_t                frameCount,
-                                       std::size_t                threadCount)
-    : mGraphicsProvider{graphicsProvider}
+FrameObjectManager::FrameObjectManager(const Vulkan::DevicePtr& device,
+                                       std::size_t              frameCount,
+                                       std::size_t              threadCount)
+    : mDevice{device}
+    , mRenderFrame{0u}
 {
     mFrameObjects.reserve(frameCount);
-    for (std::size_t i = 0; i < frameCount; ++i)
-    {
-        mFrameObjects.emplace_back(*mGraphicsProvider, threadCount);
-    }
+    std::generate_n(std::back_inserter(mFrameObjects),
+                    frameCount,
+                    [this, threadCount]() {
+                        return FrameObjects{mDevice, threadCount};
+                    });
 }
 
-const GraphicsProviderPtr&
-FrameObjectManager::getGraphicsProvider()
+std::size_t
+FrameObjectManager::getCurrentFrameIndex() const
 {
-    return mGraphicsProvider;
+    return mRenderFrame % mFrameObjects.size();
 }
 
 FrameObjects&
-FrameObjectManager::getFrameObjects(std::size_t frameId)
+FrameObjectManager::getCurrentFrame()
 {
-    VOG_ASSERT_MSG(frameId < mFrameObjects.size(), "Invalid frameId requested.");
+    return mFrameObjects[getCurrentFrameIndex()];
+}
 
-    return mFrameObjects[frameId];
+FrameObjects&
+FrameObjectManager::acquireNextFrame()
+{
+    ++mRenderFrame;
+
+    FrameObjects& frame = getCurrentFrame();
+    frame.onFrameStart();
+
+    return frame;
 }
 } // namespace VOG::Graphics::Frame

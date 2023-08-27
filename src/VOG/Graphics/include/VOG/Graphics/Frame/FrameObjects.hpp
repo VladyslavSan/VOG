@@ -1,24 +1,28 @@
 #pragma once
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
-#include <VOG/Graphics/Frame/ThreadObjects.hpp>
+#include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/TimelineSemaphore.hpp>
 
 #include <span>
 #include <vector>
 
-namespace VOG::Graphics
+namespace VOG::Graphics::Vulkan
 {
-class GraphicsProvider;
-}
+VOG_DECLARE_PTR(CommandBufferPool);
+VOG_DECLARE_PTR(Device);
+} // namespace VOG::Graphics::Vulkan
 namespace VOG::Graphics::Frame
 {
 class FrameObjects
 {
-public:
-    FrameObjects(const GraphicsProvider& graphicsProvider, std::size_t threadCount);
+    friend class FrameObjectManager;
 
-    FrameObjects(FrameObjects&&) = default;
+public:
+    FrameObjects(const Vulkan::DevicePtr& device, std::size_t threadCount);
+
+    FrameObjects(FrameObjects&&)      = default;
+    FrameObjects(const FrameObjects&) = delete;
 
     ~FrameObjects();
 
@@ -28,31 +32,32 @@ public:
     const Vulkan::TimelineSemaphore& getTimelineSemaphore() const;
 
     /**
-     * Get the thread objects by id.
+     * Get the command buffer pool by thread id.
      *
-     * @param threadId
+     * @param threadId Index of the thread requesting the command buffer pool.
+     * Id is simply an index from 0 to @p mCommandBufferPools size.
      *
      * @note for a thread pool thread ids should be unique as access to thread objects is not
      * guarded.
      */
-    ThreadObjects& getThreadObjects(std::size_t threadId);
+    Vulkan::CommandBufferPool& getCommandBufferPoolForThread(std::size_t threadId);
 
+protected:
     /**
      * Frame cleanups from previous usage like resetting the command buffers and command pools etc.
      */
     void onFrameStart();
 
-    void submit(Vulkan::CommandBufferHandle              handle,
-                Vulkan::TimelineSemaphore::WaitRequest   wait,
-                Vulkan::TimelineSemaphore::SignalRequest signal,
-                const vk::raii::Semaphore&               signalBinary);
+    void wait();
+
+    /**
+     * Wait for command buffers to complete and reset the pools.
+     */
+    void resetPools();
 
 protected:
-    void waitAndReset();
-
-protected:
-    /** Graphics provider */
-    const GraphicsProvider& mGraphicsProvider;
+    /** Vulkan device provider */
+    Vulkan::DevicePtr mDevice;
 
     /**
      * Semaphore that will be signaled by last command buffer of the frame and waited on before
@@ -65,10 +70,7 @@ protected:
     /** Frame's timeline semaphore used for chaining the command buffers execution */
     Vulkan::TimelineSemaphore mTimelineSemaphore;
 
-    /** Per working thread objects */
-    std::vector<ThreadObjects> mThreadObjects;
-
-    /** A list of used command buffer handles during frame recording */
-    std::vector<Vulkan::CommandBufferHandle> mUsedCommandBuffers;
+    /** Per working thread command buffer pools */
+    std::vector<Vulkan::CommandBufferPoolPtr> mCommandBufferPools;
 };
 } // namespace VOG::Graphics::Frame

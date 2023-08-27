@@ -5,8 +5,14 @@
 #include <VOG/Engine/Renderer/Renderer.hpp>
 
 #include <SDL2/SDL_vulkan.h>
+#include <boost/process.hpp>
+#include <boost/program_options.hpp>
+#include <spdlog/spdlog.h>
 
+#include <filesystem>
 #include <optional>
+
+namespace po = boost::program_options;
 
 namespace VOG::Application
 {
@@ -24,22 +30,45 @@ Application::Application(const std::string& title,
                                           static_cast<int>(width),
                                           static_cast<int>(height),
                                           SDL_WINDOW_SHOWN)}
-    , mRenderer{std::make_shared<Engine::Renderer>(Common::JSONContainer{
-          {"extensions", extensions},
-          {"layers", layers},
-          {"app_name", title},
-          {"surface", mWindow->getSurfaceHandle()},
-          {"frames_in_flight", 2u},
-          {"resource_manager",
-           {"shader_source_dir",
-            R"(/Users/vodobesku/git_projects/vulkan_dev/src/VOG/Graphics/resources/shaders)"}}})}
 {
+    auto env = boost::this_process::environment();
+#if defined(__APPLE__)
+    env["MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS"] = "1";
+#endif
+
+    std::string             shaderStoragePath = {};
+    po::options_description description       = {};
+    description.add_options()("shader-storage-path",
+                              po::value(&shaderStoragePath),
+                              "Path to the shader directory contaiting config.json.");
+    const auto        parsed = po::parse_command_line(cmdArgs.size(), cmdArgs.data(), description);
+    po::variables_map vm{};
+    po::store(parsed, vm);
+    po::notify(vm);
+
+    if (shaderStoragePath.empty())
+    {
+        throw std::runtime_error("Shader storage path is empty.");
+    }
+    else if (!std::filesystem::exists(shaderStoragePath))
+    {
+        throw std::runtime_error(
+            fmt::format("Shader storage path \"{}\" does not exist.", shaderStoragePath));
+    }
+
+    mRenderer = {std::make_shared<Engine::Renderer>(
+        Common::JSONContainer{{"extensions", extensions},
+                              {"layers", layers},
+                              {"app_name", title},
+                              {"surface", mWindow->getSurfaceHandle()},
+                              {"frames_in_flight", 1u},
+                              {"shader_source_path", shaderStoragePath}})};
 }
 
 Application::~Application() {}
 
 bool
-Application::Run()
+Application::run()
 {
     using namespace VOG::Common;
 

@@ -4,18 +4,14 @@
 #include <stdexcept>
 
 int
-main()
+main(int argc, const char** argv)
 {
-    try
     {
         VOG::Application::Application app(
-            "My window", 1280, 720, {}, {"VK_LAYER_KHRONOS_validation"});
+            "My window", 1280, 720, {}, {}, {argv, static_cast<std::size_t>(argc)});
 
-        app.Run();
+        app.run();
     }
-    catch (const std::exception& ex)
-    {
-        std::cout << ex.what() << std::endl;
-    }
+
     return 0;
 }

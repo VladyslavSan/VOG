@@ -17,6 +17,7 @@ target_include_directories(VOG.Common
 target_sources(VOG.Common
     PRIVATE
         include/VOG/Common/Assert.hpp
+        include/VOG/Common/Concepts.hpp
         include/VOG/Common/JSONContainer.hpp
         include/VOG/Common/NoCopyable.hpp
         include/VOG/Common/Signals.hpp
