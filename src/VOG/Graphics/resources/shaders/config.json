@@ -11,6 +11,10 @@
     "TestVertexAttribute": {
       "vertex": "src/TestVertexAttribute.vert.glsl",
       "fragment": "src/TestVertexAttribute.frag.glsl"
+    },
+    "TestUniformBuffer": {
+      "vertex": "src/TestUniformBuffer.vert.glsl",
+      "fragment": "src/TestUniformBuffer.frag.glsl"
     }
   }
 }

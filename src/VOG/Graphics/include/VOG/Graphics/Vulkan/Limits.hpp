@@ -11,5 +11,6 @@ constexpr std::uint8_t gMaxNumPushConstants    = 8u;
 constexpr std::uint8_t gMaxNumUniformBuffers   = 8u;
 constexpr std::uint8_t gMaxNumVertexBuffers    = 4u;
 constexpr std::uint8_t gMaxNumStageAttributes  = 8u;
-constexpr std::uint8_t gMaxNumStageSets        = 8u;
+constexpr std::uint8_t gMaxNumDescriptorSets   = 4u;
+constexpr std::uint8_t gMaxNumDescriptorBindings   = 4u;
 } // namespace VOG::Graphics::Vulkan::Limits

@@ -4,6 +4,7 @@
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 
+#include <fmt/format.h>
 #include <glslang/Public/ShaderLang.h>
 #include <nlohmann/json.hpp>
 
@@ -105,12 +106,12 @@ ShaderProgramCache::ShaderProgramCache(const Vulkan::DevicePtr&     device,
             std::shared_ptr<Vulkan::Shader> shader = nullptr;
             try
             {
-                shader = Vulkan::Shader::create(*device, shadingStage, shaderSource);
+                shader = Vulkan::Shader::create(device, shadingStage, shaderSource);
             }
-            catch (const Vulkan::Shader::CompilationError& err)
+            catch (const std::exception&)
             {
-                throw std::runtime_error{"Failed to compile shader \"" + shaderName +
-                                         "\" with error:\n" + err.what()};
+                std::throw_with_nested(std::runtime_error{fmt::format(
+                    "Failed to compile shader \"{}\" ({})", shaderName, stagePath.string())});
             }
             switch (shadingStage)
             {

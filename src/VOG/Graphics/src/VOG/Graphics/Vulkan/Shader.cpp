@@ -134,7 +134,7 @@ constexpr TBuiltInResource kDefaultTBuiltInResource = {
     }};
 
 static EShLanguage
-ConvertShadingStage(const vk::ShaderStageFlagBits shader_type)
+convertShadingStage(const vk::ShaderStageFlagBits shader_type)
 {
     switch (shader_type)
     {
@@ -154,8 +154,9 @@ ConvertShadingStage(const vk::ShaderStageFlagBits shader_type)
         return EShLangVertex;
     }
 }
+
 EShLanguage
-ConvertShadingStage(Shader::ShadingStage stage)
+convertShadingStage(Shader::ShadingStage stage)
 {
     switch (stage)
     {
@@ -168,10 +169,22 @@ ConvertShadingStage(Shader::ShadingStage stage)
     }
 }
 
+vk::ShaderStageFlagBits
+toVulkan(Shader::ShadingStage stage)
+{
+    switch (stage)
+    {
+    case Shader::ShadingStage::eVertex:
+        return vk::ShaderStageFlagBits::eVertex;
+    case Shader::ShadingStage::eFragment:
+        return vk::ShaderStageFlagBits::eFragment;
+    }
+}
+
 std::vector<std::uint32_t>
 compileGLSLShader(Shader::ShadingStage stage, const std::string& glslCode)
 {
-    const auto shadingStage   = ConvertShadingStage(stage);
+    const auto shadingStage   = convertShadingStage(stage);
     const auto messagesFilter = EShMessages::EShMsgDefault;
 
     glslang::TShader shader{shadingStage};
@@ -305,46 +318,31 @@ parseStructMembers(const spirv_cross::Compiler& compiler, const spirv_cross::Res
 
     return members;
 }
-} // namespace
 
-std::shared_ptr<Shader>
-Shader::create(const Device& device, Shader::ShadingStage stage, const std::string& source)
+void
+checkResourceLocation(const Shader::Reflection::ResourceLocation& location)
 {
-    return std::make_shared<Shader>(device, stage, source);
-}
-
-bool
-Shader::vertexFormatCompatible(Shader::Reflection::AttributeFormat shaderVertexFormat,
-                               vk::Format                          provided)
-{
-    // Todo: implement compatibility checking.
-    return true;
-}
-
-Shader::Shader(const Device& device, Shader::ShadingStage stage, const std::string& glslCode)
-    : Shader(device, stage, compileGLSLShader(stage, glslCode))
-{
-}
-
-Shader::Shader(const Device&              device,
-               Shader::ShadingStage       stage,
-               std::vector<std::uint32_t> shaderBinary)
-    : stage{stage}
-    , binary{std::move(shaderBinary)}
-    , module{device,
-             vk::ShaderModuleCreateInfo{.codeSize = binary.size() * sizeof(std::uint32_t),
-                                        .pCode    = binary.data()}}
-    , reflection{reflect(binary)}
-{
+    if (location.set > Limits::gMaxNumDescriptorSets)
+    {
+        throw Shader::ShaderError{fmt::format("Resource set \"{}\" exceeds the limit of \"{}\"",
+                                              location.set,
+                                              Limits::gMaxNumDescriptorSets)};
+    }
+    if (location.binding > Limits::gMaxNumDescriptorBindings)
+    {
+        throw Shader::ShaderError{fmt::format("Resource binding \"{}\" exceeds the limit of \"{}\"",
+                                              location.binding,
+                                              Limits::gMaxNumDescriptorBindings)};
+    }
 }
 
 Shader::Reflection
-Shader::reflect(const std::vector<std::uint32_t>& binary)
+reflect(const std::vector<std::uint32_t>& binary)
 {
     spirv_cross::Compiler              compiler{binary};
     const spirv_cross::ShaderResources resources = compiler.get_shader_resources();
 
-    Reflection reflection{};
+    Shader::Reflection reflection{};
 
     VOG_ASSERT(resources.stage_inputs.size() < Limits::gMaxNumStageAttributes);
     VOG_ASSERT(resources.stage_outputs.size() < Limits::gMaxNumStageAttributes);
@@ -364,15 +362,15 @@ Shader::reflect(const std::vector<std::uint32_t>& binary)
 
     for (const spirv_cross::Resource& resource : resources.uniform_buffers)
     {
-        const std::uint32_t set =
-            compiler.get_decoration(resource.id, spv::Decoration::DecorationDescriptorSet);
-        const std::uint32_t binding =
-            compiler.get_decoration(resource.id, spv::Decoration::DecorationBinding);
+        const Shader::Reflection::ResourceLocation location = {
+            .set = compiler.get_decoration(resource.id, spv::Decoration::DecorationDescriptorSet),
+            .binding = compiler.get_decoration(resource.id, spv::Decoration::DecorationBinding)};
+        checkResourceLocation(location);
 
         const auto& baseType = compiler.get_type(resource.base_type_id);
         const auto  size     = compiler.get_declared_struct_size(baseType);
 
-        reflection.uniformBuffers.push_back({.location = {.set = set, .binding = binding},
+        reflection.uniformBuffers.push_back({.location = location,
                                              .size     = size,
                                              .members  = parseStructMembers(compiler, resource)});
     }
@@ -381,5 +379,38 @@ Shader::reflect(const std::vector<std::uint32_t>& binary)
               [](const auto& left, const auto& right) { return left.location < right.location; });
 
     return reflection;
+}
+} // namespace
+
+std::shared_ptr<Shader>
+Shader::create(DevicePtr device, Shader::ShadingStage stage, const std::string& source)
+{
+    return std::make_shared<Shader>(std::move(device), stage, source);
+}
+
+bool
+Shader::vertexFormatCompatible(Shader::Reflection::AttributeFormat shaderVertexFormat,
+                               vk::Format                          provided)
+{
+    // Todo: implement compatibility checking.
+    return true;
+}
+
+Shader::Shader(DevicePtr device, Shader::ShadingStage stage, const std::string& glslCode)
+    : Shader(std::move(device), stage, compileGLSLShader(stage, glslCode))
+{
+}
+
+Shader::Shader(DevicePtr                  _device,
+               Shader::ShadingStage       stage,
+               std::vector<std::uint32_t> shaderBinary)
+    : device{std::move(_device)}
+    , stage{toVulkan(stage)}
+    , binary{std::move(shaderBinary)}
+    , module{*device,
+             vk::ShaderModuleCreateInfo{.codeSize = binary.size() * sizeof(std::uint32_t),
+                                        .pCode    = binary.data()}}
+    , reflection{reflect(binary)}
+{
 }
 } // namespace VOG::Graphics::Vulkan

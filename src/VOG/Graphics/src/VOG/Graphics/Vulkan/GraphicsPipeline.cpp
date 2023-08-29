@@ -2,6 +2,7 @@
 
 #include <VOG/Common/Assert.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
+#include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 
 #include <stdexcept>
 
@@ -36,17 +37,18 @@ validateVertexAttributes(const ShaderProgram& shaderProgram, const VertexLayout&
 
 GraphicsPipeline::GraphicsPipeline(const CreateInfo& createInfo)
     : vk::raii::Pipeline{nullptr}
+    , device{std::move(createInfo.device)}
     , renderpassDescription{createInfo.renderPass.getRenderpassDescription()}
 {
     using ShadingStateInfo = vk::PipelineShaderStageCreateInfo;
 
     std::array shadingStages = {
         ShadingStateInfo{.stage  = vk::ShaderStageFlagBits::eVertex,
-                         .module = *createInfo.shading.stages.vertex.shader->module,
-                         .pName  = createInfo.shading.stages.vertex.entryPoint},
+                         .module = *createInfo.shading->stages.vertex.shader->module,
+                         .pName  = createInfo.shading->stages.vertex.entryPoint},
         ShadingStateInfo{.stage  = vk::ShaderStageFlagBits::eFragment,
-                         .module = *createInfo.shading.stages.fragment.shader->module,
-                         .pName  = createInfo.shading.stages.fragment.entryPoint}};
+                         .module = *createInfo.shading->stages.fragment.shader->module,
+                         .pName  = createInfo.shading->stages.fragment.entryPoint}};
 
     const auto& vertexLayout  = createInfo.vertexLayout;
     const auto& rasterizer    = createInfo.rasterizer;
@@ -97,13 +99,13 @@ GraphicsPipeline::GraphicsPipeline(const CreateInfo& createInfo)
 
     try
     {
-        vk::raii::Pipeline pipeline{createInfo.device, createInfo.cache, info};
+        vk::raii::Pipeline pipeline{*device, createInfo.cache, info};
         static_cast<vk::raii::Pipeline&>(*this) = std::move(pipeline);
     }
     catch (const vk::SystemError& error)
     {
         using namespace std::string_literals;
-        if (!validateVertexAttributes(createInfo.shading, vertexLayout))
+        if (!validateVertexAttributes(*createInfo.shading, vertexLayout))
         {
             throw std::runtime_error{
                 "GraphicsPipeline creation failed. Shader program is incompatible with vertex "
@@ -121,11 +123,11 @@ GraphicsPipeline::GraphicsPipeline(const CreateInfoFromDescription& createInfo)
 
     std::array shadingStages = {
         ShadingStateInfo{.stage  = vk::ShaderStageFlagBits::eVertex,
-                         .module = *createInfo.shading.stages.vertex.shader->module,
-                         .pName  = createInfo.shading.stages.vertex.entryPoint},
+                         .module = *createInfo.shading->stages.vertex.shader->module,
+                         .pName  = createInfo.shading->stages.vertex.entryPoint},
         ShadingStateInfo{.stage  = vk::ShaderStageFlagBits::eFragment,
-                         .module = *createInfo.shading.stages.fragment.shader->module,
-                         .pName  = createInfo.shading.stages.fragment.entryPoint}};
+                         .module = *createInfo.shading->stages.fragment.shader->module,
+                         .pName  = createInfo.shading->stages.fragment.entryPoint}};
 
     const auto& vertexLayout  = createInfo.vertexLayout;
     const auto& rasterizer    = createInfo.rasterizer;
@@ -182,13 +184,13 @@ GraphicsPipeline::GraphicsPipeline(const CreateInfoFromDescription& createInfo)
 
     try
     {
-        vk::raii::Pipeline pipeline{createInfo.device, createInfo.cache, info};
+        vk::raii::Pipeline pipeline{*device, createInfo.cache, info};
         static_cast<vk::raii::Pipeline&>(*this) = std::move(pipeline);
     }
     catch (const vk::SystemError& error)
     {
         using namespace std::string_literals;
-        if (!validateVertexAttributes(createInfo.shading, vertexLayout))
+        if (!validateVertexAttributes(*createInfo.shading, vertexLayout))
         {
             throw std::runtime_error{
                 "GraphicsPipeline creation failed. Shader program is incompatible with vertex "

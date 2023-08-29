@@ -139,9 +139,9 @@ Renderer::render()
         auto program = mShaderProgramCache->get("ScreenSpacePositionColor");
 
         auto pipeline = std::make_shared<GraphicsPipeline>(GraphicsPipeline::CreateInfo{
-            .device         = *mVulkanDevice,
+            .device         = mVulkanDevice,
             .cache          = nullptr,
-            .shading        = *program,
+            .shading        = program,
             .vertexLayout   = {.bindingDescription =
                                    {
                                      {.binding   = 0u,
@@ -254,14 +254,13 @@ Renderer::requestRenderChangeState(RenderJobState newState)
 void
 Renderer::renderThreadMain(std::weak_ptr<Renderer> renderer)
 {
-    while (true)
+    while (!boost::this_thread::interruption_requested())
     {
-        if (boost::this_thread::interruption_requested())
+        auto locked = renderer.lock();
+        if (!locked)
         {
             break;
         }
-
-        auto locked = renderer.lock();
         locked->render();
     }
 }

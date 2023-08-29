@@ -5,11 +5,11 @@
 #include <VOG/Graphics/Vulkan/Common.hpp>
 #include <VOG/Graphics/Vulkan/Limits.hpp>
 #include <VOG/Graphics/Vulkan/RenderPass.hpp>
-#include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 
 namespace VOG::Graphics::Vulkan
 {
-class Device;
+VOG_DECLARE_PTR(Device);
+VOG_DECLARE_PTR(ShaderProgram);
 
 using ColorComponent = vk::ColorComponentFlagBits;
 using vk::DynamicState;
@@ -45,9 +45,9 @@ public:
 
     struct CreateInfo
     {
-        const Device&                               device;
+        DevicePtr                                   device;
         vk::Optional<const vk::raii::PipelineCache> cache;
-        ShaderProgram                               shading;
+        ShaderProgramPtr                            shading;
         VertexLayout                                vertexLayout;
         RasterizationOptions                        rasterizer;
         ViewportState                               viewportState;
@@ -62,9 +62,9 @@ public:
 
     struct CreateInfoFromDescription
     {
-        const Device&                               device;
+        DevicePtr                                   device;
         vk::Optional<const vk::raii::PipelineCache> cache;
-        ShaderProgram                               shading;
+        ShaderProgramPtr                            shading;
         VertexLayout                                vertexLayout;
         RasterizationOptions                        rasterizer;
         ViewportState                               viewportState;
@@ -80,6 +80,8 @@ public:
 
     GraphicsPipeline(const CreateInfoFromDescription& createInfo);
 
+public:
     const RenderpassDescription renderpassDescription;
+    const DevicePtr device;
 };
 } // namespace VOG::Graphics::Vulkan
