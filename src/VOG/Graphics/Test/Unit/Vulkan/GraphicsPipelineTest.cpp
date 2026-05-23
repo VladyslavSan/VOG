@@ -1,10 +1,11 @@
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/RenderPass.hpp>
 #include <VOG/Graphics/Vulkan/Shader.hpp>
+#include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 
 #include <gtest/gtest.h>
 
-#include "GraphicsApiFixture.hpp"
+#include "VulkanFixture.hpp"
 
 namespace VOG::Tests
 {
@@ -36,12 +37,12 @@ void main() {
 )";
 } // namespace
 
-TEST_F(GraphicsProviderFixture, GraphicsPipeline_simpleTest)
+TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
 {
     using namespace VOG::Graphics::Vulkan;
 
     auto renderPass =
-        RenderPass::create(mGraphicsProvider->getDevice(),
+        RenderPass::create(VulkanDevice,
                            {{.format        = vk::Format::eR32G32B32A32Sfloat,
                              .loadOp        = vk::AttachmentLoadOp::eClear,
                              .storeOp       = vk::AttachmentStoreOp::eStore,
@@ -49,11 +50,10 @@ TEST_F(GraphicsProviderFixture, GraphicsPipeline_simpleTest)
                              .finalLayout   = vk::ImageLayout::eColorAttachmentOptimal}},
                            {});
 
-    vk::raii::PipelineLayout pipelineLayout{mGraphicsProvider->getDevice(),
-                                            vk::PipelineLayoutCreateInfo{}};
+    vk::raii::PipelineLayout pipelineLayout{*VulkanDevice, vk::PipelineLayoutCreateInfo{}};
 
     const GraphicsPipeline::CreateInfo createInfoTemplate{
-        .device  = mGraphicsProvider->getDevice(),
+        .device  = VulkanDevice,
         .cache   = nullptr,
         .shading = {},
         .vertexLayout =
@@ -78,20 +78,19 @@ TEST_F(GraphicsProviderFixture, GraphicsPipeline_simpleTest)
         .multisample    = {},
         .dynamicStates  = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
         .pipelineLayout = *pipelineLayout,
-        .renderPass     = **renderPass};
+        .renderPass     = *renderPass};
 
     {
         SCOPED_TRACE("correct pipeline compiles");
-        auto vertexShader = Shader::create(
-            mGraphicsProvider->getDevice(), ShadingStage::eVertex, gVertexShaderString);
+        auto vertexShader =
+            Shader::create(VulkanDevice, Shader::ShadingStage::eVertex, gVertexShaderString);
         auto fragmentShader = Shader::create(
-            mGraphicsProvider->getDevice(), ShadingStage::eFragment, gFragmentShaderGoodString);
+            VulkanDevice, Shader::ShadingStage::eFragment, gFragmentShaderGoodString);
 
-        auto                createInfo = createInfoTemplate;
-        const ShaderProgram shading    = {
-               .vertexStage   = {.shader = vertexShader, .entryPoint = "main"},
-               .fragmentStage = {.shader = fragmentShader, .entryPoint = "main"}};
-        createInfo.shading = shading;
+        auto createInfo = createInfoTemplate;
+        createInfo.shading =
+            ShaderProgram::create({.vertex   = {.shader = vertexShader, .entryPoint = "main"},
+                                   .fragment = {.shader = fragmentShader, .entryPoint = "main"}});
 
         EXPECT_NO_THROW(auto pipeline = std::make_shared<GraphicsPipeline>(createInfo););
     }

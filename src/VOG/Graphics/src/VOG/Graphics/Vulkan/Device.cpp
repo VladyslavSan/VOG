@@ -1,5 +1,6 @@
 #include "VOG/Graphics/Vulkan/Device.hpp"
 
+#include <VOG/Graphics/Vulkan/FencePool.hpp>
 #include <VOG/Graphics/Vulkan/MemoryAllocator.hpp>
 
 #include <spdlog/spdlog.h>
@@ -122,12 +123,17 @@ makeDevice(const vk::raii::PhysicalDevice& physicalDevice, const PhysicalDevice:
         }
     }
 
+    vk::PhysicalDeviceFeatures deviceFeatues{
+        .depthClamp = 1u,
+    };
+
     vk::StructureChain chain{
         vk::DeviceCreateInfo{
             .queueCreateInfoCount    = 1u,
             .pQueueCreateInfos       = &queueInfo,
             .enabledExtensionCount   = static_cast<std::uint32_t>(extensions.size()),
             .ppEnabledExtensionNames = extensions.data(),
+            .pEnabledFeatures        = &deviceFeatues,
         },
         vk::PhysicalDeviceVulkan12Features{
             .timelineSemaphore = 1u,
@@ -152,12 +158,8 @@ Device::Device(InstancePtr _instance, vk::raii::PhysicalDevice physicalDevice)
     : instance{std::move(_instance)}
     , PhysicalDevice{std::move(physicalDevice)}
     , vk::raii::Device{makeDevice(*this, queueInfos)}
-    , graphicsQueue{vk::raii::Queue{*this, queueInfos.graphics.familyIndex, 0u},
-                    queueInfos.graphics.familyIndex,
-                    queueInfos.graphics.familyProperties}
-    , transferQueue{vk::raii::Queue{*this, queueInfos.transfer.familyIndex, 0u},
-                    queueInfos.transfer.familyIndex,
-                    queueInfos.transfer.familyProperties}
+    , graphicsQueue{*this, queueInfos.graphics.familyIndex, queueInfos.graphics.familyProperties}
+    , transferQueue{*this, queueInfos.transfer.familyIndex, queueInfos.transfer.familyProperties}
     , pipelineCache{*this, {}}
 {
 }
@@ -167,6 +169,8 @@ Device::init()
 {
     const_cast<MemoryAllocatorPtr&>(memoryAllocator) =
         std::shared_ptr<MemoryAllocator>(new MemoryAllocator{shared_from_this()});
+    const_cast<FencePoolPtr&>(fencePool) =
+        std::shared_ptr<FencePool>{new FencePool{shared_from_this()}};
 }
 
 const PhysicalDevice&

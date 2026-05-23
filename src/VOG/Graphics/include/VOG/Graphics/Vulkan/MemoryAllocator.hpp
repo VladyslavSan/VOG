@@ -38,8 +38,12 @@ protected:
 struct MemoryAllocator::AllocationInfo
 {
     VmaAllocationCreateFlags flags;
-    VmaMemoryUsage           usage;
-    const char*              tag = nullptr;
+    VmaMemoryUsage           usage          = VMA_MEMORY_USAGE_AUTO;
+    vk::MemoryPropertyFlags  requiredFlags  = {};
+    vk::MemoryPropertyFlags  preferredFlags = {};
+    const char*              tag            = nullptr;
+
+    operator VmaAllocationCreateInfo() const noexcept;
 };
 
 class MemoryAllocator::Allocation

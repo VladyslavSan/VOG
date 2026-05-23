@@ -12,6 +12,7 @@ namespace VOG::Graphics::Vulkan
 VOG_DECLARE_PTR(CommandBufferPool);
 VOG_DECLARE_PTR(Device);
 } // namespace VOG::Graphics::Vulkan
+
 namespace VOG::Graphics::Frame
 {
 class FrameObjects
@@ -26,10 +27,7 @@ public:
 
     ~FrameObjects();
 
-    const vk::raii::Semaphore& getFramePresentWaitSemaphore() const;
-
-    Vulkan::TimelineSemaphore&       getTimelineSemaphore();
-    const Vulkan::TimelineSemaphore& getTimelineSemaphore() const;
+    const vk::raii::Semaphore& getFramePresentSemaphore() const;
 
     /**
      * Get the command buffer pool by thread id.
@@ -66,9 +64,6 @@ protected:
      * semaphore state.
      */
     vk::raii::Semaphore mFramePresentWaitSemaphore;
-
-    /** Frame's timeline semaphore used for chaining the command buffers execution */
-    Vulkan::TimelineSemaphore mTimelineSemaphore;
 
     /** Per working thread command buffer pools */
     std::vector<Vulkan::CommandBufferPoolPtr> mCommandBufferPools;

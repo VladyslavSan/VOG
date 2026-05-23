@@ -21,6 +21,7 @@ AlignConsecutiveDeclarations: Consecutive
 AlignEscapedNewlines: Right
 AlignOperands: AlignAfterOperator
 AlignTrailingComments: true
+AllowShortLambdasOnASingleLine: None
 
 AllowAllArgumentsOnNextLine: true
 BinPackArguments: false

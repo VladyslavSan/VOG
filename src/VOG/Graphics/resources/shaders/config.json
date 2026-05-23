@@ -1,9 +1,5 @@
 {
   "shaders": {
-    "BasicTriangle": {
-      "vertex": "src/BasicTriangle.vert.glsl",
-      "fragment": "src/ScreenSpacePositionColor.frag.glsl"
-    },
     "ScreenSpacePositionColor": {
       "vertex": "src/ScreenSpacePositionColor.vert.glsl",
       "fragment": "src/ScreenSpacePositionColor.frag.glsl"
@@ -14,6 +10,10 @@
     },
     "TestUniformBuffer": {
       "vertex": "src/TestUniformBuffer.vert.glsl",
+      "fragment": "src/TestUniformBuffer.frag.glsl"
+    },
+    "WorldSpace": {
+      "vertex": "src/WorldSpace.vert.glsl",
       "fragment": "src/TestUniformBuffer.frag.glsl"
     }
   }

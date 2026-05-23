@@ -44,7 +44,7 @@ public:
      */
     struct Reflection
     {
-        struct AttributeFormat
+        struct BaseType
         {
             enum class Type : std::uint8_t
             {
@@ -54,15 +54,18 @@ public:
                 eDouble,
             };
 
+            std::strong_ordering operator<=>(const BaseType&) const = default;
+
             Type         type       : 4;
-            std::uint8_t components : 2;
+            std::uint8_t components : 4;
+            std::uint8_t columns    : 4;
         };
 
         struct StageInOutAttribute
         {
-            std::uint8_t    location;
-            std::string     name;
-            AttributeFormat format;
+            std::uint8_t location;
+            std::string  name;
+            BaseType     format;
         };
 
         struct StructMember
@@ -70,13 +73,13 @@ public:
             std::uint16_t offset;
             std::uint16_t size;
             std::string   name;
+            BaseType      type;
 
-            std::strong_ordering operator<=>(const StructMember& pushConstant) const = default;
+            std::strong_ordering operator<=>(const StructMember&) const = default;
         };
 
         struct PushConstants
         {
-            std::uint8_t              size;
             std::vector<StructMember> variables;
         };
 
@@ -94,16 +97,15 @@ public:
             std::size_t               size;
             std::vector<StructMember> members;
 
-            std::strong_ordering operator<=>(const UniformBuffer& rhs) const noexcept = default;
+            std::strong_ordering operator<=>(const UniformBuffer&) const noexcept = default;
         };
 
-        using StageAttributes =
-            StaticVectorStrict<StageInOutAttribute, Limits::gMaxNumStageAttributes>;
+        using StageAttributes = std::vector<StageInOutAttribute>;
 
-        StageAttributes                                                  inAttributes;
-        StageAttributes                                                  outAttributes;
-        PushConstants                                                    pushConstants;
-        StaticVectorStrict<UniformBuffer, Limits::gMaxNumUniformBuffers> uniformBuffers;
+        StageAttributes            inAttributes;
+        StageAttributes            outAttributes;
+        PushConstants              pushConstants;
+        std::vector<UniformBuffer> uniformBuffers;
     };
 
     /**
@@ -127,8 +129,8 @@ public:
      *
      * @return true if @p provided can be bound correctly into @p shaderVertexFormat.
      */
-    static bool vertexFormatCompatible(Shader::Reflection::AttributeFormat shaderVertexFormat,
-                                       vk::Format                          provided);
+    static bool vertexFormatCompatible(Shader::Reflection::BaseType shaderVertexFormat,
+                                       vk::Format                   provided);
 
     /**
      * Construct from glsl shader code. Very expensive as it involves glsl to spirv compilation.

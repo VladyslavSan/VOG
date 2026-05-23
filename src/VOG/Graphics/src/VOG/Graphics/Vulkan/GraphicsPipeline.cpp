@@ -23,7 +23,9 @@ validateVertexAttributes(const ShaderProgram& shaderProgram, const VertexLayout&
             std::find_if(vertexLayout.attributeDescription.begin(),
                          vertexLayout.attributeDescription.end(),
                          [location = vertexAttribute.location](const auto& description)
-                         { return location == description.location; });
+                         {
+                             return location == description.location;
+                         });
 
         if (found == vertexLayout.attributeDescription.end() ||
             !Shader::vertexFormatCompatible(vertexAttribute.format, found->format))
@@ -35,25 +37,28 @@ validateVertexAttributes(const ShaderProgram& shaderProgram, const VertexLayout&
     return true;
 }
 
-GraphicsPipeline::GraphicsPipeline(const CreateInfo& createInfo)
+GraphicsPipeline::GraphicsPipeline(CreateInfo createInfo)
     : vk::raii::Pipeline{nullptr}
-    , device{std::move(createInfo.device)}
     , renderpassDescription{createInfo.renderPass.getRenderpassDescription()}
+    , device{std::move(createInfo.device)}
+    , program{std::move(createInfo.shading)}
 {
     using ShadingStateInfo = vk::PipelineShaderStageCreateInfo;
 
     std::array shadingStages = {
-        ShadingStateInfo{.stage  = vk::ShaderStageFlagBits::eVertex,
-                         .module = *createInfo.shading->stages.vertex.shader->module,
-                         .pName  = createInfo.shading->stages.vertex.entryPoint},
-        ShadingStateInfo{.stage  = vk::ShaderStageFlagBits::eFragment,
-                         .module = *createInfo.shading->stages.fragment.shader->module,
-                         .pName  = createInfo.shading->stages.fragment.entryPoint}};
+        ShadingStateInfo{
+            .stage  = vk::ShaderStageFlagBits::eVertex,
+            .module = *program->stages.vertex.shader->module,
+            .pName  = program->stages.vertex.entryPoint,
+        },
+        ShadingStateInfo{
+            .stage  = vk::ShaderStageFlagBits::eFragment,
+            .module = *program->stages.fragment.shader->module,
+            .pName  = program->stages.fragment.entryPoint,
+        },
+    };
 
-    const auto& vertexLayout  = createInfo.vertexLayout;
-    const auto& rasterizer    = createInfo.rasterizer;
-    const auto& blending      = createInfo.blending;
-    const auto& dynamicStates = createInfo.dynamicStates;
+    const auto& vertexLayout = createInfo.vertexLayout;
 
     const vk::PipelineVertexInputStateCreateInfo vertexInputState{
         .vertexBindingDescriptionCount =
@@ -64,38 +69,41 @@ GraphicsPipeline::GraphicsPipeline(const CreateInfo& createInfo)
         .pVertexAttributeDescriptions = vertexLayout.attributeDescription.data()};
 
     const vk::PipelineInputAssemblyStateCreateInfo inputAssemblyState{
-        .topology               = rasterizer.topology,
-        .primitiveRestartEnable = rasterizer.primitiveRestartEnabled};
+        .topology               = createInfo.rasterizer.topology,
+        .primitiveRestartEnable = createInfo.rasterizer.primitiveRestartEnabled};
 
     const vk::PipelineRasterizationStateCreateInfo rasterizationState{
         .depthClampEnable        = 0u,
-        .rasterizerDiscardEnable = rasterizer.rasterizationDiscardEnabled,
-        .polygonMode             = rasterizer.polygonMode,
-        .cullMode                = rasterizer.cullMode,
-        .frontFace               = rasterizer.frontFace,
+        .rasterizerDiscardEnable = createInfo.rasterizer.rasterizationDiscardEnabled,
+        .polygonMode             = createInfo.rasterizer.polygonMode,
+        .cullMode                = createInfo.rasterizer.cullMode,
+        .frontFace               = createInfo.rasterizer.frontFace,
         .depthBiasEnable         = 0u,
         .lineWidth               = 1.0f};
 
     const vk::PipelineColorBlendStateCreateInfo blendingState = {
-        .attachmentCount = static_cast<std::uint32_t>(blending.attachments.size()),
-        .pAttachments    = blending.attachments.data()};
+        .attachmentCount = static_cast<std::uint32_t>(createInfo.blending.attachments.size()),
+        .pAttachments    = createInfo.blending.attachments.data()};
 
     const vk::PipelineDynamicStateCreateInfo dynamicState{
         .dynamicStateCount = static_cast<std::uint32_t>(createInfo.dynamicStates.size()),
         .pDynamicStates    = createInfo.dynamicStates.data()};
 
-    vk::GraphicsPipelineCreateInfo info{.pVertexInputState   = &vertexInputState,
-                                        .pInputAssemblyState = &inputAssemblyState,
-                                        .pViewportState      = &createInfo.viewportState,
-                                        .pRasterizationState = &rasterizationState,
-                                        .pMultisampleState   = &createInfo.multisample,
-                                        .pDepthStencilState  = &createInfo.depthStencil,
-                                        .pColorBlendState    = &blendingState,
-                                        .pDynamicState       = &dynamicState,
-                                        .layout              = createInfo.pipelineLayout,
-                                        .renderPass          = *createInfo.renderPass,
-                                        .subpass             = createInfo.subpass};
-    info.setStages(shadingStages);
+    vk::GraphicsPipelineCreateInfo info{
+        .stageCount          = static_cast<std::uint32_t>(shadingStages.size()),
+        .pStages             = shadingStages.data(),
+        .pVertexInputState   = &vertexInputState,
+        .pInputAssemblyState = &inputAssemblyState,
+        .pViewportState      = &createInfo.viewportState,
+        .pRasterizationState = &rasterizationState,
+        .pMultisampleState   = &createInfo.multisample,
+        .pDepthStencilState  = &createInfo.depthStencil,
+        .pColorBlendState    = &blendingState,
+        .pDynamicState       = &dynamicState,
+        .layout              = createInfo.pipelineLayout,
+        .renderPass          = *createInfo.renderPass,
+        .subpass             = createInfo.subpass,
+    };
 
     try
     {
@@ -115,24 +123,28 @@ GraphicsPipeline::GraphicsPipeline(const CreateInfo& createInfo)
     }
 }
 
-GraphicsPipeline::GraphicsPipeline(const CreateInfoFromDescription& createInfo)
+GraphicsPipeline::GraphicsPipeline(CreateInfoFromDescription createInfo)
     : vk::raii::Pipeline{nullptr}
     , renderpassDescription{createInfo.renderpassDescription}
+    , device{std::move(createInfo.device)}
+    , program{std::move(createInfo.shading)}
 {
     using ShadingStateInfo = vk::PipelineShaderStageCreateInfo;
 
     std::array shadingStages = {
-        ShadingStateInfo{.stage  = vk::ShaderStageFlagBits::eVertex,
-                         .module = *createInfo.shading->stages.vertex.shader->module,
-                         .pName  = createInfo.shading->stages.vertex.entryPoint},
-        ShadingStateInfo{.stage  = vk::ShaderStageFlagBits::eFragment,
-                         .module = *createInfo.shading->stages.fragment.shader->module,
-                         .pName  = createInfo.shading->stages.fragment.entryPoint}};
+        ShadingStateInfo{
+            .stage  = vk::ShaderStageFlagBits::eVertex,
+            .module = *program->stages.vertex.shader->module,
+            .pName  = program->stages.vertex.entryPoint,
+        },
+        ShadingStateInfo{
+            .stage  = vk::ShaderStageFlagBits::eFragment,
+            .module = *program->stages.fragment.shader->module,
+            .pName  = program->stages.fragment.entryPoint,
+        },
+    };
 
-    const auto& vertexLayout  = createInfo.vertexLayout;
-    const auto& rasterizer    = createInfo.rasterizer;
-    const auto& blending      = createInfo.blending;
-    const auto& dynamicStates = createInfo.dynamicStates;
+    const auto& vertexLayout = createInfo.vertexLayout;
 
     const vk::PipelineVertexInputStateCreateInfo vertexInputState{
         .vertexBindingDescriptionCount =
@@ -143,48 +155,52 @@ GraphicsPipeline::GraphicsPipeline(const CreateInfoFromDescription& createInfo)
         .pVertexAttributeDescriptions = vertexLayout.attributeDescription.data()};
 
     const vk::PipelineInputAssemblyStateCreateInfo inputAssemblyState{
-        .topology               = rasterizer.topology,
-        .primitiveRestartEnable = rasterizer.primitiveRestartEnabled};
+        .topology               = createInfo.rasterizer.topology,
+        .primitiveRestartEnable = createInfo.rasterizer.primitiveRestartEnabled};
 
     const vk::PipelineRasterizationStateCreateInfo rasterizationState{
         .depthClampEnable        = 0u,
-        .rasterizerDiscardEnable = rasterizer.rasterizationDiscardEnabled,
-        .polygonMode             = rasterizer.polygonMode,
-        .cullMode                = rasterizer.cullMode,
-        .frontFace               = rasterizer.frontFace,
+        .rasterizerDiscardEnable = createInfo.rasterizer.rasterizationDiscardEnabled,
+        .polygonMode             = createInfo.rasterizer.polygonMode,
+        .cullMode                = createInfo.rasterizer.cullMode,
+        .frontFace               = createInfo.rasterizer.frontFace,
         .depthBiasEnable         = 0u,
         .lineWidth               = 1.0f};
 
     const vk::PipelineColorBlendStateCreateInfo blendingState = {
-        .attachmentCount = static_cast<std::uint32_t>(blending.attachments.size()),
-        .pAttachments    = blending.attachments.data()};
+        .attachmentCount = static_cast<std::uint32_t>(createInfo.blending.attachments.size()),
+        .pAttachments    = createInfo.blending.attachments.data()};
 
     const vk::PipelineDynamicStateCreateInfo dynamicState{
         .dynamicStateCount = static_cast<std::uint32_t>(createInfo.dynamicStates.size()),
         .pDynamicStates    = createInfo.dynamicStates.data()};
 
-    const vk::PipelineRenderingCreateInfo renderpassInfo = {
-        .colorAttachmentCount = static_cast<std::uint32_t>(
-            createInfo.renderpassDescription.colorAttachmentFormats.size()),
-        .pColorAttachmentFormats = createInfo.renderpassDescription.colorAttachmentFormats.data(),
-        .depthAttachmentFormat   = createInfo.renderpassDescription.depthAttachmentFormat,
-        .stencilAttachmentFormat = createInfo.renderpassDescription.stencilAttachmentFormat};
-
-    vk::GraphicsPipelineCreateInfo info{.pVertexInputState   = &vertexInputState,
-                                        .pInputAssemblyState = &inputAssemblyState,
-                                        .pViewportState      = &createInfo.viewportState,
-                                        .pRasterizationState = &rasterizationState,
-                                        .pMultisampleState   = &createInfo.multisample,
-                                        .pDepthStencilState  = &createInfo.depthStencil,
-                                        .pColorBlendState    = &blendingState,
-                                        .pDynamicState       = &dynamicState,
-                                        .layout              = createInfo.pipelineLayout};
-    info.setStages(shadingStages);
-    info.pNext = &renderpassInfo;
+    vk::StructureChain info{
+        vk::GraphicsPipelineCreateInfo{
+            .stageCount          = static_cast<std::uint32_t>(shadingStages.size()),
+            .pStages             = shadingStages.data(),
+            .pVertexInputState   = &vertexInputState,
+            .pInputAssemblyState = &inputAssemblyState,
+            .pViewportState      = &createInfo.viewportState,
+            .pRasterizationState = &rasterizationState,
+            .pMultisampleState   = &createInfo.multisample,
+            .pDepthStencilState  = &createInfo.depthStencil,
+            .pColorBlendState    = &blendingState,
+            .pDynamicState       = &dynamicState,
+            .layout              = createInfo.pipelineLayout,
+        },
+        vk::PipelineRenderingCreateInfo{
+            .colorAttachmentCount = static_cast<std::uint32_t>(
+                createInfo.renderpassDescription.colorAttachmentFormats.size()),
+            .pColorAttachmentFormats =
+                createInfo.renderpassDescription.colorAttachmentFormats.data(),
+            .depthAttachmentFormat   = createInfo.renderpassDescription.depthAttachmentFormat,
+            .stencilAttachmentFormat = createInfo.renderpassDescription.stencilAttachmentFormat,
+        }};
 
     try
     {
-        vk::raii::Pipeline pipeline{*device, createInfo.cache, info};
+        vk::raii::Pipeline pipeline{*device, createInfo.cache, info.get()};
         static_cast<vk::raii::Pipeline&>(*this) = std::move(pipeline);
     }
     catch (const vk::SystemError& error)

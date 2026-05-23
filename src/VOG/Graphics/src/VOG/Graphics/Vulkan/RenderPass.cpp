@@ -5,10 +5,11 @@
 
 namespace VOG::Graphics::Vulkan
 {
-RenderPass::RenderPass(const Device&                  device,
+RenderPass::RenderPass(DevicePtr                  device,
                        const AttachmentsDescriptions& colorAttachments,
                        const AttachmentsDescription&  depthStencil)
     : vk::raii::RenderPass(nullptr)
+    , mDevice{device}
     , mAttachmentDescriptions{colorAttachments.begin(), colorAttachments.end()}
     , mDepthStencilProvided{depthStencil.format != vk::Format::eUndefined}
 {
@@ -47,7 +48,7 @@ RenderPass::RenderPass(const Device&                  device,
                                        .subpassCount    = 1,
                                        .pSubpasses      = &subpass};
 
-        static_cast<vk::raii::RenderPass&>(*this) = {device, ci};
+        static_cast<vk::raii::RenderPass&>(*this) = {*device, ci};
     }
 }
 

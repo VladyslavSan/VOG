@@ -20,15 +20,10 @@ FrameObjectManager::FrameObjectManager(const Vulkan::DevicePtr& device,
     mFrameObjects.reserve(frameCount);
     std::generate_n(std::back_inserter(mFrameObjects),
                     frameCount,
-                    [this, threadCount]() {
+                    [this, threadCount]()
+                    {
                         return FrameObjects{mDevice, threadCount};
                     });
-}
-
-std::size_t
-FrameObjectManager::getCurrentFrameIndex() const
-{
-    return mRenderFrame % mFrameObjects.size();
 }
 
 FrameObjects&
@@ -46,5 +41,11 @@ FrameObjectManager::acquireNextFrame()
     frame.onFrameStart();
 
     return frame;
+}
+
+std::size_t
+FrameObjectManager::getCurrentFrameIndex() const
+{
+    return mRenderFrame % mFrameObjects.size();
 }
 } // namespace VOG::Graphics::Frame

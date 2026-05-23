@@ -15,9 +15,7 @@ Fence::Fence(DevicePtr device)
 vk::Result
 Fence::wait(std::uint64_t timeout)
 {
-    VOG_ASSERT(mState != State::eNotUsed);
-
-    if (mState == State::eUsedAndWaited)
+    if (mState == State::eUsedAndWaited || mState == State::eNotUsed)
     {
         return vk::Result::eSuccess;
     }

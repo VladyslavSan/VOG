@@ -20,12 +20,24 @@ CommandBufferHandle::CommandBufferHandle(CommandBufferPoolPtr pool,
 
 CommandBufferHandle::~CommandBufferHandle()
 {
-    if (!mPool)
+    if (!mPool || !*mCommandBuffer)
     {
         return;
     }
 
     mPool->returnCommandBufferToPool(std::move(mCommandBuffer));
+}
+
+vk::CommandBuffer
+CommandBufferHandle::consumeForSubmission(std::shared_ptr<FencePool::FenceHandle> fence)
+{
+    VOG_ASSERT_MSG(fence, "Fence must be provided for command buffer submission.");
+    vk::CommandBuffer unmanagedHandle = *mCommandBuffer;
+
+    mPool->mSubmittedCommandBuffers.push_back(CommandBufferPool::SubmittedCommandBuffer{
+        .commandBuffer = std::move(mCommandBuffer), .fence = std::move(fence)});
+
+    return unmanagedHandle;
 }
 
 CommandBuffer*
@@ -40,66 +52,11 @@ CommandBufferHandle::operator->() noexcept
     return std::addressof(mCommandBuffer);
 }
 
-CommandBufferHandle::Submission
-CommandBufferHandle::submit(Vulkan::TimelineSemaphore::WaitRequest   wait,
-                            Vulkan::TimelineSemaphore::SignalRequest signal,
-                            const vk::raii::Semaphore&               signalBinary)
-{
-    VOG_ASSERT(mPool && mCommandBuffer);
-
-    const auto commandBuffers = {*mCommandBuffer};
-
-    std::array<vk::Semaphore, 2> signalSemaphores{};
-    vk::SubmitInfo               submitInfo{.signalSemaphoreCount = 0u};
-    submitInfo.setCommandBuffers(commandBuffers);
-    submitInfo.setPSignalSemaphores(signalSemaphores.data());
-
-    vk::TimelineSemaphoreSubmitInfo timeline{};
-    if (wait.semaphore != nullptr)
-    {
-        submitInfo.setWaitSemaphores(**wait.semaphore);
-        timeline.setWaitSemaphoreValues(wait.value);
-    }
-
-    std::array<std::uint64_t, 2> signalValues{};
-    if (signal.semaphore != nullptr)
-    {
-        signalSemaphores[0] = **signal.semaphore;
-        signalValues[0]     = signal.value;
-        timeline.setSignalSemaphoreValues(signalValues);
-
-        ++submitInfo.signalSemaphoreCount;
-    }
-
-    if ((wait.semaphore != nullptr) || (signal.semaphore != nullptr))
-    {
-        submitInfo.pNext = &timeline;
-    }
-
-    if (*signalBinary)
-    {
-        signalSemaphores[submitInfo.signalSemaphoreCount] = *signalBinary;
-        ++submitInfo.signalSemaphoreCount;
-    }
-
-    auto fence = mPool->mFencePool->getShared();
-
-    // Submit work to queue.
-    mPool->mDevice->graphicsQueue.submit(submitInfo, **fence->useFence());
-
-    // Add command buffer handle to list of submitted ones.
-    mPool->mSubmitedCommandBuffers.push_back(CommandBufferPool::SubmittedCommandBuffer{
-        .commandBuffer = std::move(mCommandBuffer), .fence = fence});
-
-    return Submission{.fence = std::move(fence)};
-}
-
 CommandBufferPool::CommandBufferPool(const DevicePtr& device)
     : mDevice{device}
     , mVulkanPool{*mDevice,
                   vk::CommandPoolCreateInfo{.queueFamilyIndex =
                                                 mDevice->queueInfos.graphics.familyIndex}}
-    , mFencePool{FencePool::create(device)}
 {
 }
 
@@ -135,14 +92,14 @@ CommandBufferPool::returnCommandBufferToPool(Vulkan::CommandBuffer commandBuffer
 void
 CommandBufferPool::reset()
 {
-    for (auto& submission : mSubmitedCommandBuffers)
+    for (auto& submission : mSubmittedCommandBuffers)
     {
         const auto waitResult = submission.fence->wait(std::numeric_limits<std::uint64_t>::max());
         VOG_ASSERT(waitResult == vk::Result::eSuccess);
 
         returnCommandBufferToPool(std::move(submission.commandBuffer));
     }
-    mSubmitedCommandBuffers.clear();
+    mSubmittedCommandBuffers.clear();
 
     mVulkanPool.reset();
 }

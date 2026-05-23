@@ -20,20 +20,21 @@ public:
         StaticVector<AttachmentsDescription, Limits::gMaxNumAttachments>;
 
     static std::shared_ptr<RenderPass>
-    create(const Device&                  device,
+    create(DevicePtr                      device,
            const AttachmentsDescriptions& colorAttachments,
            const AttachmentsDescription&  depthStencil)
     {
-        return std::make_shared<RenderPass>(device, colorAttachments, depthStencil);
+        return std::make_shared<RenderPass>(std::move(device), colorAttachments, depthStencil);
     }
 
-    RenderPass(const Device&                  device,
+    RenderPass(DevicePtr                      device,
                const AttachmentsDescriptions& colorAttachments,
                const AttachmentsDescription&  depthStencil);
 
     RenderpassDescription getRenderpassDescription() const;
 
 protected:
+    const DevicePtr                 mDevice;
     AttachmentsDescriptionsInternal mAttachmentDescriptions;
     const bool                      mDepthStencilProvided;
 };

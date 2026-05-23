@@ -36,7 +36,9 @@ public:
      */
     struct BindingDescription
     {
-        BindingResource      resource;
+        /** Resource of a binding. */
+        BindingResource resource;
+        /** Stages that use the binding. */
         vk::ShaderStageFlags stageFlags = vk::ShaderStageFlagBits::eAll;
     };
 
@@ -45,18 +47,37 @@ public:
      */
     struct SetLayout
     {
-        /* Vulkan's descriptor set layout object created from @p resources. */
+        /** Vulkan's descriptor set layout object created from @p resources. */
         vk::raii::DescriptorSetLayout setLayout = nullptr;
-        /* Binding resources of a set. */
+        /** Bindings of a set. Mostly for reflection purposes. */
         std::array<BindingDescription, Limits::gMaxNumDescriptorBindings> resources;
     };
 
+    /**
+     * Descriptor sets holder type.
+     *
+     * Index in this array corresponds to a set index.
+     * If SetLayout::setLayout is nullptr it means that set is not present in a program.
+     * SetLayout::
+     */
     using DescriptorSets = std::array<SetLayout, Limits::gMaxNumDescriptorSets>;
 
+    struct PushConstants
+    {
+        std::vector<std::string>           names;
+        std::vector<vk::PushConstantRange> ranges;
+    };
+
+    static std::shared_ptr<ShaderProgram> create(ShadingStages stages);
+
+public: // use create()
     ShaderProgram(ShadingStagesChecked stages);
 
 public:
-    const ShadingStages  stages;
-    const DescriptorSets descriptorSets;
+    const DevicePtr                device;
+    const ShadingStages            stages;
+    const DescriptorSets           descriptorSets;
+    const PushConstants            pushConstants;
+    const vk::raii::PipelineLayout pipelineLayout;
 };
 } // namespace VOG::Graphics::Vulkan

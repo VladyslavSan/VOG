@@ -1,3 +1,4 @@
+#include <VOG/Common/SurfaceHandle.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 
 namespace vk::raii
@@ -14,6 +15,6 @@ namespace VOG::Graphics::Vulkan
 {
 class Instance;
 std::shared_ptr<vk::raii::SurfaceKHR> CreateRenderSurface(const Instance&              instance,
-                                                          const Common::JSONContainer& parameters,
+                                                          const Common::SurfaceHandle& surface,
                                                           bool                         throwOnFail);
 } // namespace VOG::Graphics::Vulkan

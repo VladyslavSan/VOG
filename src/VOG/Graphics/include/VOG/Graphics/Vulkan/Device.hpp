@@ -7,6 +7,7 @@
 
 namespace VOG::Graphics::Vulkan
 {
+VOG_DECLARE_PTR(FencePool);
 VOG_DECLARE_PTR(Instance);
 VOG_DECLARE_PTR(MemoryAllocator);
 
@@ -50,6 +51,7 @@ public:
 
 public:
     const InstancePtr             instance;
+    const FencePoolPtr            fencePool;
     const Vulkan::Queue           graphicsQueue;
     const Vulkan::Queue           transferQueue;
     const MemoryAllocatorPtr      memoryAllocator;

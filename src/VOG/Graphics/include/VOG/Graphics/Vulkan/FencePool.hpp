@@ -1,3 +1,5 @@
+#pragma once
+
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Fence.hpp>
@@ -14,6 +16,8 @@ VOG_DECLARE_PTR(FencePool);
 class FencePool : public std::enable_shared_from_this<FencePool>
 {
 private:
+    friend class Device;
+
     FencePool(DevicePtr device);
 
 public:

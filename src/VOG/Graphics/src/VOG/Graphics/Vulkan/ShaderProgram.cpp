@@ -1,9 +1,10 @@
 #include "VOG/Graphics/Vulkan/ShaderProgram.hpp"
 
 #include <VOG/Common/Assert.hpp>
-#include <VOG/Graphics/Vulkan/Containers.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 
+#include <algorithm>
+#include <ranges>
 #include <stdexcept>
 
 namespace VOG::Graphics::Vulkan
@@ -63,7 +64,7 @@ buildDescriptorSets(const Device& device, const ShaderProgram::ShadingStages& st
             vk::DescriptorSetLayoutBinding setLayoutBinding;
             setLayoutBinding.stageFlags      = bindingDescription.stageFlags;
             setLayoutBinding.descriptorCount = 1u;
-            if (auto* uniformBufferPtr =
+            if (const auto* uniformBufferPtr =
                     std::get_if<Shader::Reflection::UniformBuffer>(&bindingDescription.resource))
             {
                 setLayoutBinding.binding        = uniformBufferPtr->location.binding;
@@ -86,26 +87,120 @@ buildDescriptorSets(const Device& device, const ShaderProgram::ShadingStages& st
 
     return descriptorSets;
 }
+
+ShaderProgram::PushConstants
+buildPushConstants(const ShaderProgram::ShadingStages& stages)
+{
+    ShaderProgram::PushConstants pushConstants;
+
+    auto valueInRange = [](const auto left, const auto right, const auto value) -> bool
+    {
+        return left <= value && value <= right;
+    };
+
+    for (const auto& stage : {stages.vertex, stages.fragment})
+    {
+        for (const auto& pushConstant : stage.shader->reflection.pushConstants.variables)
+        {
+            auto foundOverlap = std::ranges::find_if(
+                pushConstants.ranges,
+                [&pushConstant, &valueInRange](const vk::PushConstantRange& range)
+                {
+                    const auto end = range.offset + range.size - 1u;
+                    return valueInRange(range.offset, end, pushConstant.offset) ||
+                           valueInRange(
+                               range.offset, end, pushConstant.offset + pushConstant.offset - 1u);
+                });
+
+            // Simple path, just add push constant to ranges.
+            if (foundOverlap == pushConstants.ranges.end())
+            {
+                pushConstants.ranges.push_back({
+                    .stageFlags = stage.shader->stage,
+                    .offset     = pushConstant.offset,
+                    .size       = pushConstant.size,
+                });
+                pushConstants.names.push_back(pushConstant.name);
+
+                continue;
+            }
+
+            if (foundOverlap != pushConstants.ranges.end())
+            {
+                const bool compatible =
+                    foundOverlap->offset == pushConstant.offset &&
+                    foundOverlap->size == pushConstant.size &&
+                    pushConstant.name ==
+                        pushConstants
+                            .names[std::distance(pushConstants.ranges.begin(), foundOverlap)];
+
+                if (!compatible) [[unlikely]]
+                {
+                    throw std::runtime_error{"Push constants are incompatible"};
+                }
+
+                foundOverlap->stageFlags |= stage.shader->stage;
+            }
+        }
+    }
+
+    return pushConstants;
+}
+
+vk::raii::PipelineLayout
+makePipelineLayout(const Device&                        device,
+                   const ShaderProgram::DescriptorSets& descriptorSets,
+                   const ShaderProgram::PushConstants&  pushConstants)
+{
+    StaticVectorStrict<vk::DescriptorSetLayout, Limits::gMaxNumDescriptorSets> descriptorSetLayouts;
+    for (const auto& set : descriptorSets)
+    {
+        if (!*set.setLayout)
+        {
+            continue;
+        }
+
+        descriptorSetLayouts.push_back(*set.setLayout);
+    }
+
+    return {device,
+            {
+                .setLayoutCount         = static_cast<std::uint32_t>(descriptorSetLayouts.size()),
+                .pSetLayouts            = descriptorSetLayouts.data(),
+                .pushConstantRangeCount = static_cast<std::uint32_t>(pushConstants.ranges.size()),
+                .pPushConstantRanges    = pushConstants.ranges.data(),
+            }};
+}
+
 } // namespace
 
 ShaderProgram::ShadingStagesChecked::ShadingStagesChecked(
     ShaderProgram::ShadingStages shadingStages)
     : ShaderProgram::ShadingStages{std::move(shadingStages)}
 {
-    VOG_ASSERT(vertex.shader != nullptr &&
-               vertex.shader->stage == vk::ShaderStageFlagBits::eVertex);
-    VOG_ASSERT(fragment.shader != nullptr &&
-               fragment.shader->stage == vk::ShaderStageFlagBits::eFragment);
-
     if (!vertex.shader || !fragment.shader)
     {
         throw std::runtime_error{"Shader program is incomplete."};
     }
+
+    VOG_ASSERT(vertex.shader != nullptr &&
+               vertex.shader->stage == vk::ShaderStageFlagBits::eVertex);
+    VOG_ASSERT(fragment.shader != nullptr &&
+               fragment.shader->stage == vk::ShaderStageFlagBits::eFragment);
+}
+
+std::shared_ptr<ShaderProgram>
+ShaderProgram::create(ShadingStages stages)
+{
+    return std::make_shared<ShaderProgram>(ShadingStagesChecked{std::move(stages)});
 }
 
 ShaderProgram::ShaderProgram(ShaderProgram::ShadingStagesChecked _stages)
-    : stages{std::move(_stages)}
-    , descriptorSets{buildDescriptorSets(*stages.vertex.shader->device, stages)}
+    : device{_stages.vertex.shader->device}
+    , stages{std::move(_stages)}
+    , descriptorSets{buildDescriptorSets(*device, stages)}
+    , pushConstants{buildPushConstants(stages)}
+    , pipelineLayout{makePipelineLayout(*device, descriptorSets, pushConstants)}
 {
 }
 } // namespace VOG::Graphics::Vulkan

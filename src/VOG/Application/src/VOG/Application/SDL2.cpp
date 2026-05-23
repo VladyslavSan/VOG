@@ -2,14 +2,16 @@
 
 namespace VOG::Application
 {
-Common::JSONContainer
+Common::SurfaceHandle
 SDLWindow::makeSurfaceHandles(const SDL_SysWMinfo& wmInfo)
 {
 #if defined(SDL_VIDEO_DRIVER_WINDOWS)
     {
-        void* window    = static_cast<void*>(wmInfo.info.win.window);
-        void* hinstance = static_cast<void*>(wmInfo.info.win.hinstance);
-        return {{"type", "windows"}, {"window", window}, {"hinstance", hinstance}};
+        return {
+            .platform         = Common::SurfaceHandle::Platform::eWindows,
+            .surfaceHandle    = std::bit_cast<std::uintptr_t>(wmInfo.info.win.window),
+            .additionalHandle = std::bit_cast<std::uintptr_t>(wmInfo.info.win.hinstance),
+        };
     }
 #elif defined(SDL_VIDEO_DRIVER_COCOA) || defined(SDL_VIDEO_DRIVER_UIKIT)
     {
@@ -19,10 +21,13 @@ SDLWindow::makeSurfaceHandles(const SDL_SysWMinfo& wmInfo)
 #else
             (__bridge void*)wmInfo.info.uikit.window
 #endif
-        return {{"type", "apple"}, {"window", windowHandle}};
+        return {
+            .platform      = Common::SurfaceHandle::Platform::eApple,
+            .surfaceHandle = std::bit_cast<std::uintptr_t>(windowHandle),
+        };
     }
 #endif
 
-    return nullptr;
+    return {};
 }
 } // namespace VOG::Application

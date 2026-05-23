@@ -19,17 +19,19 @@ public:
     using AttachmentPtrs      = StaticVector<AttachmentPtr, Limits::gMaxNumAttachments>;
 
     static std::shared_ptr<Framebuffer>
-    create(const Device&       device,
-           const RenderPass&   renderPass,
+    create(DevicePtr           device,
+           RenderPassPtr       renderPass,
            ColorAttachmentPtrs colorAttachments,
            AttachmentPtr       depthStencilAttachment)
     {
-        return std::make_shared<Framebuffer>(
-            device, renderPass, std::move(colorAttachments), std::move(depthStencilAttachment));
+        return std::make_shared<Framebuffer>(std::move(device),
+                                             std::move(renderPass),
+                                             std::move(colorAttachments),
+                                             std::move(depthStencilAttachment));
     }
 
-    Framebuffer(const Device&       device,
-                const RenderPass&   renderPass,
+    Framebuffer(DevicePtr           device,
+                RenderPassPtr       renderPass,
                 ColorAttachmentPtrs colorAttachments,
                 AttachmentPtr       depthStencilAttachment);
 
@@ -38,6 +40,8 @@ public:
     RenderpassDescription getRenderpassDescription() const;
 
 protected:
+    DevicePtr      mDevice;
+    RenderPassPtr  mRenderPass;
     bool           mHasDepthStencilAttachment;
     AttachmentPtrs mAttachments;
     vk::Extent2D   mExtent;

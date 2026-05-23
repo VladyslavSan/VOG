@@ -1,6 +1,7 @@
 #pragma once
 
 #include <VOG/Common/JSONContainer.hpp>
+#include <VOG/Common/SurfaceHandle.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp>
@@ -8,6 +9,8 @@
 
 #include <memory>
 #include <optional>
+#include <utility>
+#include <vector>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -19,17 +22,38 @@ class Swapchain : public AttachmentInterface
     {
         SwapchainImageSyncData(const DevicePtr& device);
 
-        Fence fence;
+        vk::raii::Semaphore semaphore;
+        Fence               fence;
     };
 
 public:
+    struct SwapchainParameters
+    {
+        /** Frames in flight, might be lower than requested. */
+        std::uint8_t framesInFlight = 1u;
+
+        /** Priority list of presentation modes from most preferred to least. */
+        std::vector<vk::PresentModeKHR> preferredPresentationModes = {
+            vk::PresentModeKHR::eMailbox,
+            vk::PresentModeKHR::eFifo,
+            vk::PresentModeKHR::eFifoRelaxed};
+
+        Common::SurfaceHandle surface;
+    };
+
+    struct ImageAcquireResult
+    {
+        vk::Result                 result;
+        const vk::raii::Semaphore* semaphore;
+    };
+
     ~Swapchain();
 
-    Swapchain(DevicePtr device, const Common::JSONContainer& parameters);
+    Swapchain(DevicePtr device, const SwapchainParameters& parameters);
 
-    vk::Result acquireNextImage();
+    ImageAcquireResult acquireNextImage();
 
-    vk::Result present(vk::ArrayProxyNoTemporaries<const vk::Semaphore> waitSemaphores);
+    vk::Result present(vk::ArrayProxy<const vk::Semaphore> waitSemaphores);
 
 public: // from AttachmentInterface
     const vk::Image&                            getImage() const override;

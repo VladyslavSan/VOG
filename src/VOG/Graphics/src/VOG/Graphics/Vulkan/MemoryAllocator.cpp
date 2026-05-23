@@ -19,6 +19,17 @@ getMemoryFlags(VmaAllocator allocator, std::uint32_t memoryIndex)
 }
 } // namespace
 
+MemoryAllocator::AllocationInfo::operator VmaAllocationCreateInfo() const noexcept
+{
+    return {
+        .flags          = flags,
+        .usage          = usage,
+        .requiredFlags  = static_cast<VkMemoryPropertyFlags>(requiredFlags),
+        .preferredFlags = static_cast<VkMemoryPropertyFlags>(preferredFlags),
+        .pUserData      = const_cast<char*>(tag),
+    };
+}
+
 MemoryAllocator::Allocation::Allocation(MemoryAllocatorPtr      _allocator,
                                         const VmaAllocation     _allocation,
                                         const VmaAllocationInfo _info,
@@ -108,10 +119,7 @@ MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
     VkBuffer                buffer;
     VmaAllocation           allocation;
     VmaAllocationInfo       allocationInfo;
-    VmaAllocationCreateInfo vmaAllocationCreateInfo{
-        .flags     = allocationCreateInfo.flags,
-        .usage     = allocationCreateInfo.usage,
-        .pUserData = const_cast<char*>(allocationCreateInfo.tag)};
+    VmaAllocationCreateInfo vmaAllocationCreateInfo = allocationCreateInfo;
 
     vk::Result result =
         static_cast<vk::Result>(vmaCreateBuffer(mAllocator,

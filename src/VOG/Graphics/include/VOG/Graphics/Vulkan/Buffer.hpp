@@ -27,11 +27,12 @@ public:
         /** If true, destructor will call flush to commit changes and make them visible for GPU. */
         const bool shouldFlush;
 
-        MemoryMapping(PtrType       _data,
-                      std::size_t   _size,
-                      const Buffer* _buffer,
-                      bool          _shouldUnmap,
-                      bool          _shouldFlush);
+        MemoryMapping(PtrType       data,
+                      std::size_t   size,
+                      const Buffer* buffer,
+                      bool          shouldUnmap,
+                      bool          shouldFlush);
+
         ~MemoryMapping();
 
         MemoryMapping(const MemoryMapping&) = delete;

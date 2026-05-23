@@ -76,12 +76,13 @@ public:
         RenderpassDescription                       renderpassDescription;
     };
 
-    GraphicsPipeline(const CreateInfo& createInfo);
+    GraphicsPipeline(CreateInfo createInfo);
 
-    GraphicsPipeline(const CreateInfoFromDescription& createInfo);
+    GraphicsPipeline(CreateInfoFromDescription createInfo);
 
 public:
     const RenderpassDescription renderpassDescription;
-    const DevicePtr device;
+    const DevicePtr             device;
+    const ShaderProgramPtr      program;
 };
 } // namespace VOG::Graphics::Vulkan

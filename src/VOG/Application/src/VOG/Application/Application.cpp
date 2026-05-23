@@ -32,15 +32,12 @@ Application::Application(const std::string& title,
                                           SDL_WINDOW_SHOWN)}
 {
     auto env = boost::this_process::environment();
-#if defined(__APPLE__)
-    env["MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS"] = "1";
-#endif
 
     std::string             shaderStoragePath = {};
     po::options_description description       = {};
     description.add_options()("shader-storage-path",
                               po::value(&shaderStoragePath),
-                              "Path to the shader directory contaiting config.json.");
+                              "Path to the shader directory containing config.json.");
     const auto        parsed = po::parse_command_line(cmdArgs.size(), cmdArgs.data(), description);
     po::variables_map vm{};
     po::store(parsed, vm);
@@ -57,11 +54,11 @@ Application::Application(const std::string& title,
     }
 
     mRenderer = {std::make_shared<Engine::Renderer>(
+        mWindow->getSurfaceHandle(),
         Common::JSONContainer{{"extensions", extensions},
                               {"layers", layers},
                               {"app_name", title},
-                              {"surface", mWindow->getSurfaceHandle()},
-                              {"frames_in_flight", 1u},
+                              {"frames_in_flight", 2u},
                               {"shader_source_path", shaderStoragePath}})};
 }
 

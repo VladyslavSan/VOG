@@ -75,11 +75,13 @@ validateAndGetFramebufferDims(const Framebuffer::AttachmentPtrs& attachments)
 }
 } // namespace
 
-Framebuffer::Framebuffer(const Device&       device,
-                         const RenderPass&   renderPass,
+Framebuffer::Framebuffer(DevicePtr           device,
+                         RenderPassPtr       renderPass,
                          ColorAttachmentPtrs colorAttachments,
                          AttachmentPtr       depthStencilAttachment)
     : vk::raii::Framebuffer{nullptr}
+    , mDevice{std::move(device)}
+    , mRenderPass{std::move(renderPass)}
     , mHasDepthStencilAttachment{depthStencilAttachment}
     , mAttachments{makeAttachmentsVector(std::move(colorAttachments),
                                          std::move(depthStencilAttachment))}
@@ -89,10 +91,16 @@ Framebuffer::Framebuffer(const Device&       device,
     StaticVector<vk::ImageView, Limits::gMaxNumAttachments> imageViews{};
     std::ranges::for_each(
         mAttachments,
-        [&imageViews](vk::ImageView view) { imageViews.push_back(std::move(view)); },
-        [](const auto& attachmentPtr) { return **attachmentPtr->getImageView(); });
+        [&imageViews](vk::ImageView view)
+        {
+            imageViews.push_back(std::move(view));
+        },
+        [](const auto& attachmentPtr)
+        {
+            return **attachmentPtr->getImageView();
+        });
 
-    vk::FramebufferCreateInfo createInfo{.renderPass = *renderPass,
+    vk::FramebufferCreateInfo createInfo{.renderPass = **mRenderPass,
                                          .attachmentCount =
                                              static_cast<std::uint32_t>(imageViews.size()),
                                          .pAttachments = imageViews.data(),
@@ -100,7 +108,7 @@ Framebuffer::Framebuffer(const Device&       device,
                                          .height       = mExtent.height,
                                          .layers       = 1u};
 
-    static_cast<vk::raii::Framebuffer&>(*this) = vk::raii::Framebuffer{device, createInfo};
+    static_cast<vk::raii::Framebuffer&>(*this) = vk::raii::Framebuffer{*mDevice, createInfo};
 }
 
 vk::Extent2D

@@ -199,10 +199,10 @@ compileGLSLShader(Shader::ShadingStage stage, const std::string& glslCode)
     shader.setEnvInput(glslang::EShSource::EShSourceGlsl,
                        shadingStage,
                        glslang::EShClient::EShClientVulkan,
-                       glslang::EShTargetClientVersion::EShTargetVulkan_1_3);
+                       glslang::EShTargetClientVersion::EShTargetVulkan_1_2);
 
     shader.setEnvClient(glslang::EShClient::EShClientVulkan,
-                        glslang::EShTargetClientVersion::EShTargetVulkan_1_3);
+                        glslang::EShTargetClientVersion::EShTargetVulkan_1_2);
 
     shader.setEnvTarget(glslang::EShTargetLanguage::EShTargetSpv,
                         glslang::EShTargetLanguageVersion::EShTargetSpv_1_5);
@@ -234,27 +234,33 @@ compileGLSLShader(Shader::ShadingStage stage, const std::string& glslCode)
     return spirv;
 }
 
-Shader::Reflection::AttributeFormat
+Shader::Reflection::BaseType
 attributeSpirVTypeToVulkanType(const spirv_cross::SPIRType& spirvType)
 {
-    Shader::Reflection::AttributeFormat::Type type;
+    Shader::Reflection::BaseType::Type type;
     switch (spirvType.basetype)
     {
     case spirv_cross::SPIRType::BaseType::Int:
-        type = Shader::Reflection::AttributeFormat::Type::eInt;
+        type = Shader::Reflection::BaseType::Type::eInt;
         break;
     case spirv_cross::SPIRType::BaseType::UInt:
-        type = Shader::Reflection::AttributeFormat::Type::eUInt;
+        type = Shader::Reflection::BaseType::Type::eUInt;
         break;
     case spirv_cross::SPIRType::BaseType::Float:
-        type = Shader::Reflection::AttributeFormat::Type::eFloat;
+        type = Shader::Reflection::BaseType::Type::eFloat;
         break;
     case spirv_cross::SPIRType::BaseType::Double:
-        type = Shader::Reflection::AttributeFormat::Type::eDouble;
+        type = Shader::Reflection::BaseType::Type::eDouble;
         break;
+    default:
+        throw std::runtime_error{"spirv_cross::SPIRType is not handled."};
     }
 
-    return {.type = type, .components = static_cast<std::uint8_t>(spirvType.vecsize)};
+    return {
+        .type       = type,
+        .components = static_cast<std::uint8_t>(spirvType.vecsize),
+        .columns    = static_cast<std::uint8_t>(spirvType.columns),
+    };
 }
 
 Shader::Reflection::StageAttributes
@@ -274,8 +280,11 @@ processStageResources(const spirv_cross::Compiler&   compiler,
                           .format   = attributeSpirVTypeToVulkanType(resourceType)});
     }
 
-    std::ranges::sort(
-        result, [](const auto& left, const auto& right) { return left.location < right.location; });
+    std::ranges::sort(result,
+                      [](const auto& left, const auto& right)
+                      {
+                          return left.location < right.location;
+                      });
 
     return result;
 }
@@ -283,22 +292,21 @@ processStageResources(const spirv_cross::Compiler&   compiler,
 std::vector<Shader::Reflection::StructMember>
 parseStructMembers(const spirv_cross::Compiler& compiler, const spirv_cross::Resource& resource)
 {
-    const auto  pushConstantStructId = resource.base_type_id;
-    const auto& pushConstantStruct   = compiler.get_type(pushConstantStructId);
-    VOG_ASSERT_MSG(pushConstantStruct.basetype == spirv_cross::SPIRType::BaseType::Struct,
+    const auto  baseTypeId = resource.base_type_id;
+    const auto& structType = compiler.get_type(baseTypeId);
+    VOG_ASSERT_MSG(structType.basetype == spirv_cross::SPIRType::BaseType::Struct,
                    "Push constants block must be a struct.");
 
     std::vector<Shader::Reflection::StructMember> members;
-    for (std::uint32_t idx = 0; idx < pushConstantStruct.member_types.size(); ++idx)
+    for (std::uint32_t idx = 0; idx < structType.member_types.size(); ++idx)
     {
-        const auto& member     = pushConstantStruct.member_types[idx];
+        const auto& member     = structType.member_types[idx];
         const auto& memberType = compiler.get_type(member);
 
-        const auto& name   = compiler.get_member_name(pushConstantStructId, idx);
-        const auto  offset = compiler.type_struct_member_offset(pushConstantStruct, idx);
-        const auto  size   = compiler.get_declared_struct_member_size(pushConstantStruct, idx);
+        const auto& name   = compiler.get_member_name(baseTypeId, idx);
+        const auto  offset = compiler.type_struct_member_offset(structType, idx);
+        const auto  size   = compiler.get_declared_struct_member_size(structType, idx);
 
-        // Validate offset and size as push constants should be no more than 256 bytes size.
         VOG_ASSERT_MSG(
             offset < std::numeric_limits<decltype(Shader::Reflection::StructMember::offset)>::max(),
             "Should fit into offset.");
@@ -309,12 +317,16 @@ parseStructMembers(const spirv_cross::Compiler& compiler, const spirv_cross::Res
         members.push_back(
             {.offset = static_cast<decltype(Shader::Reflection::StructMember::offset)>(offset),
              .size   = static_cast<decltype(Shader::Reflection::StructMember::size)>(size),
-             .name   = name});
+             .name   = name,
+             .type   = attributeSpirVTypeToVulkanType(memberType)});
     }
 
     std::sort(members.begin(),
               members.end(),
-              [](const auto& left, const auto& right) { return left.offset < right.offset; });
+              [](const auto& left, const auto& right)
+              {
+                  return left.offset < right.offset;
+              });
 
     return members;
 }
@@ -353,11 +365,8 @@ reflect(const std::vector<std::uint32_t>& binary)
                    "Can only be one push constant block.");
     if (!resources.push_constant_buffers.empty())
     {
-        const auto& baseType = compiler.get_type(resources.push_constant_buffers[0].base_type_id);
-
-        reflection.pushConstants.size = compiler.get_declared_struct_size(baseType);
-        reflection.pushConstants.variables =
-            parseStructMembers(compiler, resources.push_constant_buffers[0]);
+        const auto& pushConstantsBlock     = resources.push_constant_buffers[0];
+        reflection.pushConstants.variables = parseStructMembers(compiler, pushConstantsBlock);
     }
 
     for (const spirv_cross::Resource& resource : resources.uniform_buffers)
@@ -376,7 +385,10 @@ reflect(const std::vector<std::uint32_t>& binary)
     }
     std::sort(reflection.uniformBuffers.begin(),
               reflection.uniformBuffers.end(),
-              [](const auto& left, const auto& right) { return left.location < right.location; });
+              [](const auto& left, const auto& right)
+              {
+                  return left.location < right.location;
+              });
 
     return reflection;
 }
@@ -389,8 +401,7 @@ Shader::create(DevicePtr device, Shader::ShadingStage stage, const std::string& 
 }
 
 bool
-Shader::vertexFormatCompatible(Shader::Reflection::AttributeFormat shaderVertexFormat,
-                               vk::Format                          provided)
+Shader::vertexFormatCompatible(Shader::Reflection::BaseType shaderVertexFormat, vk::Format provided)
 {
     // Todo: implement compatibility checking.
     return true;

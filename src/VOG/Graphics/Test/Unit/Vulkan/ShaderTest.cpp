@@ -2,11 +2,11 @@
 
 #include <gtest/gtest.h>
 
-#include "GraphicsApiFixture.hpp"
+#include "VulkanFixture.hpp"
 
 using namespace VOG::Graphics::Vulkan;
 
-namespace VOG::Tests::Shader
+namespace VOG::Tests
 {
 namespace
 {
@@ -69,11 +69,10 @@ void main() {
 )";
 } // namespace
 
-TEST_F(GraphicsProviderFixture, Shader_instantiate_vertex_shader)
+TEST_F(VulkanFixture, Shader_instantiate_vertex_shader)
 {
     EXPECT_NO_THROW({
-        auto shader = VOG::Graphics::Vulkan::Shader::create(
-            mGraphicsProvider->getDevice(), ShadingStage::eVertex, gVertexShaderString);
+        auto shader = Shader::create(VulkanDevice, Shader::ShadingStage::eVertex, gVertexShaderString);
         const auto& reflection = shader->reflection;
 
         EXPECT_EQ(reflection.inAttributes.size(), 3u);
@@ -99,11 +98,10 @@ TEST_F(GraphicsProviderFixture, Shader_instantiate_vertex_shader)
     });
 }
 
-TEST_F(GraphicsProviderFixture, Shader_instantiate_fragment_shader)
+TEST_F(VulkanFixture, Shader_instantiate_fragment_shader)
 {
     EXPECT_NO_THROW({
-        auto shader = VOG::Graphics::Vulkan::Shader::create(
-            mGraphicsProvider->getDevice(), ShadingStage::eFragment, gFragmentShaderString);
+        auto shader = Shader::create(VulkanDevice, Shader::ShadingStage::eFragment, gFragmentShaderString);
     });
 }
-} // namespace VOG::Tests::Shader
+} // namespace VOG::Tests

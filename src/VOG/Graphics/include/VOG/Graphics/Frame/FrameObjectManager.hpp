@@ -20,11 +20,12 @@ public:
                        std::size_t              frameCount,
                        std::size_t              threadCount);
 
-    std::size_t getCurrentFrameIndex() const;
-
     FrameObjects& getCurrentFrame();
 
     FrameObjects& acquireNextFrame();
+
+private:
+    std::size_t getCurrentFrameIndex() const;
 
 protected:
     /** Hard reference to graphics provider*/

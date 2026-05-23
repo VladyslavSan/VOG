@@ -2,6 +2,7 @@
 
 #include <VOG/Common/Assert.hpp>
 #include <VOG/Common/JSONContainer.hpp>
+#include <VOG/Common/SurfaceHandle.hpp>
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_syswm.h>
@@ -29,7 +30,7 @@ class SDLWindow
     using Handle = std::unique_ptr<SDL_Window, void (*)(SDL_Window*)>;
 
 public:
-    static Common::JSONContainer makeSurfaceHandles(const SDL_SysWMinfo&);
+    static Common::SurfaceHandle makeSurfaceHandles(const SDL_SysWMinfo&);
 
     SDLWindow(const char* title, int x, int y, int w, int h, Uint32 flags);
 
@@ -37,14 +38,14 @@ public:
 
     const SDL_SysWMinfo& getWMInfo() const;
 
-    const Common::JSONContainer& getSurfaceHandle() const;
+    const Common::SurfaceHandle& getSurfaceHandle() const;
 
 protected:
     Handle        mWindowHandle;
     Uint32        mWindowId;
     SDL_SysWMinfo mWmInfo;
 
-    Common::JSONContainer mSurfaceHandles;
+    Common::SurfaceHandle mSurfaceHandles;
 };
 
 inline SDLWindow::SDLWindow(const char* title, int x, int y, int w, int h, Uint32 flags)
@@ -71,7 +72,7 @@ SDLWindow::getWMInfo() const
 {
     return mWmInfo;
 }
-inline const Common::JSONContainer&
+inline const Common::SurfaceHandle&
 SDLWindow::getSurfaceHandle() const
 {
     return mSurfaceHandles;

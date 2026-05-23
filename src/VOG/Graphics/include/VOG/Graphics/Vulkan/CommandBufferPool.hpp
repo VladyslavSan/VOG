@@ -15,8 +15,6 @@ namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Device);
 VOG_DECLARE_PTR(CommandBufferPool);
-VOG_DECLARE_PTR(FencePool);
-VOG_DECLARE_PTR(Fence);
 
 /**
  * A handle to command buffer that is bound to CommandBufferPool. It can be recorded and then
@@ -30,22 +28,11 @@ class CommandBufferHandle
     CommandBufferHandle(CommandBufferPoolPtr pool, CommandBuffer commandBuffer) noexcept;
 
 public:
-    /**
-     * Submission.
-     */
-    struct Submission
-    {
-        const std::shared_ptr<FencePool::FenceHandle> fence;
-    };
-
-    struct SubmitInfo
-    {
-        std::shared_ptr<Fence> signalFence;
-    };
-
     CommandBufferHandle(CommandBufferHandle&&) = default;
 
     ~CommandBufferHandle();
+
+    vk::CommandBuffer consumeForSubmission(std::shared_ptr<FencePool::FenceHandle> fence);
 
     /**
      * Allows usage of the handle as if it's an instance of the CommandBuffer.
@@ -59,27 +46,18 @@ public:
      */
     CommandBuffer* operator->() noexcept;
 
-    /**
-     * Function for command buffer submission.
-     *
-     * @param wait Wait request on semaphore.
-     * @param signal Signal request on semaphore.
-     * @param signalBinary Additional binary semaphore for signaling, mostly to connect it with
-     * surface present command as it only accepts binary semaphores
-     *
-     * @returns submission object.
-     */
-    CommandBufferHandle::Submission submit(Vulkan::TimelineSemaphore::WaitRequest   wait,
-                                           Vulkan::TimelineSemaphore::SignalRequest signal,
-                                           const vk::raii::Semaphore&               signalBinary);
-
 protected:
     CommandBufferPoolPtr mPool;
     CommandBuffer        mCommandBuffer;
 };
 
 /**
- * Manages command buffers in a pool, submissions of those and cleanup.
+ * Manages a pool of command buffers.
+ *
+ * @note
+ * Should be used by only a one thread at a time as pool manages growth of the space for command
+ * buffers allocated from it and if multiple thead record command buffers allocated from one pool
+ * internally it will result in race condition.
  */
 class CommandBufferPool : public std::enable_shared_from_this<CommandBufferPool>
 {
@@ -132,7 +110,6 @@ protected:
     std::vector<CommandBuffer> mSecondaryBuffers;
 
     /** A list of used command buffer handles during frame recording */
-    std::vector<SubmittedCommandBuffer> mSubmitedCommandBuffers;
-    FencePoolPtr                        mFencePool;
+    std::vector<SubmittedCommandBuffer> mSubmittedCommandBuffers;
 };
 } // namespace VOG::Graphics::Vulkan

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <VOG/Common/NoCopyable.hpp>
+#include <VOG/Common/SurfaceHandle.hpp>
 #include <VOG/Engine/Scene/Scene.hpp>
 
 #include <boost/thread/scoped_thread.hpp>
@@ -49,7 +50,7 @@ public:
 
     virtual ~Renderer();
 
-    Renderer(const Common::JSONContainer& parameters);
+    Renderer(const Common::SurfaceHandle& surfaceHandle, const Common::JSONContainer& parameters);
 
     Renderer(const Renderer&)  = delete;
     Renderer(Renderer&& other) = delete;

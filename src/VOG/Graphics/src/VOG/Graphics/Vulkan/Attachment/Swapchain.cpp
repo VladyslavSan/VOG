@@ -47,16 +47,17 @@ successAcquirePresentResult(vk::Result result)
 } // namespace
 
 Swapchain::SwapchainImageSyncData::SwapchainImageSyncData(const DevicePtr& device)
-    : fence{device}
+    : semaphore{*device, vk::SemaphoreCreateInfo{}}
+    , fence{device}
 {
 }
 
 Swapchain::~Swapchain() {}
 
-Swapchain::Swapchain(DevicePtr device, const Common::JSONContainer& parameters)
+Swapchain::Swapchain(DevicePtr device, const SwapchainParameters& parameters)
     : AttachmentInterface{AttachmentUsage::eColor, vk::Format::eUndefined, {}, SampleCount::e1}
     , mDevice{std::move(device)}
-    , mSurface{CreateRenderSurface(*mDevice->instance, parameters, true)}
+    , mSurface{CreateRenderSurface(*mDevice->instance, parameters.surface, true)}
     , mPresentQueueFamilyIndex{FindPresentQueueFamilyIndex(*mDevice, *mSurface)}
     , mPresentQueueIsSameToGraphicsQueue{mPresentQueueFamilyIndex ==
                                          mDevice->queueInfos.graphics.familyIndex}
@@ -84,39 +85,38 @@ Swapchain::Swapchain(DevicePtr device, const Common::JSONContainer& parameters)
     mExtent.height = surfaceSize.height;
     mExtent.depth  = 1;
 
-    vk::PresentModeKHR presentMode              = vk::PresentModeKHR::eImmediate;
-    const std::string preferredPresentationMode = parameters["present-mode"].getOr<std::string>("");
-    if (!preferredPresentationMode.empty())
+    vk::PresentModeKHR presentMode = vk::PresentModeKHR::eImmediate;
     {
-        spdlog::info("Requested presentation mode : {}.", preferredPresentationMode);
-        bool foundPresentMode = false;
-        for (const auto& spm : surfacePresentModes)
+        bool foundPresentationMode = false;
+        if (!parameters.preferredPresentationModes.empty())
         {
-            if (preferredPresentationMode == vk::to_string(spm))
+            for (const vk::PresentModeKHR mode : parameters.preferredPresentationModes)
             {
-                foundPresentMode = true;
-                presentMode      = spm;
+                if (std::ranges::find(surfacePresentModes, mode) != surfacePresentModes.end())
+                {
+                    presentMode           = mode;
+                    foundPresentationMode = true;
+
+                    break;
+                }
             }
         }
-        if (!foundPresentMode)
+
+        if (!foundPresentationMode)
         {
-            spdlog::info("Requested presentation mode was not found.");
-        }
-    }
-    else
-    {
-        for (auto& spm : surfacePresentModes)
-        {
-            if (spm == vk::PresentModeKHR::eMailbox)
+            for (auto& spm : surfacePresentModes)
             {
-                presentMode = vk::PresentModeKHR::eMailbox;
-                break;
+                if (spm == vk::PresentModeKHR::eMailbox)
+                {
+                    presentMode = vk::PresentModeKHR::eMailbox;
+                    break;
+                }
             }
         }
     }
 
     {
-        std::uint32_t minImageCount = parameters["frames_in_flight"].getOr<std::uint32_t>(2u);
+        const std::uint32_t minImageCount = parameters.framesInFlight;
 
         const std::array queueFamilyIndices = {mDevice->queueInfos.graphics.familyIndex,
                                                mPresentQueueFamilyIndex};
@@ -192,7 +192,7 @@ Swapchain::getImageView() const
     return mImageViews[mCurrentSwapchainImageIndex.value()];
 }
 
-vk::Result
+Swapchain::ImageAcquireResult
 Swapchain::acquireNextImage()
 {
     VOG_ASSERT_MSG(
@@ -202,35 +202,32 @@ Swapchain::acquireNextImage()
     mSwapchainImageSyncIndex = (mSwapchainImageSyncIndex + 1u) % mSwapchainImageSyncData.size();
     auto& syncData           = mSwapchainImageSyncData[mSwapchainImageSyncIndex];
 
-    auto [result, index] =
-        mSwapchain.acquireNextImage(gAcquireTimeout, {}, **syncData.fence.useFence());
+    auto [result, index] = mSwapchain.acquireNextImage(gAcquireTimeout, {*syncData.semaphore}, {});
     VOG_ASSERT_MSG((result == vk::Result::eSuccess) || (result == vk::Result::eSuboptimalKHR),
                    "Should only be success of suboptimal for a case of swapchain resize.");
 
-    {
-
-        const vk::Result waitResult =
-            syncData.fence.wait(std::numeric_limits<std::uint64_t>::max());
-        VOG_ASSERT_MSG(waitResult == vk::Result::eSuccess, "Should always be success here");
-        syncData.fence.reset();
-    }
-
     mCurrentSwapchainImageIndex.emplace(index);
 
-    return result;
+    return {
+        .result    = result,
+        .semaphore = &syncData.semaphore,
+    };
 }
 
 vk::Result
-Swapchain::present(const vk::ArrayProxyNoTemporaries<const vk::Semaphore> waitSemaphores)
+Swapchain::present(const vk::ArrayProxy<const vk::Semaphore> waitSemaphores)
 {
     VOG_ASSERT_MSG(
         mCurrentSwapchainImageIndex,
         "Swapchain::acquireNextImage should have been called before calling this function.");
 
     vk::PresentInfoKHR presentInfoKHR{
-        .waitSemaphoreCount = 0u, .swapchainCount = 1, .pSwapchains = &*mSwapchain};
-    presentInfoKHR.setImageIndices(mCurrentSwapchainImageIndex.value());
-    presentInfoKHR.setWaitSemaphores(waitSemaphores);
+        .waitSemaphoreCount = waitSemaphores.size(),
+        .pWaitSemaphores    = waitSemaphores.data(),
+        .swapchainCount     = 1u,
+        .pSwapchains        = &*mSwapchain,
+        .pImageIndices      = &mCurrentSwapchainImageIndex.value(),
+    };
 
     auto result = mPresentQueue.presentKHR(presentInfoKHR);
 

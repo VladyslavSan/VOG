@@ -9,50 +9,56 @@ find_package(Boost COMPONENTS container REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(spdlog REQUIRED)
 
-add_library(VOG.Graphics)
+add_library(Graphics)
+add_library(${PROJECT_NAME}::Graphics ALIAS Graphics)
 
-set_target_properties(VOG.Graphics PROPERTIES
-    FOLDER VOG
-)
+set_target_properties(Graphics PROPERTIES FOLDER VOG)
 
-target_include_directories(VOG.Graphics
+target_include_directories(Graphics
     PUBLIC
         include/
     PRIVATE
         src/
 )
 
-target_sources(VOG.Graphics
-    PRIVATE
-        include/VOG/Graphics/Config/VmaConfig.hpp
-        include/VOG/Graphics/Config/VulkanConfig.hpp
-        include/VOG/Graphics/Frame/FrameObjectManager.hpp
-        include/VOG/Graphics/Frame/FrameObjects.hpp
-        include/VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp
-        include/VOG/Graphics/Vulkan/Attachment/RenderBuffer.hpp
-        include/VOG/Graphics/Vulkan/Attachment/Swapchain.hpp
-        include/VOG/Graphics/Vulkan/Buffer.hpp
-        include/VOG/Graphics/Vulkan/CommandBuffer.hpp
-        include/VOG/Graphics/Vulkan/CommandBufferPool.hpp
-        include/VOG/Graphics/Vulkan/CommandBufferRecorder.hpp
-        include/VOG/Graphics/Vulkan/Common.hpp
-        include/VOG/Graphics/Vulkan/Containers.hpp
-        include/VOG/Graphics/Vulkan/DescriptorAllocator.hpp
-        include/VOG/Graphics/Vulkan/Device.hpp
-        include/VOG/Graphics/Vulkan/Fence.hpp
-        include/VOG/Graphics/Vulkan/FencePool.hpp
-        include/VOG/Graphics/Vulkan/Framebuffer.hpp
-        include/VOG/Graphics/Vulkan/GraphicsPipeline.hpp
-        include/VOG/Graphics/Vulkan/Instance.hpp
-        include/VOG/Graphics/Vulkan/Limits.hpp
-        include/VOG/Graphics/Vulkan/MemoryAllocator.hpp
-        include/VOG/Graphics/Vulkan/Queue.hpp
-        include/VOG/Graphics/Vulkan/RenderPass.hpp
-        include/VOG/Graphics/Vulkan/Shader.hpp
-        include/VOG/Graphics/Vulkan/ShaderProgram.hpp
-        include/VOG/Graphics/Vulkan/TimelineSemaphore.hpp
-        include/VOG/Graphics/ShaderProgramCache.hpp
-        include/VOG/Graphics/Typedefs.hpp
+target_sources(Graphics
+    PUBLIC
+        FILE_SET
+            public_headers
+        TYPE
+            HEADERS
+        BASE_DIRS
+            include/
+        FILES
+            include/VOG/Graphics/Config/VmaConfig.hpp
+            include/VOG/Graphics/Config/VulkanConfig.hpp
+            include/VOG/Graphics/Frame/FrameObjectManager.hpp
+            include/VOG/Graphics/Frame/FrameObjects.hpp
+            include/VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp
+            include/VOG/Graphics/Vulkan/Attachment/RenderBuffer.hpp
+            include/VOG/Graphics/Vulkan/Attachment/Swapchain.hpp
+            include/VOG/Graphics/Vulkan/Buffer.hpp
+            include/VOG/Graphics/Vulkan/CommandBuffer.hpp
+            include/VOG/Graphics/Vulkan/CommandBufferPool.hpp
+            include/VOG/Graphics/Vulkan/CommandBufferRecorder.hpp
+            include/VOG/Graphics/Vulkan/Common.hpp
+            include/VOG/Graphics/Vulkan/Containers.hpp
+            include/VOG/Graphics/Vulkan/DescriptorAllocator.hpp
+            include/VOG/Graphics/Vulkan/Device.hpp
+            include/VOG/Graphics/Vulkan/Fence.hpp
+            include/VOG/Graphics/Vulkan/FencePool.hpp
+            include/VOG/Graphics/Vulkan/Framebuffer.hpp
+            include/VOG/Graphics/Vulkan/GraphicsPipeline.hpp
+            include/VOG/Graphics/Vulkan/Instance.hpp
+            include/VOG/Graphics/Vulkan/Limits.hpp
+            include/VOG/Graphics/Vulkan/MemoryAllocator.hpp
+            include/VOG/Graphics/Vulkan/Queue.hpp
+            include/VOG/Graphics/Vulkan/RenderPass.hpp
+            include/VOG/Graphics/Vulkan/Shader.hpp
+            include/VOG/Graphics/Vulkan/ShaderProgram.hpp
+            include/VOG/Graphics/Vulkan/TimelineSemaphore.hpp
+            include/VOG/Graphics/ShaderProgramCache.hpp
+            include/VOG/Graphics/Typedefs.hpp
 
     PRIVATE
         src/VOG/Graphics/Frame/FrameObjectManager.cpp
@@ -76,6 +82,7 @@ target_sources(VOG.Graphics
         src/VOG/Graphics/Vulkan/Instance.cpp
         src/VOG/Graphics/Vulkan/MemoryAllocator.cpp
         src/VOG/Graphics/Vulkan/MemoryAllocatorVmaImpl.cpp
+        src/VOG/Graphics/Vulkan/Queue.cpp
         src/VOG/Graphics/Vulkan/RenderPass.cpp
         src/VOG/Graphics/Vulkan/Shader.cpp
         src/VOG/Graphics/Vulkan/ShaderProgram.cpp
@@ -83,9 +90,9 @@ target_sources(VOG.Graphics
         src/VOG/Graphics/ShaderProgramCache.cpp
 )
 
-target_link_libraries(VOG.Graphics
+target_link_libraries(Graphics
     PUBLIC
-        VOG.Common
+        ${PROJECT_NAME}::Common
         Vulkan::Headers
         vulkan-memory-allocator::vulkan-memory-allocator
         Boost::container
@@ -100,9 +107,8 @@ target_link_libraries(VOG.Graphics
 if (APPLE)
     find_library(QUARTZ_CORE QuartzCore REQUIRED)
     find_library(APPKIT AppKit REQUIRED)
-    list(APPEND LINK_PRIVATE ${QUARTZ_CORE} ${APPKIT})
 
-    target_link_libraries(VOG.Graphics
+    target_link_libraries(Graphics
         PRIVATE
             ${QUARTZ_CORE}
             ${APPKIT}
@@ -115,4 +121,8 @@ if (APPLE)
     )
 endif ()
 
-add_subdirectory(Test)
+install(TARGETS Graphics
+        FILE_SET public_headers
+)
+
+#add_subdirectory(Test)

@@ -4,19 +4,19 @@ find_package(SDL2 REQUIRED)
 find_package(Boost COMPONENTS headers program_options REQUIRED)
 find_package(spdlog COMPONENTS)
 
-add_library(VOG.Application)
-set_target_properties(VOG.Application PROPERTIES
-    FOLDER VOG
-)
+add_library(Application)
+add_library(${PROJECT_NAME}::Application ALIAS Application)
 
-target_include_directories(VOG.Application
+set_target_properties(Application PROPERTIES FOLDER VOG)
+
+target_include_directories(Application
     PUBLIC
         include/
     PRIVATE
         src/
 )
 
-target_sources(VOG.Application
+target_sources(Application
     PRIVATE
         include/VOG/Application/Application.hpp
     PRIVATE
@@ -25,9 +25,9 @@ target_sources(VOG.Application
         src/VOG/Application/SDL2.cpp
 )
 
-target_link_libraries(VOG.Application
+target_link_libraries(Application
     PUBLIC
-        VOG.Common VOG.Engine
+        ${PROJECT_NAME}::Engine
         SDL2::SDL2
     PRIVATE
         Boost::headers
@@ -39,4 +39,6 @@ if(APPLE)
     # For apple compile this file as an obj-c file.
     set_property(SOURCE src/VOG/Application/SDL2.cpp PROPERTY LANGUAGE OBJCXX)
 endif()
+
+
 
