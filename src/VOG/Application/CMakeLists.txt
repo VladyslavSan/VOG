@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10.0)
 
 find_package(SDL2 REQUIRED)
-find_package(Boost COMPONENTS headers program_options REQUIRED)
+find_package(Boost COMPONENTS headers program_options process REQUIRED)
 find_package(spdlog COMPONENTS)
 
 add_library(Application)
@@ -32,6 +32,7 @@ target_link_libraries(Application
     PRIVATE
         Boost::headers
         Boost::program_options
+        Boost::process
         spdlog::spdlog
 )
 

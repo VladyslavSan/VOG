@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10.0)
 
 find_package(VulkanHeaders REQUIRED)
-find_package(vulkan-memory-allocator REQUIRED)
+find_package(VulkanMemoryAllocator REQUIRED)
 find_package(spirv-cross REQUIRED)
 find_package(glslang REQUIRED)
 
@@ -94,7 +94,7 @@ target_link_libraries(Graphics
     PUBLIC
         ${PROJECT_NAME}::Common
         Vulkan::Headers
-        vulkan-memory-allocator::vulkan-memory-allocator
+        GPUOpen::VulkanMemoryAllocator
         Boost::container
     PRIVATE
         nlohmann_json::nlohmann_json                                                                                

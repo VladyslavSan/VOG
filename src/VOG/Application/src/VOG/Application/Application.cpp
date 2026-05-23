@@ -31,7 +31,8 @@ Application::Application(const std::string& title,
                                           static_cast<int>(height),
                                           SDL_WINDOW_SHOWN)}
 {
-    auto env = boost::this_process::environment();
+
+    auto env = boost::process::environment::current();
 
     std::string             shaderStoragePath = {};
     po::options_description description       = {};

@@ -1,0 +1,21 @@
+{
+  "version": 4,
+  "include": ["./ConanPresets.json"],
+  "configurePresets": [
+    {
+      "name": "debug",
+      "displayName": "debug single config",
+      "inherits": "conan-debug"
+    },
+    {
+      "name": "release",
+      "displayName": "release single config",
+      "inherits": "conan-release"
+    },
+    {
+      "name": "multi-config",
+      "displayName": "multi config",
+      "inherits": "conan-default"
+    }
+  ]
+}

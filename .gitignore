@@ -3,3 +3,4 @@ build*/*
 .vscode/*
 .idea/*
 CMakeUserPresets.json
+ConanPresets.json
