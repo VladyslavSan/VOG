@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.os }} / ${{ matrix.build_type }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-2025-vs2026]
+        build_type: [Debug, Release]
+        exclude:
+          - build_type: Release
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Conan
+        run: pip install conan
+
+      - name: Detect Conan profile
+        run: conan profile detect --force
+
+      - name: Fix C++ standard in Conan profile (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: sed -i 's/compiler\.cppstd=.*/compiler.cppstd=20/' ~/.conan2/profiles/default
+
+      - name: Install software Vulkan renderer (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
+
+      - name: Install MoltenVK (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install molten-vk vulkan-loader
+          echo "VK_ICD_FILENAMES=$(brew --prefix molten-vk)/share/vulkan/icd.d/MoltenVK_icd.json" >> "$GITHUB_ENV"
+
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: conan-${{ runner.os }}-${{ matrix.build_type }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: |
+            conan-${{ runner.os }}-${{ matrix.build_type }}-
+            conan-${{ runner.os }}-
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: >-
+          conan install . --build=missing -s build_type=${{ matrix.build_type }}
+          -c tools.system.package_manager:mode=install
+          -c tools.system.package_manager:sudo=True
+
+      - name: Install dependencies
+        if: runner.os != 'Linux'
+        run: conan install . --build=missing -s build_type=${{ matrix.build_type }}
+
+      - name: Configure
+        run: cmake --preset=${{ matrix.build_type == 'Debug' && 'debug' || 'release' }}
+
+      - name: Build
+        run: cmake --build build/${{ matrix.build_type }}
+
+      - name: Test
+        if: runner.os == 'Linux'
+        run: ctest --test-dir build/${{ matrix.build_type }} --output-on-failure
