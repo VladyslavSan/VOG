@@ -1,6 +1,6 @@
 #include "VOG/Graphics/Vulkan/TimelineSemaphore.hpp"
 
-#include "VOG/Graphics/GraphicsProvider.hpp"
+#include <VOG/Graphics/Vulkan/Device.hpp>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -11,8 +11,8 @@ inline constexpr vk::SemaphoreTypeCreateInfo gTypeCreateInfo{
 inline constexpr vk::SemaphoreCreateInfo gCreateInfo{.pNext = &gTypeCreateInfo};
 } // namespace
 
-TimelineSemaphore::TimelineSemaphore(const Vulkan::Device& device)
-    : vk::raii::Semaphore{device, gCreateInfo}
+TimelineSemaphore::TimelineSemaphore(const Vulkan::DevicePtr& device)
+    : vk::raii::Semaphore{*device, gCreateInfo}
     , mDevice{device}
 {
 }
@@ -20,7 +20,7 @@ TimelineSemaphore::TimelineSemaphore(const Vulkan::Device& device)
 vk::Result
 TimelineSemaphore::waitOnCPU(std::uint64_t value, std::uint64_t timeout)
 {
-    return mDevice.waitSemaphores(
+    return mDevice->waitSemaphores(
         {.semaphoreCount = 1, .pSemaphores = &(**this), .pValues = &value}, timeout);
 }
 

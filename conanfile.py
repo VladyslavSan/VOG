@@ -1,90 +1,87 @@
 from conan import ConanFile
-from conan.tools.cmake import CMake, CMakeToolchain, CMakeDeps
+from conan.tools.cmake import CMake, CMakeToolchain, CMakeConfigDeps, cmake_layout
+from conan.tools.files import copy
+from conan.tools.build import check_min_cppstd
+
 
 class VOGConan(ConanFile):
     name = "VOG"
-    author = "Vladyslav Odobesku (positivcheg94@gmail.com)"
+    author = "Vladyslav Odobesku (odobesku.vladislav@gmail.com)"
     topics = ("Graphics", "Vulkan")
 
-    build_policy = "always"
-    shared = False
     settings = ["os", "compiler", "arch", "build_type"]
-    requires = [
-        # generic c++
-        "boost/1.78.0",
-        "glm/0.9.9.8",
-        # graphics
-        "vulkan-headers/1.3.204.0",
-        "vulkan-memory-allocator/2.3.0",
-        "sdl/2.0.18",
-        "gtest/1.11.0",
-        # private dependencies
-        ("nlohmann_json/3.10.5", "private"),
-        ("shaderc/2021.1", "private"),
-        ("spirv-cross/cci.20211113", "private"),
-    ]
+    vulkan_version = "1.4.350.0"
 
-    def config_options(self):
-        boost = self.options["boost"]
-        boost.without_context = True
-        boost.without_contract = True
-        boost.without_coroutine = True
-        boost.without_fiber = True
-        boost.without_json = True
-        boost.without_graph = True
-        boost.without_graph_parallel = True
-        boost.without_locale = True
-        boost.without_math = True
-        boost.without_nowide = True
-        boost.without_python = True
-        boost.without_serialization = True
-        boost.without_test = True
-        boost.without_type_erasure = True
-        boost.without_wave = True
-        boost.zlib = False
-        boost.numa = False
-        boost.bzip2 = False
-        boost.lzma = False
+    def export_sources(self):
+        copy(self, "CMakeLists.txt", self.recipe_folder, self.export_sources_folder)
+        copy(self, "src/*", self.recipe_folder, self.export_sources_folder)
 
-        self.options["gtest"].build_gmock = False
+    def requirements(self):
+        self.requires("boost/1.91.0")
+        self.requires("glm/0.9.9.8")
 
-        self.options["glslang"].build_executables = False
+        self.requires("sdl/2.26.5")
+        self.requires("spdlog/1.15.3")
 
-        spirv_cross = self.options["spirv-cross"]
-        spirv_cross.build_executable = False
-        spirv_cross.hlsl = False
-        spirv_cross.msl = False
-        spirv_cross.cpp = False
-        spirv_cross.c_api = False
-        spirv_cross.util = False
+        # Private dependencies
+        self.requires("nlohmann_json/3.10.5", transitive_headers=False, transitive_libs=False)
+        self.requires(f"vulkan-headers/{self.vulkan_version}", transitive_headers=False, transitive_libs=False)
+        self.requires("vulkan-memory-allocator/3.3.0", transitive_headers=False, transitive_libs=False)
+        self.requires(f"spirv-cross/{self.vulkan_version}", transitive_headers=False, transitive_libs=False)
+        self.requires(f"spirv-tools/{self.vulkan_version}", transitive_headers=False, transitive_libs=False)
+        self.requires(f"glslang/{self.vulkan_version}", transitive_headers=False, transitive_libs=False)
 
-        sdl = self.options["sdl"]
-        sdl.sdl2main = False
-        sdl.opengl = False
-        sdl.opengles = False
-        sdl.vulkan = False
-        if self.settings.os == "Windows":
-            sdl.directx = False
+    def build_requirements(self):
+        self.tool_requires("cmake/4.3.2")
+        self.tool_requires("ninja/1.13.2")
+
+        self.test_requires("gtest/1.17.0")
+
+    def validate(self):
+        check_min_cppstd(self, 20, gnu_extensions=False)
 
     def configure(self):
         self.settings.compiler.cppstd = 20
 
-    def imports(self):
-        pass
+        self.options["spirv-tools"].build_executables = False
+        self.options["spirv-cross"].build_executable = False
+        self.options["glslang"].build_executables = False
+
+    def layout(self):
+        cmake_layout(self)
 
     def generate(self):
         tc = CMakeToolchain(self)
+        tc.user_presets_path = 'ConanPresets.json'
         tc.generate()
-        deps = CMakeDeps(self)
-        deps.generate()
+
+        cd = CMakeConfigDeps(self)
+        cd.generate()
 
     def build(self):
         cmake = CMake(self)
-        if self.should_configure:
-            cmake.configure()
-        if self.should_build:
-            cmake.build()
-        if self.should_test:
-            cmake.test()
-        
-        
+        cmake.build()
+
+    def test(self):
+        cmake = CMake(self)
+        cmake.test()
+
+    def package(self):
+        cmake = CMake(self)
+        cmake.install()
+
+    def package_info(self):
+        self.cpp_info.name = self.name
+
+        self.cpp_info.set_property("cmake_file_name", "VOG")
+        self.cpp_info.filenames["cmake_find_package"] = "VOG"
+        self.cpp_info.filenames["cmake_find_package_multi"] = "VOG"
+        self.cpp_info.names["cmake_find_package"] = "VOG"
+        self.cpp_info.names["cmake_find_package_multi"] = "VOG"
+
+        self.cpp_info.components["Graphics"].libs = ["VOG.Graphics"]
+        self.cpp_info.components["Graphics"].set_property("cmake_target_name", "VOG::Graphics")
+
+        self.cpp_info.components["Engine"].libs = ["VOG.Engine"]
+        self.cpp_info.components["Engine"].set_property("cmake_target_name", "VOG::Engine")
+        self.cpp_info.components["Engine"].requires = ["Graphics"]

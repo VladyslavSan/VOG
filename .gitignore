@@ -2,3 +2,5 @@ build*/*
 .vs/*
 .vscode/*
 .idea/*
+CMakeUserPresets.json
+ConanPresets.json

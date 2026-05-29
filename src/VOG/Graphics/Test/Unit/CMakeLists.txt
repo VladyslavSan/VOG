@@ -3,7 +3,10 @@ cmake_minimum_required(VERSION 3.10.0)
 find_package(GTest REQUIRED)
 
 add_executable(VOG.Graphics.Unit)
-set_target_properties(VOG.Graphics.Unit PROPERTIES FOLDER "VOG/Tests")
+set_target_properties(VOG.Graphics.Unit
+    PROPERTIES 
+        FOLDER "VOG/Tests"
+)
 
 target_include_directories(VOG.Graphics.Unit
     PUBLIC
@@ -12,13 +15,17 @@ target_include_directories(VOG.Graphics.Unit
 
 target_sources(VOG.Graphics.Unit
     PRIVATE
-        Resources/ShaderTest.cpp
-        GraphicsApiFixture.hpp
+        Vulkan/ShaderTest.cpp
+        Vulkan/GraphicsPipelineTest.cpp
+        Vulkan/ShaderProgramTest.cpp
+        VulkanFixture.hpp
 )
 
 target_link_libraries(VOG.Graphics.Unit
     PUBLIC
-        VOG.Graphics GTest::gtest GTest::gtest_main
+        VOG.Graphics
+        GTest::gtest
+        GTest::gtest_main
 )
 
 add_test(

@@ -1,93 +1,147 @@
 #pragma once
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
+#include <VOG/Graphics/Typedefs.hpp>
+#include <VOG/Graphics/Vulkan/Containers.hpp>
 #include <VOG/Graphics/Vulkan/Limits.hpp>
 
-#include <boost/container/static_vector.hpp>
-
+#include <compare>
 #include <memory>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace VOG::Graphics::Vulkan
 {
-class Device;
-
-enum class ShadingStage : std::uint8_t
-{
-    eVertex   = 0,
-    eFragment = 1,
-    eUnknown
-};
+VOG_DECLARE_PTR(Device);
+class ShaderProgram;
 
 class Shader
 {
-public:
-    template <class T, std::size_t N>
-    using Container = boost::container::static_vector<T, N>;
+    friend class ShaderProgram;
 
+public:
     class CompilationError : public std::runtime_error
     {
         using std::runtime_error::runtime_error;
     };
 
+    class ShaderError : public std::runtime_error
+    {
+        using std::runtime_error::runtime_error;
+    };
+
+    enum class ShadingStage : std::uint8_t
+    {
+        eVertex   = 0,
+        eFragment = 1
+    };
+
+    /**
+     * Structure that holds shader reflection information.
+     *
+     * #vertexAttributes sorted by VertexAttribute::location field ascending.
+     * #pushConstants sorted by PushConstant::offset ascending.
+     * #uniformBuffers and #storageBuffers sorted by UniformBuffer::location.
+     */
     struct Reflection
     {
-        enum class ResourceType : std::uint8_t
+        struct BaseType
         {
-            eVertexBuffer = 0,
-            eUniformBuffer,
-            eTexture
+            enum class Type : std::uint8_t
+            {
+                eInt = 0,
+                eUInt,
+                eFloat,
+                eDouble,
+            };
+
+            std::strong_ordering operator<=>(const BaseType&) const = default;
+
+            Type         type       : 4;
+            std::uint8_t components : 4;
+            std::uint8_t columns    : 4;
         };
 
-        struct VertexAttribute
+        struct StageInOutAttribute
         {
-        };
-
-        struct PushConstant
-        {
+            std::uint8_t location;
             std::string  name;
-            std::uint8_t offset;
-            std::uint8_t size;
+            BaseType     format;
+        };
+
+        struct StructMember
+        {
+            std::uint16_t offset;
+            std::uint16_t size;
+            std::string   name;
+            BaseType      type;
+
+            std::strong_ordering operator<=>(const StructMember&) const = default;
         };
 
         struct PushConstants
         {
-            std::uint8_t                                          size;
-            Container<PushConstant, Limits::gMaxNumPushConstants> variables;
+            std::vector<StructMember> variables;
         };
 
         struct ResourceLocation
         {
             std::uint32_t set;
             std::uint32_t binding;
+
+            std::strong_ordering operator<=>(const ResourceLocation&) const noexcept = default;
         };
 
         struct UniformBuffer
         {
-            ResourceLocation location;
-            std::size_t      size;
+            ResourceLocation          location;
+            std::size_t               size;
+            std::vector<StructMember> members;
+
+            std::strong_ordering operator<=>(const UniformBuffer&) const noexcept = default;
         };
 
-        Container<VertexAttribute, Limits::gMaxNumVertexAttributes> vertexAttributes;
-        PushConstants                                               pushConstants;
-        Container<UniformBuffer, Limits::gMaxNumUniformBuffers>     uniformBuffers;
-        Container<UniformBuffer, Limits::gMaxNumUniformBuffers>     storageBuffers;
+        using StageAttributes = std::vector<StageInOutAttribute>;
+
+        StageAttributes            inAttributes;
+        StageAttributes            outAttributes;
+        PushConstants              pushConstants;
+        std::vector<UniformBuffer> uniformBuffers;
     };
 
+    /**
+     * Helper create method.
+     *
+     * @param device Vulkan device to construct the shader module.
+     * @param stage Shading stage.
+     * @param glslCode SPIR-V shader binary code.
+     *
+     * @return shared pointer to Shader instance.
+     */
     static std::shared_ptr<Shader>
-    create(const Device& device, ShadingStage stage, const std::string& source);
+    create(DevicePtr device, ShadingStage stage, const std::string& glslCode);
+
+    /**
+     * Utility function used for validation whether @p provided vertex format is compatible with
+     * @p shaderVertexFormat.
+     *
+     * @param shaderVertexFormat Vertex attribute format in the shader.
+     * @param provided Vertex attribute bound from vertex buffer.
+     *
+     * @return true if @p provided can be bound correctly into @p shaderVertexFormat.
+     */
+    static bool vertexFormatCompatible(Shader::Reflection::BaseType shaderVertexFormat,
+                                       vk::Format                   provided);
 
     /**
      * Construct from glsl shader code. Very expensive as it involves glsl to spirv compilation.
      *
      * @param device Vulkan device to construct the shader module.
      * @param stage Shading stage.
-     * @param shaderBinary SPIR-V shader binary code.
+     * @param glslCode SPIR-V shader binary code.
      */
-    Shader(const Device& device, ShadingStage stage, const std::string& glslCode);
+    Shader(DevicePtr device, ShadingStage stage, const std::string& glslCode);
 
     /**
      * Construct from SPIR-V shader binary.
@@ -96,13 +150,16 @@ public:
      * @param stage Shading stage.
      * @param shaderBinary SPIR-V shader binary code.
      */
-    Shader(const Device& device, ShadingStage stage, std::vector<std::uint32_t> shaderBinary);
+    Shader(DevicePtr device, ShadingStage stage, std::vector<std::uint32_t> shaderBinary);
 
-    Reflection reflect() const;
+private:
+    const DevicePtr device;
 
-    const ShadingStage               stage;
+public:
+    const vk::ShaderStageFlagBits    stage;
     const std::vector<std::uint32_t> binary;
     const vk::raii::ShaderModule     module;
+    const Reflection                 reflection;
 };
 using ShaderPtr = std::shared_ptr<Shader>;
 } // namespace VOG::Graphics::Vulkan

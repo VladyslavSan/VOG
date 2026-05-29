@@ -5,10 +5,11 @@
 
 namespace VOG::Graphics::Vulkan
 {
-RenderPass::RenderPass(const Device&                  device,
+RenderPass::RenderPass(DevicePtr                  device,
                        const AttachmentsDescriptions& colorAttachments,
                        const AttachmentsDescription&  depthStencil)
     : vk::raii::RenderPass(nullptr)
+    , mDevice{device}
     , mAttachmentDescriptions{colorAttachments.begin(), colorAttachments.end()}
     , mDepthStencilProvided{depthStencil.format != vk::Format::eUndefined}
 {
@@ -18,7 +19,6 @@ RenderPass::RenderPass(const Device&                  device,
     }
 
     VOG_ASSERT(mAttachmentDescriptions.size() > 0);
-    VOG_ASSERT(mAttachmentDescriptions.size() <= 4);
 
     std::array<vk::AttachmentReference, 4> attachmentReference;
 
@@ -48,7 +48,33 @@ RenderPass::RenderPass(const Device&                  device,
                                        .subpassCount    = 1,
                                        .pSubpasses      = &subpass};
 
-        static_cast<vk::raii::RenderPass&>(*this) = {device, ci};
+        static_cast<vk::raii::RenderPass&>(*this) = {*device, ci};
     }
+}
+
+RenderpassDescription
+RenderPass::getRenderpassDescription() const
+{
+    RenderpassDescription description;
+
+    for (std::size_t i = 0; i < mAttachmentDescriptions.size() - mDepthStencilProvided; ++i)
+    {
+        description.colorAttachmentFormats.push_back(mAttachmentDescriptions[i].format);
+    }
+
+    if (mDepthStencilProvided)
+    {
+        const auto& depthStencilDescription = mAttachmentDescriptions.back();
+
+        description.depthAttachmentFormat = isDepthFormat(depthStencilDescription.format)
+                                              ? depthStencilDescription.format
+                                              : vk::Format::eUndefined;
+
+        description.stencilAttachmentFormat = isStencilFormat(depthStencilDescription.format)
+                                                ? depthStencilDescription.format
+                                                : vk::Format::eUndefined;
+    }
+
+    return description;
 }
 } // namespace VOG::Graphics::Vulkan

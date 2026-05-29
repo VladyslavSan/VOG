@@ -5,41 +5,54 @@
 #include <VOG/Engine/Renderer/Renderer.hpp>
 
 #include <SDL2/SDL_vulkan.h>
+#include <spdlog/spdlog.h>
 
-#include <optional>
+#include <filesystem>
+#include <format>
 
 namespace VOG::Application
 {
-
-Application::Application(const std::string& title,
-                         unsigned int       width,
-                         unsigned int       height,
-                         const StringList&  extensions,
-                         const StringList&  layers,
-                         CmdArgs            cmdArgs)
-    : mSDLHandle{std::make_unique<SDLHandle>(SDL_INIT_EVENTS)}
-    , mWindow{std::make_shared<SDLWindow>(title.c_str(),
-                                          SDL_WINDOWPOS_UNDEFINED,
-                                          SDL_WINDOWPOS_UNDEFINED,
-                                          static_cast<int>(width),
-                                          static_cast<int>(height),
-                                          SDL_WINDOW_SHOWN)}
-    , mRenderer{std::make_shared<Engine::Renderer>(Common::JSONContainer{
-          {"extensions", extensions},
-          {"layers", layers},
-          {"app_name", title},
-          {"surface", mWindow->getSurfaceHandle()},
-          {"frames_in_flight", 2u},
-          {"resource_manager",
-           {"shader_source_dir",
-            R"(/Users/vodobesku/git_projects/vulkan_dev/src/VOG/Graphics/resources/shaders)"}}})}
+namespace
 {
+void
+validateConfig(const Application::ApplicationConfig& config)
+{
+    if (config.shaderStoragePath.empty())
+    {
+        throw std::runtime_error("Shader storage path is empty.");
+    }
+    if (!std::filesystem::exists(config.shaderStoragePath))
+    {
+        throw std::runtime_error(
+            std::format("Shader storage path \"{}\" does not exist.", config.shaderStoragePath));
+    }
+}
+} // namespace
+
+Application::Application(ApplicationConfig config)
+    : mSDLHandle{std::make_unique<SDLHandle>(SDL_INIT_EVENTS)}
+    , mWindow{std::make_shared<SDLWindow>(config.title.c_str(),
+                                          SDL_WINDOWPOS_CENTERED,
+                                          SDL_WINDOWPOS_CENTERED,
+                                          static_cast<int>(config.width),
+                                          static_cast<int>(config.height),
+                                          SDL_WINDOW_SHOWN)}
+{
+    validateConfig(config);
+
+    mRenderer = {std::make_shared<Engine::Renderer>(
+        mWindow->getSurfaceHandle(),
+        Common::JSONContainer{{"extensions", config.extensions},
+                              {"layers", config.layers},
+                              {"app_name", config.title},
+                              {"frames_in_flight", 2u},
+                              {"shader_source_path", config.shaderStoragePath}})};
 }
 
 Application::~Application() {}
 
 bool
-Application::Run()
+Application::run()
 {
     using namespace VOG::Common;
 

@@ -1,16 +1,7 @@
 #include "VOG/Graphics/Vulkan/CommandBuffer.hpp"
 
-#include "VOG/Graphics/GraphicsProvider.hpp"
-
 namespace VOG::Graphics::Vulkan
 {
-CommandBuffer::CommandBuffer(vk::raii::CommandBuffer commandBuffer, CommandBufferType type)
-    : vk::raii::CommandBuffer{std::move(commandBuffer)}
-    , mType{type}
-    , mBoundResources{}
-{
-}
-
 std::vector<CommandBuffer>
 CommandBuffer::create(const vk::raii::Device&      device,
                       const vk::raii::CommandPool& commandPool,
@@ -29,11 +20,13 @@ CommandBuffer::create(const vk::raii::Device&      device,
     return result;
 }
 
-CommandBufferType
-CommandBuffer::getType() const
+CommandBuffer::CommandBuffer(vk::raii::CommandBuffer commandBuffer, CommandBufferType _type)
+    : vk::raii::CommandBuffer{std::move(commandBuffer)}
+    , type{_type}
 {
-    return mType;
 }
+
+CommandBuffer::operator bool() const { return static_cast<bool>(**this); }
 
 void
 CommandBuffer::addBoundResource(const std::shared_ptr<void>& resource)
@@ -45,5 +38,6 @@ void
 CommandBuffer::reset()
 {
     mBoundResources.clear();
+    mBoundVertexBuffers.clear();
 }
 } // namespace VOG::Graphics::Vulkan

@@ -1,9 +1,12 @@
 #include "VOG/Graphics/ShaderProgramCache.hpp"
 
 #include <VOG/Common/JSONContainer.hpp>
-#include <VOG/Graphics/GraphicsProvider.hpp>
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
+
+#include <fmt/format.h>
+#include <glslang/Public/ShaderLang.h>
+#include <nlohmann/json.hpp>
 
 #include <fstream>
 
@@ -12,12 +15,12 @@ namespace VOG::Graphics
 namespace
 {
 /** Shader config file name that should be present in shader home directory */
-constexpr std::string_view kShaderConfigName = "config.json";
+constexpr std::string_view gShaderConfigName = "config.json";
 
 namespace ShaderStageKey
 {
-constexpr std::string_view kVertex   = "vertex";
-constexpr std::string_view kFragment = "fragment";
+constexpr std::string_view gVertex   = "vertex";
+constexpr std::string_view gFragment = "fragment";
 } // namespace ShaderStageKey
 
 std::string
@@ -27,7 +30,7 @@ readFile(const std::filesystem::path& path)
     std::ifstream file{path, std::ios::binary};
 
     file.seekg(0u, std::ios::end);
-    const std::size_t fileSize = file.tellg();
+    const auto fileSize = file.tellg();
     file.seekg(0u, std::ios::beg);
 
     data.resize(fileSize, '\0');
@@ -39,7 +42,6 @@ readFile(const std::filesystem::path& path)
 nlohmann::json
 readJsonFile(const std::filesystem::path& path)
 {
-    VOG_ASSERT_MSG(std::filesystem::exists(path), "File must exist.");
     std::ifstream  jsonFile{path};
     nlohmann::json json{};
     jsonFile >> json;
@@ -47,43 +49,51 @@ readJsonFile(const std::filesystem::path& path)
     return json;
 }
 
-constexpr Vulkan::ShadingStage
+constexpr Vulkan::Shader::ShadingStage
 toShaderStage(const std::string_view name)
 {
-    if (name == ShaderStageKey::kVertex)
+    if (name == ShaderStageKey::gVertex)
     {
-        return Vulkan::ShadingStage::eVertex;
+        return Vulkan::Shader::ShadingStage::eVertex;
     }
-    else if (name == ShaderStageKey::kFragment)
+    if (name == ShaderStageKey::gFragment)
     {
-        return Vulkan::ShadingStage::eFragment;
+        return Vulkan::Shader::ShadingStage::eFragment;
     }
 
     throw std::invalid_argument{"Not a shading stage name."};
 }
 } // namespace
 
-ShaderProgramCache::ShaderProgramCache(const GraphicsProvider&      graphicsProvider,
-                                       const Common::JSONContainer& parameters)
-    : mGraphicsProvider{graphicsProvider}
-    , mShaderSourcePath{parameters["shader_source_dir"].getOr<std::string>("")}
-    , mShaderConfig{readJsonFile(mShaderSourcePath / kShaderConfigName)}
-    , mShaderMap{mShaderConfig.at("shaders")}
+ShaderProgramCache::ShaderProgramCache(const Vulkan::DevicePtr&     device,
+                                       const std::filesystem::path& shaderSourcePath)
+    : mDevice{device}
+    , mShaderSourcePath{shaderSourcePath}
 {
-    const Vulkan::Device& device = mGraphicsProvider.getDevice();
-    VOG_ASSERT_MSG(mShaderMap.is_object(), "Shader info entry should be json object.")
-    for (auto shaderEntryIterator = mShaderMap.begin(); shaderEntryIterator != mShaderMap.end();
+    glslang::InitializeProcess();
+
+    if (!std::filesystem::exists(shaderSourcePath) ||
+        !std::filesystem::exists(shaderSourcePath / gShaderConfigName))
+    {
+        throw std::runtime_error{"Shader source path does not exist."};
+    }
+
+    const nlohmann::json shaderConfig         = readJsonFile(mShaderSourcePath / gShaderConfigName);
+    nlohmann::json::const_reference shaderMap = shaderConfig.at("shaders");
+
+    VOG_ASSERT_MSG(shaderMap.is_object(), "Shader info entry should be json object.")
+    for (auto shaderEntryIterator = shaderMap.begin(); shaderEntryIterator != shaderMap.end();
          ++shaderEntryIterator)
     {
         const std::string& shaderName = shaderEntryIterator.key();
         const auto&        shaderInfo = shaderEntryIterator.value();
 
-        std::shared_ptr<Vulkan::ShaderProgram> program = std::make_shared<Vulkan::ShaderProgram>();
+        Vulkan::ShaderProgram::ShadingStages stages{};
         for (auto currentStage = shaderInfo.begin(); currentStage != shaderInfo.end();
              ++currentStage)
         {
-            const std::string&   shadingStageName = currentStage.key();
-            Vulkan::ShadingStage shadingStage     = toShaderStage(shadingStageName);
+            const std::string&           shadingStageName = currentStage.key();
+            Vulkan::Shader::ShadingStage shadingStage     = toShaderStage(shadingStageName);
 
             VOG_ASSERT_MSG(currentStage.value().is_string(),
                            "Value type of shading stage should be string.");
@@ -98,30 +108,30 @@ ShaderProgramCache::ShaderProgramCache(const GraphicsProvider&      graphicsProv
             {
                 shader = Vulkan::Shader::create(device, shadingStage, shaderSource);
             }
-            catch (const Vulkan::Shader::CompilationError& err)
+            catch (const std::exception&)
             {
-                throw std::runtime_error{"Failed to compile shader \"" + shaderName +
-                                         "\" with error:\n" + err.what()};
+                std::throw_with_nested(std::runtime_error{fmt::format(
+                    "Failed to compile shader \"{}\" ({})", shaderName, stagePath.string())});
             }
             switch (shadingStage)
             {
-            case Vulkan::ShadingStage::eVertex:
-                program->vertexFunction = shader;
+            case Vulkan::Shader::ShadingStage::eVertex:
+                stages.vertex = {.shader = shader, .entryPoint = "main"};
                 break;
-            case Vulkan::ShadingStage::eFragment:
-                program->fragmentFunction = shader;
-                break;
-            case Vulkan::ShadingStage::eUnknown:
+            case Vulkan::Shader::ShadingStage::eFragment:
+                stages.fragment = {.shader = shader, .entryPoint = "main"};
                 break;
             }
         }
 
-        VOG_ASSERT_MSG(program->vertexFunction && program->fragmentFunction,
-                       "Program is incomplete.");
+        std::shared_ptr<Vulkan::ShaderProgram> program =
+            std::make_shared<Vulkan::ShaderProgram>(std::move(stages));
 
         mCache.emplace(shaderName, std::move(program));
     }
 }
+
+ShaderProgramCache::~ShaderProgramCache() { glslang::FinalizeProcess(); }
 
 std::shared_ptr<Vulkan::ShaderProgram>
 ShaderProgramCache::get(const std::string& name)

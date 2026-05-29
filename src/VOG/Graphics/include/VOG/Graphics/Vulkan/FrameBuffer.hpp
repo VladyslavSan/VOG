@@ -2,40 +2,48 @@
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
-
-#include <boost/container/small_vector.hpp>
+#include <VOG/Graphics/Vulkan/Common.hpp>
+#include <VOG/Graphics/Vulkan/Containers.hpp>
+#include <VOG/Graphics/Vulkan/Limits.hpp>
 
 namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(AttachmentInterface);
-class Device;
+VOG_DECLARE_PTR(Device);
+VOG_DECLARE_PTR(RenderPass);
 class Framebuffer : public vk::raii::Framebuffer
 {
 public:
-    static constexpr std::uint8_t kMaxNumAttachments = 4u;
-    using AttachmentRef                              = AttachmentInterfacePtr;
-    using AttachmentRefs = boost::container::small_vector<AttachmentRef, kMaxNumAttachments>;
+    using AttachmentPtr       = AttachmentInterfacePtr;
+    using ColorAttachmentPtrs = StaticVector<AttachmentPtr, Limits::gMaxNumAttachments - 1u>;
+    using AttachmentPtrs      = StaticVector<AttachmentPtr, Limits::gMaxNumAttachments>;
 
     static std::shared_ptr<Framebuffer>
-    create(const Device&               device,
-           const AttachmentRefs&       attachments,
-           const vk::raii::RenderPass& renderPass)
+    create(DevicePtr           device,
+           RenderPassPtr       renderPass,
+           ColorAttachmentPtrs colorAttachments,
+           AttachmentPtr       depthStencilAttachment)
     {
-        return std::make_shared<Framebuffer>(device, attachments, renderPass);
+        return std::make_shared<Framebuffer>(std::move(device),
+                                             std::move(renderPass),
+                                             std::move(colorAttachments),
+                                             std::move(depthStencilAttachment));
     }
 
-    Framebuffer(const Device&               device,
-                const AttachmentRefs&       attachments,
-                const vk::raii::RenderPass& renderPass);
+    Framebuffer(DevicePtr           device,
+                RenderPassPtr       renderPass,
+                ColorAttachmentPtrs colorAttachments,
+                AttachmentPtr       depthStencilAttachment);
 
-    vk::Extent2D
-    size() const
-    {
-        return mSize;
-    }
+    vk::Extent2D extent() const;
+
+    RenderpassDescription getRenderpassDescription() const;
 
 protected:
-    const AttachmentRefs mAttachments;
-    const vk::Extent2D   mSize;
+    DevicePtr      mDevice;
+    RenderPassPtr  mRenderPass;
+    bool           mHasDepthStencilAttachment;
+    AttachmentPtrs mAttachments;
+    vk::Extent2D   mExtent;
 };
 } // namespace VOG::Graphics::Vulkan

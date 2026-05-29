@@ -17,7 +17,9 @@ target_sources(VOG.Common.Unit
 
 target_link_libraries(VOG.Common.Unit
     PUBLIC
-        VOG.Common GTest::gtest GTest::gtest_main
+        ${PROJECT_NAME}::Common
+        GTest::gtest
+        GTest::gtest_main
 )
 
 add_test(

@@ -34,7 +34,6 @@ public:
         requires(std::is_constructible_v<T, Args...>)
     ThreadsafeWrapper(Args&&... args)
         : mObject{std::forward<Args>(args)...}
-        , mMutex{}
     {
     }
 

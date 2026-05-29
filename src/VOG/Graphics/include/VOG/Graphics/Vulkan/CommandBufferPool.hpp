@@ -1,82 +1,115 @@
 #pragma once
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
+#include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/CommandBuffer.hpp>
+#include <VOG/Graphics/Vulkan/FencePool.hpp>
+#include <VOG/Graphics/Vulkan/TimelineSemaphore.hpp>
 
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
-namespace VOG::Graphics
-{
-class GraphicsProvider;
-}
-
 namespace VOG::Graphics::Vulkan
 {
-class CommandBufferPool;
+VOG_DECLARE_PTR(Device);
+VOG_DECLARE_PTR(CommandBufferPool);
 
+/**
+ * A handle to command buffer that is bound to CommandBufferPool. It can be recorded and then
+ * submitted for execution via CommandBufferHandle::submit() method or simply drop it if execution
+ * is not desired (if recorded commands in the command buffer should be discarded).
+ */
 class CommandBufferHandle
 {
-public:
-    inline CommandBufferHandle(CommandBufferPool* pool, CommandBuffer commandBuffer) noexcept
-        : mPool{pool}
-        , mCommandBuffer{std::move(commandBuffer)}
-    {
-    }
+    friend class CommandBufferPool;
 
-    inline CommandBufferHandle(CommandBufferHandle&& handle) noexcept
-        : mPool{handle.mPool}
-        , mCommandBuffer{std::move(handle.mCommandBuffer)}
-    {
-        handle.mPool = nullptr;
-    }
+    CommandBufferHandle(CommandBufferPoolPtr pool, CommandBuffer commandBuffer) noexcept;
+
+public:
+    CommandBufferHandle(CommandBufferHandle&&) = default;
 
     ~CommandBufferHandle();
 
-    inline CommandBuffer*
-    operator*() noexcept
-    {
-        return std::addressof(mCommandBuffer);
-    }
+    vk::CommandBuffer consumeForSubmission(std::shared_ptr<FencePool::FenceHandle> fence);
 
-    inline CommandBuffer*
-    operator->() noexcept
-    {
-        return std::addressof(mCommandBuffer);
-    }
+    /**
+     * Allows usage of the handle as if it's an instance of the CommandBuffer.
+     * @return CommandBuffer handle.
+     */
+    CommandBuffer* operator*() noexcept;
+
+    /**
+     * Allows usage of the handle as if it's an instance of the CommandBuffer.
+     * @return CommandBuffer handle.
+     */
+    CommandBuffer* operator->() noexcept;
 
 protected:
-    CommandBufferPool* mPool;
-    CommandBuffer      mCommandBuffer;
+    CommandBufferPoolPtr mPool;
+    CommandBuffer        mCommandBuffer;
 };
 
 /**
- * @class CommandBufferPool
+ * Manages a pool of command buffers.
+ *
+ * @note
+ * Should be used by only a one thread at a time as pool manages growth of the space for command
+ * buffers allocated from it and if multiple thead record command buffers allocated from one pool
+ * internally it will result in race condition.
  */
-class CommandBufferPool
+class CommandBufferPool : public std::enable_shared_from_this<CommandBufferPool>
 {
+    friend class CommandBufferHandle;
+    CommandBufferPool(const DevicePtr& device);
+
+    struct SubmittedCommandBuffer
+    {
+        CommandBuffer                           commandBuffer;
+        std::shared_ptr<FencePool::FenceHandle> fence;
+    };
+
 public:
-    CommandBufferPool(const GraphicsProvider& graphicsProvider);
+    CommandBufferPool(const CommandBufferPool&) = delete;
+    CommandBufferPool(CommandBufferPool&&)      = default;
+
+    static std::shared_ptr<CommandBufferPool>
+    create(const DevicePtr& device)
+    {
+        return std::shared_ptr<CommandBufferPool>{new CommandBufferPool{device}};
+    }
 
     /**
      * Retrieves clean command buffer from cache or allocates new if cache is exhausted.
      *
      * @param type Type of the command buffer to return - primary or secondary.
      *
-     * @returns CommandBufferRecorder instance
+     * @returns CommandBufferRecorder instance.
      */
     CommandBufferHandle get(CommandBufferType type);
 
-    void returnToCache(CommandBuffer commandBuffer);
-
+    /**
+     * Reset command buffer pool.
+     */
     void reset();
 
 protected:
-    const GraphicsProvider& mGraphicsProvider;
-    vk::raii::CommandPool   mVulkanPool;
+    /**
+     * Return command buffer back to the pool.
+     *
+     * @param submission Command buffer to return to the pool.
+     */
+    void returnCommandBufferToPool(CommandBuffer submission);
+
+protected:
+    DevicePtr             mDevice;
+    vk::raii::CommandPool mVulkanPool;
 
     std::vector<CommandBuffer> mPrimaryBuffers;
     std::vector<CommandBuffer> mSecondaryBuffers;
+
+    /** A list of used command buffer handles during frame recording */
+    std::vector<SubmittedCommandBuffer> mSubmittedCommandBuffers;
 };
 } // namespace VOG::Graphics::Vulkan

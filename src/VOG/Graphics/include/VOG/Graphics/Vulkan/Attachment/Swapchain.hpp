@@ -1,44 +1,66 @@
 #pragma once
 
 #include <VOG/Common/JSONContainer.hpp>
+#include <VOG/Common/SurfaceHandle.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp>
+#include <VOG/Graphics/Vulkan/Fence.hpp>
 
 #include <memory>
 #include <optional>
-
-namespace VOG::Graphics
-{
-class GraphicsProvider;
-}
+#include <utility>
+#include <vector>
 
 namespace VOG::Graphics::Vulkan
 {
+VOG_DECLARE_PTR(Device);
+
 class Swapchain : public AttachmentInterface
 {
     struct SwapchainImageSyncData
     {
-        SwapchainImageSyncData(const GraphicsProvider&);
+        SwapchainImageSyncData(const DevicePtr& device);
 
-        vk::raii::Fence fence;
+        vk::raii::Semaphore semaphore;
+        Fence               fence;
     };
 
 public:
+    struct SwapchainParameters
+    {
+        /** Frames in flight, might be lower than requested. */
+        std::uint8_t framesInFlight = 1u;
+
+        /** Priority list of presentation modes from most preferred to least. */
+        std::vector<vk::PresentModeKHR> preferredPresentationModes = {
+            vk::PresentModeKHR::eMailbox,
+            vk::PresentModeKHR::eFifo,
+            vk::PresentModeKHR::eFifoRelaxed};
+
+        Common::SurfaceHandle surface;
+    };
+
+    struct ImageAcquireResult
+    {
+        vk::Result                 result;
+        const vk::raii::Semaphore* semaphore;
+    };
+
     ~Swapchain();
 
-    Swapchain(const std::shared_ptr<GraphicsProvider>& graphicsProvider,
-              const Common::JSONContainer&             parameters);
+    Swapchain(DevicePtr device, const SwapchainParameters& parameters);
 
+    ImageAcquireResult acquireNextImage();
+
+    vk::Result present(vk::ArrayProxy<const vk::Semaphore> waitSemaphores);
+
+public: // from AttachmentInterface
     const vk::Image&                            getImage() const override;
     const std::shared_ptr<vk::raii::ImageView>& getImageView() const override;
 
-    vk::Result acquireNextImage();
-
-    vk::Result present(const vk::ArrayProxyNoTemporaries<const vk::Semaphore> waitSemaphores);
-
 protected:
-    std::shared_ptr<GraphicsProvider>     mGraphicsProvider;
+    DevicePtr                             mDevice;
     std::shared_ptr<vk::raii::SurfaceKHR> mSurface;
 
     const std::uint32_t mPresentQueueFamilyIndex;
@@ -59,5 +81,4 @@ protected:
 
     std::optional<std::uint32_t> mCurrentSwapchainImageIndex;
 };
-VOG_DECLARE_PTR(Swapchain);
 } // namespace VOG::Graphics::Vulkan

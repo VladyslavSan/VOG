@@ -32,6 +32,8 @@ public:
 
     vk::Extent3D getExtent() const;
 
+    vk::Extent2D getExtent2D() const;
+
     SampleCount getNumSamples() const;
 
     virtual const vk::Image&                            getImage() const     = 0;
@@ -71,6 +73,12 @@ inline vk::Extent3D
 AttachmentInterface::getExtent() const
 {
     return mExtent;
+}
+
+inline vk::Extent2D
+AttachmentInterface::getExtent2D() const
+{
+    return {.width = mExtent.width, .height = mExtent.height};
 }
 
 inline SampleCount

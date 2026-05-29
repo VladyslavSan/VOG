@@ -2,10 +2,11 @@
 
 #include <VOG/Common/Assert.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
-#include <VOG/Graphics/GraphicsProvider.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.hpp>
+#include <VOG/Graphics/Vulkan/Device.hpp>
 
-#include <iostream>
+#include <spdlog/spdlog.h>
+
 #include <stdexcept>
 
 namespace VOG::Graphics::Vulkan
@@ -15,22 +16,21 @@ namespace
 constexpr std::uint64_t gAcquireTimeout = 10000u;
 
 std::uint32_t
-FindPresentQueueFamilyIndex(const GraphicsProvider&     graphicsProvider,
-                            const vk::raii::SurfaceKHR& surface)
+FindPresentQueueFamilyIndex(const Device& device, const vk::raii::SurfaceKHR& surface)
 {
     {
-        const std::uint32_t graphicsQueueIndex = graphicsProvider.getGraphicsQueue().familyIndex;
-        if (graphicsProvider.getPhysicalDevice().getSurfaceSupportKHR(graphicsQueueIndex,
-                                                                      *surface) != 0u)
+
+        const std::uint32_t graphicsQueueIndex = device.queueInfos.graphics.familyIndex;
+        if (device.getSurfaceSupportKHR(graphicsQueueIndex, *surface) != 0u)
         {
             return graphicsQueueIndex;
         }
     }
 
-    auto queueFamiliesProperty = graphicsProvider.getPhysicalDevice().getQueueFamilyProperties();
+    auto queueFamiliesProperty = device.getQueueFamilyProperties();
     for (std::uint32_t i = 0; i < queueFamiliesProperty.size(); ++i)
     {
-        if (graphicsProvider.getPhysicalDevice().getSurfaceSupportKHR(i, *surface) != 0u)
+        if (device.getSurfaceSupportKHR(i, *surface) != 0u)
         {
             return i;
         }
@@ -46,31 +46,29 @@ successAcquirePresentResult(vk::Result result)
 }
 } // namespace
 
-Swapchain::SwapchainImageSyncData::SwapchainImageSyncData(const GraphicsProvider& graphicsProvider)
-    : fence{graphicsProvider.getDevice(), vk::FenceCreateInfo{}}
+Swapchain::SwapchainImageSyncData::SwapchainImageSyncData(const DevicePtr& device)
+    : semaphore{*device, vk::SemaphoreCreateInfo{}}
+    , fence{device}
 {
 }
 
 Swapchain::~Swapchain() {}
 
-Swapchain::Swapchain(const std::shared_ptr<GraphicsProvider>& graphicsProvider,
-                     const Common::JSONContainer&             parameters)
+Swapchain::Swapchain(DevicePtr device, const SwapchainParameters& parameters)
     : AttachmentInterface{AttachmentUsage::eColor, vk::Format::eUndefined, {}, SampleCount::e1}
-    , mGraphicsProvider{graphicsProvider}
-    , mSurface{CreateRenderSurface(mGraphicsProvider, parameters, true)}
-    , mPresentQueueFamilyIndex{FindPresentQueueFamilyIndex(*mGraphicsProvider, *mSurface)}
+    , mDevice{std::move(device)}
+    , mSurface{CreateRenderSurface(*mDevice->instance, parameters.surface, true)}
+    , mPresentQueueFamilyIndex{FindPresentQueueFamilyIndex(*mDevice, *mSurface)}
     , mPresentQueueIsSameToGraphicsQueue{mPresentQueueFamilyIndex ==
-                                         graphicsProvider->getGraphicsQueue().familyIndex}
-    , mPresentQueue{mGraphicsProvider->getDevice(), mPresentQueueFamilyIndex, 0}
+                                         mDevice->queueInfos.graphics.familyIndex}
+    , mPresentQueue{*mDevice, mPresentQueueFamilyIndex, 0}
     , mSwapchain{nullptr}
-    , mSurfaceFormat{mGraphicsProvider->getPhysicalDevice().getSurfaceFormatsKHR(**mSurface).at(0u)}
+    , mSurfaceFormat{mDevice->getPhysicalDevice().getSurfaceFormatsKHR(**mSurface).at(0u)}
 {
     mFormat = mSurfaceFormat.format;
 
-    auto surfaceCapabilities =
-        mGraphicsProvider->getPhysicalDevice().getSurfaceCapabilitiesKHR(**mSurface);
-    auto surfacePresentModes =
-        mGraphicsProvider->getPhysicalDevice().getSurfacePresentModesKHR(**mSurface);
+    auto surfaceCapabilities = mDevice->getPhysicalDevice().getSurfaceCapabilitiesKHR(**mSurface);
+    auto surfacePresentModes = mDevice->getPhysicalDevice().getSurfacePresentModesKHR(**mSurface);
 
     vk::Extent2D surfaceSize;
     if (surfaceCapabilities.currentExtent.width != std::numeric_limits<uint32_t>::max() &&
@@ -87,103 +85,89 @@ Swapchain::Swapchain(const std::shared_ptr<GraphicsProvider>& graphicsProvider,
     mExtent.height = surfaceSize.height;
     mExtent.depth  = 1;
 
-    vk::PresentModeKHR presentMode              = vk::PresentModeKHR::eImmediate;
-    const std::string preferredPresentationMode = parameters["present-mode"].getOr<std::string>("");
-    if (!preferredPresentationMode.empty())
+    vk::PresentModeKHR presentMode = vk::PresentModeKHR::eImmediate;
     {
-        std::cout << "Requested presentation mode :" << preferredPresentationMode << std::endl;
-        bool foundPresentMode = false;
-        for (const auto& spm : surfacePresentModes)
+        bool foundPresentationMode = false;
+        if (!parameters.preferredPresentationModes.empty())
         {
-            if (preferredPresentationMode == vk::to_string(spm))
+            for (const vk::PresentModeKHR mode : parameters.preferredPresentationModes)
             {
-                foundPresentMode = true;
-                presentMode      = spm;
+                if (std::ranges::find(surfacePresentModes, mode) != surfacePresentModes.end())
+                {
+                    presentMode           = mode;
+                    foundPresentationMode = true;
+
+                    break;
+                }
             }
         }
-        if (!foundPresentMode)
+
+        if (!foundPresentationMode)
         {
-            std::cout << "Requested presentation mode was not found" << std::endl;
-        }
-    }
-    else
-    {
-        for (auto& spm : surfacePresentModes)
-        {
-            if (spm == vk::PresentModeKHR::eMailbox)
+            for (auto& spm : surfacePresentModes)
             {
-                presentMode = vk::PresentModeKHR::eMailbox;
-                break;
+                if (spm == vk::PresentModeKHR::eMailbox)
+                {
+                    presentMode = vk::PresentModeKHR::eMailbox;
+                    break;
+                }
             }
         }
     }
 
     {
-        std::uint32_t minImageCount = parameters["frames_in_flight"].getOr<std::uint32_t>(2u);
-        vk::SwapchainCreateInfoKHR swapchainCreateInfo;
-        swapchainCreateInfo.setSurface(**mSurface)
-            .setMinImageCount(minImageCount)
-            .setImageFormat(mFormat)
-            .setImageColorSpace(mSurfaceFormat.colorSpace)
-            .setImageExtent(surfaceSize)
-            .setImageArrayLayers(1)
-            .setImageUsage(vk::ImageUsageFlagBits::eColorAttachment)
-            .setImageSharingMode(vk::SharingMode::eExclusive)
-            .setPreTransform(vk::SurfaceTransformFlagBitsKHR::eIdentity)
-            .setCompositeAlpha(vk::CompositeAlphaFlagBitsKHR::eOpaque)
-            .setPresentMode(presentMode);
+        const std::uint32_t minImageCount = parameters.framesInFlight;
 
-        std::vector<std::uint32_t> queueFamilyIndices;
-        if (!mPresentQueueIsSameToGraphicsQueue)
-        {
-            queueFamilyIndices = {graphicsProvider->getGraphicsQueue().familyIndex,
-                                  mPresentQueueFamilyIndex};
-            // If the Graphics and present queues are from different queue
-            // families, we either have to explicitly transfer ownership of
-            // images between the queues, or we have to create the swapchain
-            // with imageSharingMode as vk::SharingMode::eConcurrent
-            swapchainCreateInfo.setImageSharingMode(vk::SharingMode::eConcurrent)
-                .setQueueFamilyIndices(queueFamilyIndices);
-        }
+        const std::array queueFamilyIndices = {mDevice->queueInfos.graphics.familyIndex,
+                                               mPresentQueueFamilyIndex};
+        const vk::SwapchainCreateInfoKHR swapchainCreateInfo = {
+            .surface          = **mSurface,
+            .minImageCount    = minImageCount,
+            .imageFormat      = mFormat,
+            .imageColorSpace  = mSurfaceFormat.colorSpace,
+            .imageExtent      = surfaceSize,
+            .imageArrayLayers = 1u,
+            .imageUsage       = vk::ImageUsageFlagBits::eColorAttachment,
+            .imageSharingMode = mPresentQueueIsSameToGraphicsQueue ? vk::SharingMode::eExclusive
+                                                                   : vk::SharingMode::eConcurrent,
+            .queueFamilyIndexCount = mPresentQueueIsSameToGraphicsQueue ? 0u : 2u,
+            .pQueueFamilyIndices   = queueFamilyIndices.data(),
+            .preTransform          = vk::SurfaceTransformFlagBitsKHR::eIdentity,
+            .compositeAlpha        = vk::CompositeAlphaFlagBitsKHR::eOpaque,
+            .presentMode           = presentMode,
+        };
 
-        mSwapchain = vk::raii::SwapchainKHR{mGraphicsProvider->getDevice(), swapchainCreateInfo};
+        mSwapchain = vk::raii::SwapchainKHR{*mDevice, swapchainCreateInfo};
     }
 
-    auto images = mSwapchain.getImages();
-
     {
-        vk::ComponentMapping componentMapping{vk::ComponentSwizzle::eR,
-                                              vk::ComponentSwizzle::eG,
-                                              vk::ComponentSwizzle::eB,
-                                              vk::ComponentSwizzle::eA};
-
+        auto images = mSwapchain.getImages();
         mImageViews.reserve(images.size());
         for (auto& image : images)
         {
-            vk::ImageViewCreateInfo createInfo;
-            createInfo.setImage(image)
-                .setViewType(vk::ImageViewType::e2D)
-                .setFormat(mSurfaceFormat.format)
-                .setComponents(componentMapping)
-                .setSubresourceRange(vk::ImageSubresourceRange{}
-                                         .setAspectMask(vk::ImageAspectFlagBits::eColor)
-                                         .setBaseMipLevel(0)
-                                         .setLevelCount(1)
-                                         .setBaseArrayLayer(0)
-                                         .setLayerCount(1));
-
-            mImageViews.emplace_back(
-                std::make_shared<vk::raii::ImageView>(mGraphicsProvider->getDevice(), createInfo));
-
+            const vk::ImageViewCreateInfo createInfo = {
+                .image            = image,
+                .viewType         = vk::ImageViewType::e2D,
+                .format           = mSurfaceFormat.format,
+                .components       = {.r = vk::ComponentSwizzle::eR,
+                                     .g = vk::ComponentSwizzle::eG,
+                                     .b = vk::ComponentSwizzle::eB,
+                                     .a = vk::ComponentSwizzle::eA},
+                .subresourceRange = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
+                                     .baseMipLevel   = 0u,
+                                     .levelCount     = 1u,
+                                     .baseArrayLayer = 0u,
+                                     .layerCount     = 1u}};
+            mImageViews.emplace_back(std::make_shared<vk::raii::ImageView>(*mDevice, createInfo));
             mSwapchainImages.emplace_back(image);
         }
     }
 
     {
-        mSwapchainImageSyncData.reserve(images.size());
-        for (std::size_t i = 0; i < images.size(); ++i)
+        mSwapchainImageSyncData.reserve(mImageViews.size());
+        for (std::size_t i = 0; i < mImageViews.size(); ++i)
         {
-            mSwapchainImageSyncData.emplace_back(*mGraphicsProvider);
+            mSwapchainImageSyncData.emplace_back(mDevice);
         }
     }
 }
@@ -208,7 +192,7 @@ Swapchain::getImageView() const
     return mImageViews[mCurrentSwapchainImageIndex.value()];
 }
 
-vk::Result
+Swapchain::ImageAcquireResult
 Swapchain::acquireNextImage()
 {
     VOG_ASSERT_MSG(
@@ -218,35 +202,32 @@ Swapchain::acquireNextImage()
     mSwapchainImageSyncIndex = (mSwapchainImageSyncIndex + 1u) % mSwapchainImageSyncData.size();
     auto& syncData           = mSwapchainImageSyncData[mSwapchainImageSyncIndex];
 
-    auto [result, index] = mSwapchain.acquireNextImage(gAcquireTimeout, {}, *syncData.fence);
-
-    {
-        const vk::Result waitResult = mGraphicsProvider->getDevice().waitForFences(
-            {*syncData.fence}, vk::Bool32{1}, std::numeric_limits<std::uint64_t>::max());
-        VOG_ASSERT_MSG(waitResult == vk::Result::eSuccess, "Should always be success here");
-
-        mGraphicsProvider->getDevice().resetFences({*syncData.fence});
-    }
-
+    auto [result, index] = mSwapchain.acquireNextImage(gAcquireTimeout, {*syncData.semaphore}, {});
     VOG_ASSERT_MSG((result == vk::Result::eSuccess) || (result == vk::Result::eSuboptimalKHR),
                    "Should only be success of suboptimal for a case of swapchain resize.");
 
     mCurrentSwapchainImageIndex.emplace(index);
 
-    return result;
+    return {
+        .result    = result,
+        .semaphore = &syncData.semaphore,
+    };
 }
 
 vk::Result
-Swapchain::present(const vk::ArrayProxyNoTemporaries<const vk::Semaphore> waitSemaphores)
+Swapchain::present(const vk::ArrayProxy<const vk::Semaphore> waitSemaphores)
 {
     VOG_ASSERT_MSG(
         mCurrentSwapchainImageIndex,
         "Swapchain::acquireNextImage should have been called before calling this function.");
 
     vk::PresentInfoKHR presentInfoKHR{
-        .waitSemaphoreCount = 0u, .swapchainCount = 1, .pSwapchains = &*mSwapchain};
-    presentInfoKHR.setImageIndices(mCurrentSwapchainImageIndex.value());
-    presentInfoKHR.setWaitSemaphores(waitSemaphores);
+        .waitSemaphoreCount = waitSemaphores.size(),
+        .pWaitSemaphores    = waitSemaphores.data(),
+        .swapchainCount     = 1u,
+        .pSwapchains        = &*mSwapchain,
+        .pImageIndices      = &mCurrentSwapchainImageIndex.value(),
+    };
 
     auto result = mPresentQueue.presentKHR(presentInfoKHR);
 

@@ -10,8 +10,7 @@
 namespace VOG::Common::Assert
 {
 template <typename T>
-    requires std::is_constructible_v<bool, T> || std::is_nothrow_convertible_v<T, bool>
-bool
+    requires std::is_constructible_v<bool, T> || std::is_nothrow_convertible_v<T, bool> bool
 BoolConvert(const T& object)
 {
     return static_cast<bool>(object);

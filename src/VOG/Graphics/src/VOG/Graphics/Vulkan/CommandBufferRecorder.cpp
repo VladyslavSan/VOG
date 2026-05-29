@@ -1,7 +1,9 @@
 #include "VOG/Graphics/Vulkan/CommandBufferRecorder.hpp"
 
+#include <VOG/Common/Assert.hpp>
 #include <VOG/Graphics/Vulkan/CommandBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
+#include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/RenderPass.hpp>
 
 #include <stdexcept>
@@ -20,15 +22,20 @@ CommandBufferRecorder::beginRenderPass(const RenderPassPtr&  renderPass,
                                        const FramebufferPtr& framebuffer,
                                        ClearValues           clearValues) noexcept
 {
-    vk::RenderPassBeginInfo beginInfo{
-        .renderPass      = **renderPass,
-        .framebuffer     = **framebuffer,
-        .renderArea      = {.offset = {.x = 0u, .y = 0u}, .extent = framebuffer->size()},
-        .clearValueCount = static_cast<std::uint32_t>(clearValues.size()),
-        .pClearValues    = clearValues.data()};
-    mCommandBuffer.addBoundResource(renderPass);
+    VOG_ASSERT_MSG(renderPass->getRenderpassDescription() ==
+                       framebuffer->getRenderpassDescription(),
+                   "Renderpass and Framebuffer are incompatible.");
+
+    mCommandBuffer.beginRenderPass(
+        {.renderPass      = **renderPass,
+         .framebuffer     = **framebuffer,
+         .renderArea      = {.offset = {.x = 0u, .y = 0u}, .extent = framebuffer->extent()},
+         .clearValueCount = static_cast<std::uint32_t>(clearValues.size()),
+         .pClearValues    = clearValues.data()},
+        {});
+
     mCommandBuffer.addBoundResource(framebuffer);
-    mCommandBuffer.beginRenderPass(beginInfo, {});
+    mCommandBuffer.addBoundResource(renderPass);
 }
 
 void
@@ -38,25 +45,22 @@ CommandBufferRecorder::endRenderPass() noexcept
 }
 
 void
-CommandBufferRecorder::bindPipeline(const vk::PipelineBindPoint                pipelineBindPoint,
-                                    const std::shared_ptr<vk::raii::Pipeline>& pipeline) noexcept
+CommandBufferRecorder::bindPipeline(GraphicsPipelinePtr pipeline) noexcept
 {
-    mCommandBuffer.addBoundResource(pipeline);
-    mCommandBuffer.bindPipeline(pipelineBindPoint, **pipeline);
+    mCommandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, **pipeline);
+    mCommandBuffer.addBoundResource(std::move(pipeline));
 }
 
 void
-CommandBufferRecorder::setBarriers(
-    std::initializer_list<vk::MemoryBarrier2>       memoryBarriers,
-    std::initializer_list<vk::BufferMemoryBarrier2> bufferBarriers,
-    std::initializer_list<vk::ImageMemoryBarrier2>  imageBarriers) noexcept
+CommandBufferRecorder::setBarriers(vk::ArrayProxy<vk::MemoryBarrier2>       memoryBarriers,
+                                   vk::ArrayProxy<vk::BufferMemoryBarrier2> bufferBarriers,
+                                   vk::ArrayProxy<vk::ImageMemoryBarrier2>  imageBarriers) noexcept
 {
-    mCommandBuffer.pipelineBarrier2(
-        {.memoryBarrierCount       = static_cast<uint32_t>(memoryBarriers.size()),
-         .pMemoryBarriers          = memoryBarriers.begin(),
-         .bufferMemoryBarrierCount = static_cast<uint32_t>(bufferBarriers.size()),
-         .pBufferMemoryBarriers    = bufferBarriers.begin(),
-         .imageMemoryBarrierCount  = static_cast<uint32_t>(imageBarriers.size()),
-         .pImageMemoryBarriers     = imageBarriers.begin()});
+    mCommandBuffer.pipelineBarrier2({.memoryBarrierCount       = memoryBarriers.size(),
+                                     .pMemoryBarriers          = memoryBarriers.begin(),
+                                     .bufferMemoryBarrierCount = bufferBarriers.size(),
+                                     .pBufferMemoryBarriers    = bufferBarriers.begin(),
+                                     .imageMemoryBarrierCount  = imageBarriers.size(),
+                                     .pImageMemoryBarriers     = imageBarriers.begin()});
 }
 } // namespace VOG::Graphics::Vulkan

@@ -2,7 +2,7 @@
 
 #include <VOG/Common/JSONContainer.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
-#include <VOG/Graphics/GraphicsProvider.hpp>
+#include <VOG/Graphics/Vulkan/Instance.hpp>
 
 #ifdef PLATFORM_VIDEO_WINDOWS
 #include <Windows.h>
@@ -21,40 +21,39 @@
 #import <QuartzCore/CAMetalLayer.h>
 #endif
 
+#include <bit>
 #include <stdexcept>
 
 namespace VOG::Graphics::Vulkan
 {
 std::shared_ptr<vk::raii::SurfaceKHR>
-CreateRenderSurface(GraphicsProviderPtr          graphicsProvider,
-                    const Common::JSONContainer& parameters,
+CreateRenderSurface(const Instance&              instance,
+                    const Common::SurfaceHandle& surface,
                     bool                         throwOnFail)
 {
-    VOG_ASSERT_MSG(parameters.isValid(), "Parameters should be not empty.");
-
     std::shared_ptr<vk::raii::SurfaceKHR> surfaceHandle;
 
 #if defined(PLATFORM_VIDEO_WINDOWS)
     {
-        void* windowHandle = parameters["window"].getOr<void*>(nullptr);
-        void* hinstance    = parameters["hinstance"].getOr<void*>(nullptr);
+        void* windowHandle = std::bit_cast<void*>(surface.surfaceHandle);
+        void* hinstance    = std::bit_cast<void*>(surface.additionalHandle);
 
         VOG_ASSERT(windowHandle != nullptr);
         VOG_ASSERT(hinstance != nullptr);
 
-        vk::Win32SurfaceCreateInfoKHR createInfo{.hinstance = static_cast<HINSTANCE>(hinstance),
-                                                 .hwnd      = static_cast<HWND>(windowHandle)};
+        vk::Win32SurfaceCreateInfoKHR createInfo{
+            .hinstance = static_cast<HINSTANCE>(hinstance),
+            .hwnd      = static_cast<HWND>(windowHandle),
+        };
 
-        surfaceHandle =
-            std::make_shared<vk::raii::SurfaceKHR>(graphicsProvider->getInstance(), createInfo);
+        surfaceHandle = std::make_shared<vk::raii::SurfaceKHR>(instance, createInfo);
     }
 #elif defined(PLATFORM_VIDEO_APPLE)
     {
-        void* windowHandle = parameters["window"].getOr<void*>(nullptr);
-        if (windowHandle != nullptr)
+        if (surface.surfaceHandle != 0u)
         {
 #if defined(TARGET_OS_MAC)
-            NSObject* object = (__bridge NSObject*)windowHandle;
+            NSObject* object = (__bridge NSObject*)std::bit_cast<void*>(surface.surfaceHandle);
             NSView*   view   = nil;
             if ([object isKindOfClass:[NSWindow class]])
             {
@@ -72,8 +71,7 @@ CreateRenderSurface(GraphicsProviderPtr          graphicsProvider,
                 view.layer      = [CAMetalLayer layer];
 
                 vk::MetalSurfaceCreateInfoEXT createInfo{.pLayer = (CAMetalLayer*)view.layer};
-                surfaceHandle = std::make_shared<vk::raii::SurfaceKHR>(
-                    graphicsProvider->getInstance(), createInfo);
+                surfaceHandle = std::make_shared<vk::raii::SurfaceKHR>(instance, createInfo);
             }
 #elif defined(TARGET_OS_IPHONE)
 #endif
@@ -82,7 +80,9 @@ CreateRenderSurface(GraphicsProviderPtr          graphicsProvider,
 #endif
 
     if (throwOnFail && (!surfaceHandle || !**surfaceHandle))
+    {
         throw std::runtime_error("CreateSurface failed");
+    }
 
     return surfaceHandle;
 }

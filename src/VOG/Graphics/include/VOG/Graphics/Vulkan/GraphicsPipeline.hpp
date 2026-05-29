@@ -1,74 +1,88 @@
 #pragma once
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
+#include <VOG/Graphics/Typedefs.hpp>
+#include <VOG/Graphics/Vulkan/Common.hpp>
 #include <VOG/Graphics/Vulkan/Limits.hpp>
-#include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
-
-#include <boost/container/small_vector.hpp>
-#include <boost/container/static_vector.hpp>
+#include <VOG/Graphics/Vulkan/RenderPass.hpp>
 
 namespace VOG::Graphics::Vulkan
 {
-class Device;
+VOG_DECLARE_PTR(Device);
+VOG_DECLARE_PTR(ShaderProgram);
 
-struct VertexLayout
-{
-    template <class T, std::size_t N>
-    using Container = boost::container::static_vector<T, N>;
-
-    Container<vk::VertexInputBindingDescription, Limits::gMaxNumVertexBuffers> bindingDescription;
-    Container<vk::VertexInputAttributeDescription, Limits::gMaxNumVertexAttributes>
-        attributeDescription;
-};
+using ColorComponent = vk::ColorComponentFlagBits;
+using vk::DynamicState;
+using vk::FrontFace;
+using vk::PolygonMode;
+using vk::PrimitiveTopology;
+using CullMode = vk::CullModeFlagBits;
 
 struct RasterizationOptions
 {
     // PipelineInputAssemblyStateCreateInfo
-    vk::PrimitiveTopology topology               : 4 = vk::PrimitiveTopology::eTriangleList;
+    PrimitiveTopology topology              : 4 = PrimitiveTopology::eTriangleList;
     // PipelineRasterizationStateCreateInfo
-    vk::Bool32           rasterizationDiscard    : 1 = 0u;
-    vk::PolygonMode      polygonMode             : 2 = vk::PolygonMode::eFill;
-    vk::CullModeFlagBits cullMode                : 2 = vk::CullModeFlagBits::eBack;
-    vk::FrontFace        frontFace               : 1 = vk::FrontFace::eCounterClockwise;
-    vk::Bool32           primitiveRestartEnabled : 1 = 0u;
+    bool        rasterizationDiscardEnabled : 1 = false;
+    PolygonMode polygonMode                 : 2 = PolygonMode::eFill;
+    CullMode    cullMode                    : 2 = CullMode::eBack;
+    FrontFace   frontFace                   : 1 = FrontFace::eCounterClockwise;
+    bool        primitiveRestartEnabled     : 1 = false;
 };
+
+using DepthStencilState = vk::PipelineDepthStencilStateCreateInfo;
+using MultisampleState  = vk::PipelineMultisampleStateCreateInfo;
+using ViewportState     = vk::PipelineViewportStateCreateInfo;
+using DynamicStates     = StaticVector<vk::DynamicState, Limits::gMaxNumDynamicStates>;
 
 class GraphicsPipeline : public vk::raii::Pipeline
 {
 public:
-    using DepthStencilState = vk::PipelineDepthStencilStateCreateInfo;
-    using ColorBlendState   = vk::PipelineColorBlendStateCreateInfo;
-    using MultisampleState  = vk::PipelineMultisampleStateCreateInfo;
-    using ViewportState     = vk::PipelineViewportStateCreateInfo;
-    using DynamicStates     = boost::container::small_vector<vk::DynamicState, 4>;
+    struct ColorBlendState
+    {
+        StaticVector<vk::PipelineColorBlendAttachmentState, Limits::gMaxNumAttachments> attachments;
+    };
 
-    static std::shared_ptr<GraphicsPipeline>
-    create(const Device&                               device,
-           vk::Optional<const vk::raii::PipelineCache> cache,
-           const ShaderProgram&                        shading,
-           const VertexLayout&                         vertexLayout,
-           const RasterizationOptions&                 rasterizer,
-           const ViewportState&                        viewportState,
-           const DepthStencilState&                    depthStencil,
-           const ColorBlendState&                      blending,
-           const MultisampleState&                     multisample,
-           const DynamicStates&                        dynamicStates,
-           vk::PipelineLayout                          pipelineLayout,
-           vk::RenderPass                              renderPass,
-           std::uint32_t                               subpass);
+    struct CreateInfo
+    {
+        DevicePtr                                   device;
+        vk::Optional<const vk::raii::PipelineCache> cache;
+        ShaderProgramPtr                            shading;
+        VertexLayout                                vertexLayout;
+        RasterizationOptions                        rasterizer;
+        ViewportState                               viewportState;
+        DepthStencilState                           depthStencil;
+        ColorBlendState                             blending;
+        MultisampleState                            multisample;
+        DynamicStates                               dynamicStates;
+        const vk::PipelineLayout&                   pipelineLayout;
+        const RenderPass&                           renderPass;
+        std::uint32_t                               subpass;
+    };
 
-    GraphicsPipeline(const Device&                               device,
-                     vk::Optional<const vk::raii::PipelineCache> cache,
-                     const ShaderProgram&                        shading,
-                     const VertexLayout&                         vertexLayout,
-                     const RasterizationOptions&                 rasterizer,
-                     const ViewportState&                        viewportState,
-                     const DepthStencilState&                    depthStencil,
-                     const ColorBlendState&                      blending,
-                     const MultisampleState&                     multisample,
-                     const DynamicStates&                        dynamicStates,
-                     vk::PipelineLayout                          pipelineLayout,
-                     vk::RenderPass                              renderPass,
-                     std::uint32_t                               subpass);
+    struct CreateInfoFromDescription
+    {
+        DevicePtr                                   device;
+        vk::Optional<const vk::raii::PipelineCache> cache;
+        ShaderProgramPtr                            shading;
+        VertexLayout                                vertexLayout;
+        RasterizationOptions                        rasterizer;
+        ViewportState                               viewportState;
+        DepthStencilState                           depthStencil;
+        ColorBlendState                             blending;
+        MultisampleState                            multisample;
+        DynamicStates                               dynamicStates;
+        const vk::PipelineLayout&                   pipelineLayout;
+        RenderpassDescription                       renderpassDescription;
+    };
+
+    GraphicsPipeline(CreateInfo createInfo);
+
+    GraphicsPipeline(CreateInfoFromDescription createInfo);
+
+public:
+    const RenderpassDescription renderpassDescription;
+    const DevicePtr             device;
+    const ShaderProgramPtr      program;
 };
 } // namespace VOG::Graphics::Vulkan

@@ -10,7 +10,7 @@ PointerAlignment: Left
 ColumnLimit: 100
 FixNamespaceComments: true
 
-SortIncludes: true
+SortIncludes: "CaseSensitive"
 SortUsingDeclarations: true
 
 AlignAfterOpenBracket: Align
@@ -21,6 +21,7 @@ AlignConsecutiveDeclarations: Consecutive
 AlignEscapedNewlines: Right
 AlignOperands: AlignAfterOperator
 AlignTrailingComments: true
+AllowShortLambdasOnASingleLine: None
 
 AllowAllArgumentsOnNextLine: true
 BinPackArguments: false

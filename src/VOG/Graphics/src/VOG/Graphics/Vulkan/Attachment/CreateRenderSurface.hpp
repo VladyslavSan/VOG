@@ -1,3 +1,6 @@
+#pragma once
+
+#include <VOG/Common/SurfaceHandle.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 
 namespace vk::raii
@@ -10,14 +13,10 @@ namespace VOG::Common
 class JSONContainer;
 }
 
-namespace VOG::Graphics
-{
-VOG_DECLARE_PTR(GraphicsProvider);
-}
-
 namespace VOG::Graphics::Vulkan
 {
-std::shared_ptr<vk::raii::SurfaceKHR> CreateRenderSurface(GraphicsProviderPtr graphicsProvider,
-                                                          const Common::JSONContainer& parameters,
+class Instance;
+std::shared_ptr<vk::raii::SurfaceKHR> CreateRenderSurface(const Instance&              instance,
+                                                          const Common::SurfaceHandle& surface,
                                                           bool                         throwOnFail);
-}
+} // namespace VOG::Graphics::Vulkan
