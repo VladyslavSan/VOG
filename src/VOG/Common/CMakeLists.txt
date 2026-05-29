@@ -2,19 +2,19 @@ cmake_minimum_required(VERSION 3.10.0)
 
 find_package(glm REQUIRED)
 
-add_library(Common)
-add_library(${PROJECT_NAME}::Common ALIAS Common)
+add_library(VOG.Common)
+add_library(${PROJECT_NAME}::Common ALIAS VOG.Common)
 
-set_target_properties(Common PROPERTIES FOLDER VOG)
+set_target_properties(VOG.Common PROPERTIES FOLDER VOG)
 
-target_include_directories(Common
+target_include_directories(VOG.Common
     PUBLIC
         include/
     PRIVATE
         src/
 )
 
-target_sources(Common
+target_sources(VOG.Common
     PRIVATE
         include/VOG/Common/Assert.hpp
         include/VOG/Common/Concepts.hpp

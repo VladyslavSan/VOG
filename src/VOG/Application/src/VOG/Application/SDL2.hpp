@@ -1,7 +1,6 @@
 #pragma once
 
 #include <VOG/Common/Assert.hpp>
-#include <VOG/Common/JSONContainer.hpp>
 #include <VOG/Common/SurfaceHandle.hpp>
 
 #include <SDL2/SDL.h>

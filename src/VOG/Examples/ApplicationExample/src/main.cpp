@@ -1,9 +1,13 @@
 #include <VOG/Application/Application.hpp>
 
+#include <boost/program_options.hpp>
+
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+
+namespace po = boost::program_options;
 
 // prints the explanatory string of an exception. If the exception is nested,
 // recurses to print the explanatory of the exception it holds
@@ -49,8 +53,36 @@ main(int argc, const char** argv)
 {
     try
     {
-        VOG::Application::Application app(
-            "My window", 1280, 720, {}, {}, {argv, static_cast<std::size_t>(argc)});
+        po::options_description description = {};
+        description.add_options()("shader-storage-path",
+                                  po::value<std::string>()->required(),
+                                  "Path to the shader directory containing config.json.");
+
+        po::variables_map vm;
+        try
+        {
+            po::store(po::parse_command_line(argc, argv, description), vm);
+
+            // Required check happens here
+            po::notify(vm);
+        }
+        catch (const po::required_option& e)
+        {
+            std::cerr << "Error: " << e.what() << std::endl;
+            return 1;
+        }
+        catch (const po::error& e)
+        {
+            std::cerr << "Error: " << e.what() << std::endl;
+            return 1;
+        }
+
+        VOG::Application::Application app({
+            .title             = "My window",
+            .width             = 1280,
+            .height            = 720,
+            .shaderStoragePath = vm["shader-storage-path"].as<std::string>(),
+        });
 
         app.run();
     }

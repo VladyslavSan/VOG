@@ -109,7 +109,7 @@ buildPushConstants(const ShaderProgram::ShadingStages& stages)
                     const auto end = range.offset + range.size - 1u;
                     return valueInRange(range.offset, end, pushConstant.offset) ||
                            valueInRange(
-                               range.offset, end, pushConstant.offset + pushConstant.offset - 1u);
+                               range.offset, end, pushConstant.offset + pushConstant.size - 1u);
                 });
 
             // Simple path, just add push constant to ranges.
@@ -152,15 +152,33 @@ makePipelineLayout(const Device&                        device,
                    const ShaderProgram::DescriptorSets& descriptorSets,
                    const ShaderProgram::PushConstants&  pushConstants)
 {
-    StaticVectorStrict<vk::DescriptorSetLayout, Limits::gMaxNumDescriptorSets> descriptorSetLayouts;
-    for (const auto& set : descriptorSets)
+    // Find the highest set index that is actually used. Sets with gaps below
+    // it must still appear in pSetLayouts (as empty layouts) so that Vulkan
+    // sees a contiguous, correctly-indexed array.
+    std::int32_t lastUsedSet = -1;
+    for (std::int32_t i = 0; i < static_cast<std::int32_t>(descriptorSets.size()); ++i)
     {
-        if (!*set.setLayout)
+        if (*descriptorSets[static_cast<std::size_t>(i)].setLayout)
         {
-            continue;
+            lastUsedSet = i;
         }
+    }
 
-        descriptorSetLayouts.push_back(*set.setLayout);
+    // Temporary empty layouts kept alive for the duration of the API call.
+    std::vector<vk::raii::DescriptorSetLayout>                                 emptyLayouts;
+    StaticVectorStrict<vk::DescriptorSetLayout, Limits::gMaxNumDescriptorSets> descriptorSetLayouts;
+    for (std::int32_t i = 0; i <= lastUsedSet; ++i)
+    {
+        const auto& set = descriptorSets[static_cast<std::size_t>(i)];
+        if (*set.setLayout)
+        {
+            descriptorSetLayouts.push_back(*set.setLayout);
+        }
+        else
+        {
+            emptyLayouts.emplace_back(device, vk::DescriptorSetLayoutCreateInfo{});
+            descriptorSetLayouts.push_back(*emptyLayouts.back());
+        }
     }
 
     return {device,

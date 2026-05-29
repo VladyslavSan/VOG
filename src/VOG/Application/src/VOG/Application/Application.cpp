@@ -5,62 +5,48 @@
 #include <VOG/Engine/Renderer/Renderer.hpp>
 
 #include <SDL2/SDL_vulkan.h>
-#include <boost/process.hpp>
-#include <boost/program_options.hpp>
 #include <spdlog/spdlog.h>
 
 #include <filesystem>
-#include <optional>
-
-namespace po = boost::program_options;
+#include <format>
 
 namespace VOG::Application
 {
-
-Application::Application(const std::string& title,
-                         unsigned int       width,
-                         unsigned int       height,
-                         const StringList&  extensions,
-                         const StringList&  layers,
-                         CmdArgs            cmdArgs)
-    : mSDLHandle{std::make_unique<SDLHandle>(SDL_INIT_EVENTS)}
-    , mWindow{std::make_shared<SDLWindow>(title.c_str(),
-                                          SDL_WINDOWPOS_UNDEFINED,
-                                          SDL_WINDOWPOS_UNDEFINED,
-                                          static_cast<int>(width),
-                                          static_cast<int>(height),
-                                          SDL_WINDOW_SHOWN)}
+namespace
 {
-
-    auto env = boost::process::environment::current();
-
-    std::string             shaderStoragePath = {};
-    po::options_description description       = {};
-    description.add_options()("shader-storage-path",
-                              po::value(&shaderStoragePath),
-                              "Path to the shader directory containing config.json.");
-    const auto        parsed = po::parse_command_line(cmdArgs.size(), cmdArgs.data(), description);
-    po::variables_map vm{};
-    po::store(parsed, vm);
-    po::notify(vm);
-
-    if (shaderStoragePath.empty())
+void
+validateConfig(const Application::ApplicationConfig& config)
+{
+    if (config.shaderStoragePath.empty())
     {
         throw std::runtime_error("Shader storage path is empty.");
     }
-    else if (!std::filesystem::exists(shaderStoragePath))
+    if (!std::filesystem::exists(config.shaderStoragePath))
     {
         throw std::runtime_error(
-            fmt::format("Shader storage path \"{}\" does not exist.", shaderStoragePath));
+            std::format("Shader storage path \"{}\" does not exist.", config.shaderStoragePath));
     }
+}
+} // namespace
+
+Application::Application(ApplicationConfig config)
+    : mSDLHandle{std::make_unique<SDLHandle>(SDL_INIT_EVENTS)}
+    , mWindow{std::make_shared<SDLWindow>(config.title.c_str(),
+                                          SDL_WINDOWPOS_CENTERED,
+                                          SDL_WINDOWPOS_CENTERED,
+                                          static_cast<int>(config.width),
+                                          static_cast<int>(config.height),
+                                          SDL_WINDOW_SHOWN)}
+{
+    validateConfig(config);
 
     mRenderer = {std::make_shared<Engine::Renderer>(
         mWindow->getSurfaceHandle(),
-        Common::JSONContainer{{"extensions", extensions},
-                              {"layers", layers},
-                              {"app_name", title},
+        Common::JSONContainer{{"extensions", config.extensions},
+                              {"layers", config.layers},
+                              {"app_name", config.title},
                               {"frames_in_flight", 2u},
-                              {"shader_source_path", shaderStoragePath}})};
+                              {"shader_source_path", config.shaderStoragePath}})};
 }
 
 Application::~Application() {}

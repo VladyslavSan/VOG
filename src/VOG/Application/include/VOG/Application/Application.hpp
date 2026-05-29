@@ -1,8 +1,6 @@
 #pragma once
 
-#include <algorithm>
 #include <memory>
-#include <span>
 #include <string>
 #include <vector>
 
@@ -18,15 +16,22 @@ class SDLWindow;
 class Application
 {
 public:
-    using StringList = std::vector<std::string>;
-    using CmdArgs    = std::span<const char*>;
+    struct ApplicationConfig
+    {
+        // Generic application info.
+        std::string   title  = "Application";
+        std::uint32_t width  = 640;
+        std::uint32_t height = 480;
 
-    Application(const std::string& title,
-                unsigned int       width,
-                unsigned int       height,
-                const StringList&  extensions = {},
-                const StringList&  layers     = {},
-                CmdArgs            cmdArgs    = {});
+        // Vulkan extensions
+        std::vector<std::string> extensions;
+        // Vulkan layers
+        std::vector<std::string> layers;
+
+        std::string shaderStoragePath;
+    };
+
+    Application(ApplicationConfig config);
 
     ~Application();
 

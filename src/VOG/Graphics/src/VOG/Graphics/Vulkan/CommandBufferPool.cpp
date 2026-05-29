@@ -8,7 +8,7 @@ namespace VOG::Graphics::Vulkan
 {
 namespace
 {
-const std::uint32_t gGrowSize = 10u;
+constexpr std::uint32_t gGrowSize = 10u;
 } // namespace
 
 CommandBufferHandle::CommandBufferHandle(CommandBufferPoolPtr pool,

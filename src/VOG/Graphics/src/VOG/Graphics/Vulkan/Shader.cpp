@@ -178,6 +178,8 @@ toVulkan(Shader::ShadingStage stage)
         return vk::ShaderStageFlagBits::eVertex;
     case Shader::ShadingStage::eFragment:
         return vk::ShaderStageFlagBits::eFragment;
+    default:
+        throw std::invalid_argument{"Unhandled ShadingStage value in toVulkan()"};
     }
 }
 
@@ -395,9 +397,9 @@ reflect(const std::vector<std::uint32_t>& binary)
 } // namespace
 
 std::shared_ptr<Shader>
-Shader::create(DevicePtr device, Shader::ShadingStage stage, const std::string& source)
+Shader::create(DevicePtr device, Shader::ShadingStage stage, const std::string& glslCode)
 {
-    return std::make_shared<Shader>(std::move(device), stage, source);
+    return std::make_shared<Shader>(std::move(device), stage, glslCode);
 }
 
 bool

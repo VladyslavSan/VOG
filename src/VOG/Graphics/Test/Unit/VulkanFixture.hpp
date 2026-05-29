@@ -13,7 +13,7 @@ public:
     VulkanFixture()
         : VulkanInstance{Graphics::Vulkan::Instance::create({
               .appName    = "VOG Test",
-              .engineName = nullptr,
+              .engineName = "Test",
               .layers     = {},
               .extensions = {},
           })}

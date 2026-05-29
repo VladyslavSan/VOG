@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.10.0)
 find_package(GTest REQUIRED)
 
 add_library(VOG.CVarSystem SHARED)
+add_library(${PROJECT_NAME}::CVarSystem ALIAS VOG.CVarSystem)
 set_target_properties(VOG.CVarSystem PROPERTIES FOLDER "VOG")
 
 target_include_directories(VOG.CVarSystem

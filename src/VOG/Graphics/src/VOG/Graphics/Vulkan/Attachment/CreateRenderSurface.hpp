@@ -1,3 +1,5 @@
+#pragma once
+
 #include <VOG/Common/SurfaceHandle.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 

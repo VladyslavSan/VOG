@@ -9,15 +9,17 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <variant>
 #include <vector>
 
 namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Device);
+class ShaderProgram;
 
 class Shader
 {
+    friend class ShaderProgram;
+
 public:
     class CompilationError : public std::runtime_error
     {
@@ -113,12 +115,12 @@ public:
      *
      * @param device Vulkan device to construct the shader module.
      * @param stage Shading stage.
-     * @param shaderBinary SPIR-V shader binary code.
+     * @param glslCode SPIR-V shader binary code.
      *
      * @return shared pointer to Shader instance.
      */
     static std::shared_ptr<Shader>
-    create(DevicePtr device, ShadingStage stage, const std::string& source);
+    create(DevicePtr device, ShadingStage stage, const std::string& glslCode);
 
     /**
      * Utility function used for validation whether @p provided vertex format is compatible with
@@ -137,7 +139,7 @@ public:
      *
      * @param device Vulkan device to construct the shader module.
      * @param stage Shading stage.
-     * @param shaderBinary SPIR-V shader binary code.
+     * @param glslCode SPIR-V shader binary code.
      */
     Shader(DevicePtr device, ShadingStage stage, const std::string& glslCode);
 
@@ -150,7 +152,10 @@ public:
      */
     Shader(DevicePtr device, ShadingStage stage, std::vector<std::uint32_t> shaderBinary);
 
-    const DevicePtr                  device;
+private:
+    const DevicePtr device;
+
+public:
     const vk::ShaderStageFlagBits    stage;
     const std::vector<std::uint32_t> binary;
     const vk::raii::ShaderModule     module;

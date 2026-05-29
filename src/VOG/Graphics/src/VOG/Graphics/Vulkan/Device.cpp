@@ -76,12 +76,21 @@ makeDevice(const vk::raii::PhysicalDevice& physicalDevice, const PhysicalDevice:
 {
     const auto availableExtensions = physicalDevice.enumerateDeviceExtensionProperties();
 
-    float                     priority  = 0.0;
-    vk::DeviceQueueCreateInfo queueInfo = {
+    float priority = 0.0f;
+    std::vector<vk::DeviceQueueCreateInfo> queueInfos;
+    queueInfos.push_back({
         .queueFamilyIndex = infos.graphics.familyIndex,
         .queueCount       = 1u,
         .pQueuePriorities = &priority,
-    };
+    });
+    if (infos.transfer.familyIndex != infos.graphics.familyIndex)
+    {
+        queueInfos.push_back({
+            .queueFamilyIndex = infos.transfer.familyIndex,
+            .queueCount       = 1u,
+            .pQueuePriorities = &priority,
+        });
+    }
 
     std::vector<const char*> extensions = getDeviceRequiredExtensions();
 
@@ -129,8 +138,8 @@ makeDevice(const vk::raii::PhysicalDevice& physicalDevice, const PhysicalDevice:
 
     vk::StructureChain chain{
         vk::DeviceCreateInfo{
-            .queueCreateInfoCount    = 1u,
-            .pQueueCreateInfos       = &queueInfo,
+            .queueCreateInfoCount    = static_cast<std::uint32_t>(queueInfos.size()),
+            .pQueueCreateInfos       = queueInfos.data(),
             .enabledExtensionCount   = static_cast<std::uint32_t>(extensions.size()),
             .ppEnabledExtensionNames = extensions.data(),
             .pEnabledFeatures        = &deviceFeatues,

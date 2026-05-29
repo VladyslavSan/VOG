@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VOG/Graphics/Vulkan/Limits.hpp>
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 
 #include <array>
@@ -73,8 +74,9 @@ public:
 public: // use create()
     ShaderProgram(ShadingStagesChecked stages);
 
-public:
+private:
     const DevicePtr                device;
+public:
     const ShadingStages            stages;
     const DescriptorSets           descriptorSets;
     const PushConstants            pushConstants;

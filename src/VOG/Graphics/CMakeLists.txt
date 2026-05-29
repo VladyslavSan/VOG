@@ -9,19 +9,19 @@ find_package(Boost COMPONENTS container REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(spdlog REQUIRED)
 
-add_library(Graphics)
-add_library(${PROJECT_NAME}::Graphics ALIAS Graphics)
+add_library(VOG.Graphics)
+add_library(${PROJECT_NAME}::Graphics ALIAS VOG.Graphics)
 
-set_target_properties(Graphics PROPERTIES FOLDER VOG)
+set_target_properties(VOG.Graphics PROPERTIES FOLDER VOG)
 
-target_include_directories(Graphics
+target_include_directories(VOG.Graphics
     PUBLIC
         include/
     PRIVATE
         src/
 )
 
-target_sources(Graphics
+target_sources(VOG.Graphics
     PUBLIC
         FILE_SET
             public_headers
@@ -90,9 +90,9 @@ target_sources(Graphics
         src/VOG/Graphics/ShaderProgramCache.cpp
 )
 
-target_link_libraries(Graphics
+target_link_libraries(VOG.Graphics
     PUBLIC
-        ${PROJECT_NAME}::Common
+        VOG.Common
         Vulkan::Headers
         GPUOpen::VulkanMemoryAllocator
         Boost::container
@@ -108,7 +108,7 @@ if (APPLE)
     find_library(QUARTZ_CORE QuartzCore REQUIRED)
     find_library(APPKIT AppKit REQUIRED)
 
-    target_link_libraries(Graphics
+    target_link_libraries(VOG.Graphics
         PRIVATE
             ${QUARTZ_CORE}
             ${APPKIT}
@@ -121,8 +121,8 @@ if (APPLE)
     )
 endif ()
 
-install(TARGETS Graphics
+install(TARGETS VOG.Graphics
         FILE_SET public_headers
 )
 
-#add_subdirectory(Test)
+add_subdirectory(Test)
