@@ -3,12 +3,12 @@
 #include <VOG/Common/Assert.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 
-#include <fmt/format.h>
 #include <glslang/Include/ResourceLimits.h>
 #include <glslang/Public/ShaderLang.h>
 #include <glslang/SPIRV/GlslangToSpv.h>
 #include <spirv_reflect.hpp>
 
+#include <format>
 #include <ranges>
 #include <utility>
 
@@ -217,7 +217,7 @@ compileGLSLShader(Shader::ShadingStage stage, const std::string& glslCode)
                       includer))
     {
         throw Shader::CompilationError{
-            fmt::format("Shader info log:\n{}"
+            std::format("Shader info log:\n{}"
                         "Debug log:\n{}",
                         shader.getInfoLog(),
                         shader.getInfoDebugLog())};
@@ -227,7 +227,7 @@ compileGLSLShader(Shader::ShadingStage stage, const std::string& glslCode)
     program.addShader(&shader);
     if (!program.link(messagesFilter))
     {
-        throw Shader::CompilationError{fmt::format("Shader info log:\n{}", program.getInfoLog())};
+        throw Shader::CompilationError{std::format("Shader info log:\n{}", program.getInfoLog())};
     }
 
     std::vector<std::uint32_t> spirv{};
@@ -338,13 +338,13 @@ checkResourceLocation(const Shader::Reflection::ResourceLocation& location)
 {
     if (location.set > Limits::gMaxNumDescriptorSets)
     {
-        throw Shader::ShaderError{fmt::format("Resource set \"{}\" exceeds the limit of \"{}\"",
+        throw Shader::ShaderError{std::format("Resource set \"{}\" exceeds the limit of \"{}\"",
                                               location.set,
                                               Limits::gMaxNumDescriptorSets)};
     }
     if (location.binding > Limits::gMaxNumDescriptorBindings)
     {
-        throw Shader::ShaderError{fmt::format("Resource binding \"{}\" exceeds the limit of \"{}\"",
+        throw Shader::ShaderError{std::format("Resource binding \"{}\" exceeds the limit of \"{}\"",
                                               location.binding,
                                               Limits::gMaxNumDescriptorBindings)};
     }
