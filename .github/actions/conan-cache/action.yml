@@ -1,0 +1,56 @@
+name: Conan cache
+description: >
+  Restore the Conan cache. When warm is true, also run `conan install` to
+  populate dependencies and save the cache on a miss.
+
+inputs:
+  build-type:
+    description: Conan build type (Debug or Release).
+    required: false
+    default: "Release"
+  lockfile:
+    description: Path to the Conan lockfile used as part of the cache key.
+    required: false
+    default: "conan.lock"
+  warm:
+    description: >
+      When "true", install dependencies and save the cache on a miss.
+      When "false", only restore the cache (assumes it was warmed earlier).
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Restore Conan cache
+      id: conan-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.conan2
+        key: conan-${{ runner.os }}-${{ inputs.build-type }}-${{ hashFiles(inputs.lockfile) }}
+        restore-keys: |
+          conan-${{ runner.os }}-${{ inputs.build-type }}-
+          conan-${{ runner.os }}-
+
+    - name: Install dependencies (Linux)
+      if: inputs.warm == 'true' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        conan install . -of build --build=missing -s build_type=${{ inputs.build-type }} \
+          --lockfile=${{ inputs.lockfile }} --lockfile-partial \
+          -c tools.system.package_manager:mode=install \
+          -c tools.system.package_manager:sudo=True
+
+    - name: Install dependencies
+      if: inputs.warm == 'true' && runner.os != 'Linux'
+      shell: bash
+      run: >-
+        conan install . -of build --build=missing -s build_type=${{ inputs.build-type }}
+        --lockfile=${{ inputs.lockfile }} --lockfile-partial
+
+    - name: Save Conan cache
+      if: inputs.warm == 'true' && steps.conan-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.conan2
+        key: conan-${{ runner.os }}-${{ inputs.build-type }}-${{ hashFiles(inputs.lockfile) }}

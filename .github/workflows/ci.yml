@@ -38,13 +38,6 @@ jobs:
       - name: Detect Conan profile
         run: conan profile detect --force
 
-      - name: Fix C++ standard in Conan profile
-        if: runner.os != 'Linux'
-        shell: bash
-        run: >-
-          sed 's/compiler\.cppstd=.*/compiler.cppstd=20/' ~/.conan2/profiles/default
-          > /tmp/conan_profile && mv /tmp/conan_profile ~/.conan2/profiles/default
-
       - name: Install software Vulkan renderer (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -66,20 +59,30 @@ jobs:
           restore-keys: |
             conan-${{ runner.os }}-${{ matrix.build_type }}-
             conan-${{ runner.os }}-
+            
+      - name: Fix C++ standard in Conan profile
+        shell: bash
+        run: |
+          sed 's/compiler\.cppstd=.*/compiler.cppstd=20/' ~/.conan2/profiles/default > /tmp/conan_profile
+          cat /tmp/conan_profile
+          mv /tmp/conan_profile ~/.conan2/profiles/default
 
       - name: Install dependencies
         if: runner.os != 'Linux'
-        run: >-
-          conan install . -of build --build=missing -s build_type=${{ matrix.build_type }}
-          -c tools.cmake.cmaketoolchain:generator=Ninja
+        shell: bash
+        run: |
+          cat ~/.conan2/profiles/default
+          conan install . -of build --build=missing -s build_type=${{ matrix.build_type }} \
+            -c tools.cmake.cmaketoolchain:generator=Ninja
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
-        run: >-
-          conan install . -of build --build=missing -s build_type=${{ matrix.build_type }} --lockfile-partial
-          -c tools.system.package_manager:mode=install
-          -c tools.system.package_manager:sudo=True
-          -c tools.cmake.cmaketoolchain:generator=Ninja
+        run: |
+          cat ~/.conan2/profiles/default
+          conan install . -of build --build=missing -s build_type=${{ matrix.build_type }} --lockfile-partial \
+            -c tools.system.package_manager:mode=install \
+            -c tools.system.package_manager:sudo=True \
+            -c tools.cmake.cmaketoolchain:generator=Ninja
 
       - name: Save Conan cache
         if: steps.conan-cache.outputs.cache-hit != 'true'
@@ -94,4 +97,4 @@ jobs:
 
       - name: Build and test
         if: runner.os == 'Linux'
-        run: conan build . -of build -s build_type=${{ matrix.build_type }}
+        run: conan build . -of build -s build_type=${{ matrix.build_type }} --lockfile-partial

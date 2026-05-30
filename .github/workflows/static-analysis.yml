@@ -1,0 +1,51 @@
+name: Static Analysis
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  clang-tidy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-tidy
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y clang-tidy-20
+
+      - name: Configure
+        uses: ./.github/actions/configure
+        with:
+          cmake-extra-args: -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Run clang-tidy
+        run: run-clang-tidy-20 -p build/build/Release 'src/.*'
+
+  iwyu:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install IWYU
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y iwyu
+
+      - name: Configure
+        uses: ./.github/actions/configure
+        with:
+          cmake-extra-args: -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Run IWYU
+        run: |
+          iwyu_output=$(iwyu_tool.py -p build/build/Release 2>&1)
+          echo "$iwyu_output"
+          if echo "$iwyu_output" | grep -q "should add\|should remove"; then
+            exit 1
+          fi
