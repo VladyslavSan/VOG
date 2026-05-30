@@ -16,7 +16,8 @@ JSONContainer::getCurrentTypeName() const
     return mTypeInfo.string;
 }
 
-JSONContainer::operator std::string() const
+JSONContainer::
+operator std::string() const
 {
     if (mValueHolder.index() == std::variant_npos)
     {

@@ -30,10 +30,8 @@ validateConfig(const Application::ApplicationConfig& config)
 
 Application::Application(ApplicationConfig config)
     : mSDLHandle{std::make_unique<SDLHandle>(SDL_INIT_EVENTS)}
-    , mWindow{std::make_shared<SDLWindow>(config.title.c_str(),
-                                          static_cast<int>(config.width),
-                                          static_cast<int>(config.height),
-                                          0)}
+    , mWindow{std::make_shared<SDLWindow>(
+          config.title.c_str(), static_cast<int>(config.width), static_cast<int>(config.height), 0)}
 {
     validateConfig(config);
 

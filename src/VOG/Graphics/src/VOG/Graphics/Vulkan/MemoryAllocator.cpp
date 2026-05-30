@@ -19,7 +19,8 @@ getMemoryFlags(VmaAllocator allocator, std::uint32_t memoryIndex)
 }
 } // namespace
 
-MemoryAllocator::AllocationInfo::operator VmaAllocationCreateInfo() const noexcept
+MemoryAllocator::AllocationInfo::
+operator VmaAllocationCreateInfo() const noexcept
 {
     return {
         .flags          = flags,
@@ -139,5 +140,9 @@ MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
         vk::raii::Buffer{*mDevice, buffer});
 }
 
-MemoryAllocator::operator VmaAllocator() const { return mAllocator; }
+MemoryAllocator::
+operator VmaAllocator() const
+{
+    return mAllocator;
+}
 } // namespace VOG::Graphics::Vulkan

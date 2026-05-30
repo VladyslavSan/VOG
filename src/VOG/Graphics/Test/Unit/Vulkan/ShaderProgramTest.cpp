@@ -59,27 +59,26 @@ makeMinimalPipelineCreateInfo(DevicePtr                 device,
                               const vk::PipelineLayout& layout)
 {
     return {
-        .device    = device,
-        .cache     = nullptr,
-        .shading   = program,
-        .vertexLayout =
-            {.bindingDescription   = {{.binding = 0u,
-                                       .stride  = 16u,
-                                       .inputRate = vk::VertexInputRate::eVertex}},
-             .attributeDescription = {{.location = 0u,
-                                       .binding  = 0u,
-                                       .format   = vk::Format::eR32G32B32A32Sfloat,
-                                       .offset   = 0u}}},
+        .device        = device,
+        .cache         = nullptr,
+        .shading       = program,
+        .vertexLayout  = {.bindingDescription   = {{.binding   = 0u,
+                                                    .stride    = 16u,
+                                                    .inputRate = vk::VertexInputRate::eVertex}},
+                          .attributeDescription = {{.location = 0u,
+                                                    .binding  = 0u,
+                                                    .format   = vk::Format::eR32G32B32A32Sfloat,
+                                                    .offset   = 0u}}},
         .rasterizer    = {.cullMode = CullMode::eNone},
         .viewportState = {.viewportCount = 1u, .scissorCount = 1u},
         .depthStencil  = {},
-        .blending      = {.attachments = {{.colorWriteMask = ColorComponent::eR | ColorComponent::eG |
-                                                             ColorComponent::eB | ColorComponent::eA}}},
-        .multisample   = {},
-        .dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
+        .blending = {.attachments = {{.colorWriteMask = ColorComponent::eR | ColorComponent::eG |
+                                                        ColorComponent::eB | ColorComponent::eA}}},
+        .multisample    = {},
+        .dynamicStates  = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
         .pipelineLayout = layout,
-        .renderPass    = renderPass,
-        .subpass       = 0u,
+        .renderPass     = renderPass,
+        .subpass        = 0u,
     };
 }
 
@@ -95,21 +94,22 @@ class VulkanValidationFixture : public testing::Test
 {
 protected:
     static vk::Bool32
-    onMessage(vk::DebugUtilsMessageSeverityFlagBitsEXT      /*severity*/,
-              vk::DebugUtilsMessageTypeFlagsEXT              /*types*/,
-              const vk::DebugUtilsMessengerCallbackDataEXT*  pData,
-              void*                                          pUserData)
+    onMessage(vk::DebugUtilsMessageSeverityFlagBitsEXT /*severity*/,
+              vk::DebugUtilsMessageTypeFlagsEXT /*types*/,
+              const vk::DebugUtilsMessengerCallbackDataEXT* pData,
+              void*                                         pUserData)
     {
         if (pData->pMessage)
             static_cast<std::vector<std::string>*>(pUserData)->emplace_back(pData->pMessage);
         return VK_FALSE;
     }
 
-    static bool prerequisitesAvailable()
+    static bool
+    prerequisitesAvailable()
     {
         vk::raii::Context ctx;
-        bool hasLayer = false;
-        bool hasExt   = false;
+        bool              hasLayer = false;
+        bool              hasExt   = false;
         for (const auto& l : ctx.enumerateInstanceLayerProperties())
             if (std::string_view{l.layerName} == "VK_LAYER_KHRONOS_validation")
             {
@@ -127,7 +127,8 @@ protected:
 
     VulkanValidationFixture()
     {
-        if (!prerequisitesAvailable()) return;
+        if (!prerequisitesAvailable())
+            return;
 
         VulkanInstance = Graphics::Vulkan::Instance::create({
             .appName    = "VOG Validation Test",
@@ -136,8 +137,8 @@ protected:
             .extensions = {"VK_EXT_debug_utils"},
         });
 
-        messenger = VulkanInstance->createDebugUtilsMessengerEXT(
-            vk::DebugUtilsMessengerCreateInfoEXT{
+        messenger =
+            VulkanInstance->createDebugUtilsMessengerEXT(vk::DebugUtilsMessengerCreateInfoEXT{
                 .messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
                 .messageType     = vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation,
                 .pfnUserCallback = VulkanValidationFixture::onMessage,
@@ -159,21 +160,23 @@ protected:
 
 TEST_F(VulkanFixture, ShaderProgram_create_noDescriptorSets)
 {
-    auto vert = Shader::create(VulkanDevice, Shader::ShadingStage::eVertex,   gMinimalVertexShader);
-    auto frag = Shader::create(VulkanDevice, Shader::ShadingStage::eFragment, gMinimalFragmentShader);
+    auto vert = Shader::create(VulkanDevice, Shader::ShadingStage::eVertex, gMinimalVertexShader);
+    auto frag =
+        Shader::create(VulkanDevice, Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
-    EXPECT_NO_THROW(ShaderProgram::create({.vertex   = {.shader = vert},
-                                           .fragment = {.shader = frag}}));
+    EXPECT_NO_THROW(
+        ShaderProgram::create({.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
 }
 
 TEST_F(VulkanFixture, ShaderProgram_descriptorSets_consecutiveSets)
 {
-    auto vert = Shader::create(VulkanDevice, Shader::ShadingStage::eVertex,   gVertexShaderSets01);
-    auto frag = Shader::create(VulkanDevice, Shader::ShadingStage::eFragment, gMinimalFragmentShader);
+    auto vert = Shader::create(VulkanDevice, Shader::ShadingStage::eVertex, gVertexShaderSets01);
+    auto frag =
+        Shader::create(VulkanDevice, Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
     std::shared_ptr<ShaderProgram> program;
-    ASSERT_NO_THROW(program = ShaderProgram::create({.vertex   = {.shader = vert},
-                                                     .fragment = {.shader = frag}}));
+    ASSERT_NO_THROW(program = ShaderProgram::create(
+                        {.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
 
     EXPECT_TRUE(static_cast<bool>(*program->descriptorSets[0].setLayout));
     EXPECT_TRUE(static_cast<bool>(*program->descriptorSets[1].setLayout));
@@ -185,27 +188,30 @@ TEST_F(VulkanFixture, ShaderProgram_descriptorSets_gapInSets)
 {
     // buildDescriptorSets leaves set 1 null because no binding is declared for it.
     // makePipelineLayout is responsible for filling the gap with an empty layout.
-    auto vert = Shader::create(VulkanDevice, Shader::ShadingStage::eVertex,   gVertexShaderSets02Gap);
-    auto frag = Shader::create(VulkanDevice, Shader::ShadingStage::eFragment, gMinimalFragmentShader);
+    auto vert = Shader::create(VulkanDevice, Shader::ShadingStage::eVertex, gVertexShaderSets02Gap);
+    auto frag =
+        Shader::create(VulkanDevice, Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
     std::shared_ptr<ShaderProgram> program;
-    ASSERT_NO_THROW(program = ShaderProgram::create({.vertex   = {.shader = vert},
-                                                     .fragment = {.shader = frag}}));
+    ASSERT_NO_THROW(program = ShaderProgram::create(
+                        {.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
 
     EXPECT_TRUE(static_cast<bool>(*program->descriptorSets[0].setLayout));
-    EXPECT_FALSE(static_cast<bool>(*program->descriptorSets[1].setLayout));  // gap — no binding here
+    EXPECT_FALSE(static_cast<bool>(*program->descriptorSets[1].setLayout)); // gap — no binding here
     EXPECT_TRUE(static_cast<bool>(*program->descriptorSets[2].setLayout));
     EXPECT_FALSE(static_cast<bool>(*program->descriptorSets[3].setLayout));
 }
 
 TEST_F(VulkanFixture, ShaderProgram_pushConstants_reflectedCorrectly)
 {
-    auto vert = Shader::create(VulkanDevice, Shader::ShadingStage::eVertex,   gVertexShaderPushConstants);
-    auto frag = Shader::create(VulkanDevice, Shader::ShadingStage::eFragment, gMinimalFragmentShader);
+    auto vert =
+        Shader::create(VulkanDevice, Shader::ShadingStage::eVertex, gVertexShaderPushConstants);
+    auto frag =
+        Shader::create(VulkanDevice, Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
     std::shared_ptr<ShaderProgram> program;
-    ASSERT_NO_THROW(program = ShaderProgram::create({.vertex   = {.shader = vert},
-                                                     .fragment = {.shader = frag}}));
+    ASSERT_NO_THROW(program = ShaderProgram::create(
+                        {.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
 
     ASSERT_EQ(program->pushConstants.ranges.size(), 1u);
     EXPECT_EQ(program->pushConstants.ranges[0].stageFlags, vk::ShaderStageFlagBits::eVertex);
@@ -228,20 +234,21 @@ TEST_F(VulkanValidationFixture, ShaderProgram_makePipelineLayout_gapFilledCorrec
     if (!VulkanDevice)
         GTEST_SKIP() << "VK_LAYER_KHRONOS_validation or VK_EXT_debug_utils not available";
 
-    auto vert = Shader::create(VulkanDevice, Shader::ShadingStage::eVertex,   gVertexShaderSets02Gap);
-    auto frag = Shader::create(VulkanDevice, Shader::ShadingStage::eFragment, gMinimalFragmentShader);
+    auto vert = Shader::create(VulkanDevice, Shader::ShadingStage::eVertex, gVertexShaderSets02Gap);
+    auto frag =
+        Shader::create(VulkanDevice, Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
     std::shared_ptr<ShaderProgram> shaderProgram;
-    ASSERT_NO_THROW(shaderProgram = ShaderProgram::create({.vertex   = {.shader = vert},
-                                                           .fragment = {.shader = frag}}));
+    ASSERT_NO_THROW(shaderProgram = ShaderProgram::create(
+                        {.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
 
-    auto renderPass = RenderPass::create(
-        VulkanDevice,
-        {{.format      = vk::Format::eR32G32B32A32Sfloat,
-          .loadOp      = vk::AttachmentLoadOp::eClear,
-          .storeOp     = vk::AttachmentStoreOp::eStore,
-          .finalLayout = vk::ImageLayout::eColorAttachmentOptimal}},
-        {});
+    auto renderPass =
+        RenderPass::create(VulkanDevice,
+                           {{.format      = vk::Format::eR32G32B32A32Sfloat,
+                             .loadOp      = vk::AttachmentLoadOp::eClear,
+                             .storeOp     = vk::AttachmentStoreOp::eStore,
+                             .finalLayout = vk::ImageLayout::eColorAttachmentOptimal}},
+                           {});
 
     ASSERT_NO_THROW({
         GraphicsPipeline pipeline{makeMinimalPipelineCreateInfo(

@@ -76,7 +76,7 @@ makeDevice(const vk::raii::PhysicalDevice& physicalDevice, const PhysicalDevice:
 {
     const auto availableExtensions = physicalDevice.enumerateDeviceExtensionProperties();
 
-    float priority = 0.0f;
+    float                                  priority = 0.0f;
     std::vector<vk::DeviceQueueCreateInfo> queueInfos;
     queueInfos.push_back({
         .queueFamilyIndex = infos.graphics.familyIndex,

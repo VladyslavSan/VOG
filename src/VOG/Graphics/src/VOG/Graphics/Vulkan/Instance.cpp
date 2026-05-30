@@ -111,12 +111,12 @@ makeInstance(const vk::raii::Context& context, const Instance::InstanceParameter
                                                          return std::strcmp(first, second) == 0;
                                                      });
     vk::InstanceCreateInfo      instanceCreateInfo{
-             .flags                   = vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR,
-             .pApplicationInfo        = &appInfo,
-             .enabledLayerCount       = static_cast<std::uint32_t>(layersAll.size()),
-             .ppEnabledLayerNames     = layersAll.data(),
-             .enabledExtensionCount   = static_cast<std::uint32_t>(extensionsAll.size()),
-             .ppEnabledExtensionNames = extensionsAll.data()};
+        .flags                   = vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR,
+        .pApplicationInfo        = &appInfo,
+        .enabledLayerCount       = static_cast<std::uint32_t>(layersAll.size()),
+        .ppEnabledLayerNames     = layersAll.data(),
+        .enabledExtensionCount   = static_cast<std::uint32_t>(extensionsAll.size()),
+        .ppEnabledExtensionNames = extensionsAll.data()};
 
     return {context, instanceCreateInfo};
 }
@@ -192,7 +192,9 @@ logExtensions(const std::vector<vk::ExtensionProperties>& extensions)
     spdlog::info("Available device extensions:");
     for (const auto& extension : extensions)
     {
-        spdlog::info("{}: specVersion={}", static_cast<std::string_view>(extension.extensionName), extension.specVersion);
+        spdlog::info("{}: specVersion={}",
+                     static_cast<std::string_view>(extension.extensionName),
+                     extension.specVersion);
     }
 }
 
@@ -227,7 +229,8 @@ makePhysicalDevice(const vk::raii::Instance& instance)
             {
                 const vk::PhysicalDeviceProperties& properties =
                     deviceProperties.get<vk::PhysicalDeviceProperties2>().properties;
-                spdlog::info("Device name: \"{}\"", static_cast<std::string_view>(properties.deviceName));
+                spdlog::info("Device name: \"{}\"",
+                             static_cast<std::string_view>(properties.deviceName));
 
                 logPhysicalDeviceProperties(properties);
                 logDescriptorIndexingProperties(

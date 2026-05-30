@@ -54,9 +54,9 @@ CommandBufferHandle::operator->() noexcept
 
 CommandBufferPool::CommandBufferPool(const DevicePtr& device)
     : mDevice{device}
-    , mVulkanPool{*mDevice,
-                  vk::CommandPoolCreateInfo{.queueFamilyIndex =
-                                                mDevice->queueInfos.graphics.familyIndex}}
+    , mVulkanPool{
+          *mDevice,
+          vk::CommandPoolCreateInfo{.queueFamilyIndex = mDevice->queueInfos.graphics.familyIndex}}
 {
 }
 

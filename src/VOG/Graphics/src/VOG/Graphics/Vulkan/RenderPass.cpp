@@ -5,7 +5,7 @@
 
 namespace VOG::Graphics::Vulkan
 {
-RenderPass::RenderPass(DevicePtr                  device,
+RenderPass::RenderPass(DevicePtr                      device,
                        const AttachmentsDescriptions& colorAttachments,
                        const AttachmentsDescription&  depthStencil)
     : vk::raii::RenderPass(nullptr)

@@ -13,11 +13,10 @@ FixNamespaceComments: true
 SortIncludes: "CaseSensitive"
 SortUsingDeclarations: true
 
-AlignAfterOpenBracket: Align
+AlignAfterOpenBracket: true
 AlignConsecutiveAssignments: Consecutive
 AlignConsecutiveBitFields: AcrossEmptyLinesAndComments
 AlignConsecutiveDeclarations: Consecutive
-#AlignConsecutiveDeclarations: AcrossEmptyLinesAndComments
 AlignEscapedNewlines: Right
 AlignOperands: AlignAfterOperator
 AlignTrailingComments: true
@@ -31,7 +30,8 @@ BreakConstructorInitializers: BeforeComma
 BreakStringLiterals: true
 
 # requires
-IndentRequires: true
+IndentRequiresClause: true
+IndentPPDirectives: BeforeHash
 
 #PackConstructorInitializers: Never
 

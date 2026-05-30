@@ -53,8 +53,10 @@ getType()
     }
     else
     {
-        []<bool flag = false>() { static_assert(flag, "Not supported type"); }
-        ();
+        []<bool flag = false>()
+        {
+            static_assert(flag, "Not supported type");
+        }();
     }
 }
 

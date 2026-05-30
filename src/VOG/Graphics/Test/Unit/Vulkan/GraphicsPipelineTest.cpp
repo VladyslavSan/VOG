@@ -69,12 +69,12 @@ TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
                                        .binding  = 0u,
                                        .format   = vk::Format::eR32G32B32A32Sfloat,
                                        .offset   = 16u}}},
-        .rasterizer     = {.cullMode = CullMode::eNone},
-        .viewportState  = {.viewportCount = 1u, .scissorCount = 1u},
-        .depthStencil   = {},
-        .blending       = {.attachments = {{.blendEnable    = 0u,
-                                            .colorWriteMask = ColorComponent::eR | ColorComponent::eG |
-                                                              ColorComponent::eB | ColorComponent::eA}}},
+        .rasterizer    = {.cullMode = CullMode::eNone},
+        .viewportState = {.viewportCount = 1u, .scissorCount = 1u},
+        .depthStencil  = {},
+        .blending = {.attachments = {{.blendEnable    = 0u,
+                                      .colorWriteMask = ColorComponent::eR | ColorComponent::eG |
+                                                        ColorComponent::eB | ColorComponent::eA}}},
         .multisample    = {},
         .dynamicStates  = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
         .pipelineLayout = *pipelineLayout,

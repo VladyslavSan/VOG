@@ -35,12 +35,14 @@ TimelineSemaphore::incrementCounter()
 {
     ++mCurrentValue;
 }
-TimelineSemaphore::operator WaitRequest() const
+TimelineSemaphore::
+operator WaitRequest() const
 {
     return {.semaphore = this, .value = mCurrentValue};
 }
 
-TimelineSemaphore::operator SignalRequest() const
+TimelineSemaphore::
+operator SignalRequest() const
 {
     return {.semaphore = this, .value = mCurrentValue};
 }

@@ -213,7 +213,8 @@ public:
                  std::same_as<T, StringType> || std::same_as<T, PointerType> ||
                  std::same_as<T, UnsafePointerType> || std::same_as<T, ObjectType> ||
                  std::same_as<T, ArrayType>)
-    inline bool holdsType() const
+    inline bool
+    holdsType() const
     {
         return isValid() && std::holds_alternative<T>(mValueHolder);
     }
@@ -223,7 +224,8 @@ public:
                  std::same_as<T, SignedInt> || std::same_as<T, UnsignedInt> ||
                  std::same_as<T, StringType> || std::same_as<T, PointerType> ||
                  std::same_as<T, UnsafePointerType>)
-    inline T getOr(U&& defaultValue) const
+    inline T
+    getOr(U&& defaultValue) const
     {
         const T* value = std::get_if<T>(&mValueHolder);
         return value != nullptr ? *value : static_cast<T>(std::forward<U>(defaultValue));
@@ -232,7 +234,8 @@ public:
     template <class T, class U>
         requires((std::is_unsigned_v<T> && !std::same_as<T, UnsignedInt>) ||
                  (std::is_signed_v<T> && !std::same_as<T, SignedInt>))
-    inline T getOr(U&& defaultValue) const
+    inline T
+    getOr(U&& defaultValue) const
     {
         if constexpr (std::is_unsigned_v<T>)
         {
@@ -281,7 +284,8 @@ public:
                  std::same_as<T, SignedInt> || std::same_as<T, UnsignedInt> ||
                  std::same_as<T, StringType> || std::same_as<T, PointerType> ||
                  std::same_as<T, UnsafePointerType>)
-    inline std::vector<T> getArrayOfType() const
+    inline std::vector<T>
+    getArrayOfType() const
     {
         const ArrayType* array = std::get_if<ArrayType>(&mValueHolder);
         if (array == nullptr)
