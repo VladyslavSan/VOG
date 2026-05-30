@@ -4,6 +4,7 @@
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 
 #include <array>
+#include <variant>
 
 namespace VOG::Graphics::Vulkan
 {

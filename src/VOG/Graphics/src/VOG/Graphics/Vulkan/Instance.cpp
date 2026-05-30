@@ -206,13 +206,18 @@ makePhysicalDevice(const vk::raii::Instance& instance)
 
     vk::raii::PhysicalDevices physicalDevices{instance};
 
-    spdlog::info("Available devices:");
-    for (std::size_t i = 0; i < physicalDevices.size(); ++i)
-    {
-        const auto& device     = physicalDevices[i];
-        const auto  properties = device.getProperties();
-        spdlog::info("[{}] {}", i, static_cast<std::string_view>(properties.deviceName));
-    }
+    std::call_once(sLogAvailableDevicesFlag,
+                   [&]
+                   {
+                       spdlog::info("Available devices:");
+                       for (std::size_t i = 0; i < physicalDevices.size(); ++i)
+                       {
+                           const auto& device     = physicalDevices[i];
+                           const auto  properties = device.getProperties();
+                           spdlog::info(
+                               "[{}] {}", i, static_cast<std::string_view>(properties.deviceName));
+                       }
+                   });
 
     vk::raii::PhysicalDevice physicalDevice = std::move(physicalDevices[0]);
 
@@ -225,7 +230,7 @@ makePhysicalDevice(const vk::raii::Instance& instance)
 
         std::call_once(
             sLogSelectedDeviceCapabilities,
-            [&]()
+            [&]
             {
                 const vk::PhysicalDeviceProperties& properties =
                     deviceProperties.get<vk::PhysicalDeviceProperties2>().properties;
