@@ -26,7 +26,7 @@ public:
     operator VmaAllocator() const;
 
     std::unique_ptr<Buffer> makeBuffer(const vk::BufferCreateInfo& createInfo,
-                                       const AllocationInfo&       allocationInfo);
+                                       const AllocationInfo&       allocationCreateInfo);
 
 public:
     const DevicePtr mDevice;

@@ -17,7 +17,7 @@ namespace VOG::Graphics::Vulkan
 namespace
 {
 
-constexpr TBuiltInResource kDefaultTBuiltInResource = {
+constexpr TBuiltInResource gDefaultTBuiltInResource = {
     .maxLights                                 = 32,
     .maxClipPlanes                             = 6,
     .maxTextureUnits                           = 32,
@@ -133,7 +133,7 @@ constexpr TBuiltInResource kDefaultTBuiltInResource = {
         .generalConstantMatrixVectorIndexing  = true,
     }};
 
-static EShLanguage
+EShLanguage
 convertShadingStage(const vk::ShaderStageFlagBits shader_type)
 {
     switch (shader_type)
@@ -210,7 +210,7 @@ compileGLSLShader(Shader::ShadingStage stage, const std::string& glslCode)
                         glslang::EShTargetLanguageVersion::EShTargetSpv_1_5);
 
     auto includer = glslang::TShader::ForbidIncluder{};
-    if (!shader.parse(&kDefaultTBuiltInResource,
+    if (!shader.parse(&gDefaultTBuiltInResource,
                       glslang::EShTargetClientVersion::EShTargetOpenGL_450,
                       false,
                       messagesFilter,

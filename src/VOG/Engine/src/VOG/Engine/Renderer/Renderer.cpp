@@ -314,7 +314,7 @@ Renderer::requestRenderChangeState(RenderJobState newState)
 }
 
 void
-Renderer::renderThreadMain(std::weak_ptr<Renderer> renderer)
+Renderer::renderThreadMain(const std::weak_ptr<Renderer>& renderer)
 {
     while (!boost::this_thread::interruption_requested())
     {

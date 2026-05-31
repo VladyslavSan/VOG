@@ -3,7 +3,7 @@
 namespace VOG::Math
 {
 Matrix4x4f
-calculateCameraMatrix(const Vector3f& position, const Vector3f& direction, const Vector3f& up)
+calculateCameraMatrix(const Vector3f& position, const Vector3f& direction, const Vector3f& upVec)
 {
     constexpr auto isNormalized = [](const Vector3f& vector)
     {
@@ -13,13 +13,13 @@ calculateCameraMatrix(const Vector3f& position, const Vector3f& direction, const
     };
 
     VOG_ASSERT(isNormalized(direction));
-    VOG_ASSERT(isNormalized(up));
+    VOG_ASSERT(isNormalized(upVec));
 
     // Uninitialized constructor, we fill all the values afterward.
     Matrix4x4f result;
 
-    result[0] = {glm::cross(up, direction), 0.0f};
-    result[1] = {up, 0.0f};
+    result[0] = {glm::cross(upVec, direction), 0.0f};
+    result[1] = {upVec, 0.0f};
     result[2] = {direction, 0.0f};
     result[3] = {position, 1.0f};
 
@@ -32,10 +32,11 @@ orthographicProjection(const Vector2f& position,
                        const float     zNear,
                        const float     zFar)
 {
-    Matrix4x4f result = {Vector4f{2.0f / viewportSize.x, 0.0f, 0.0f, 0.0f},
-                         Vector4f{0.0f, 2.0f / viewportSize.y, 0.0f, 0.0f},
+    constexpr float kTwo = 2.0f;
+    Matrix4x4f result = {Vector4f{kTwo / viewportSize.x, 0.0f, 0.0f, 0.0f},
+                         Vector4f{0.0f, kTwo / viewportSize.y, 0.0f, 0.0f},
                          Vector4f{0.0f, 0.0f, 1.0 / (zFar - zNear), 0.0f},
-                         Vector4f{-2.0f * position / viewportSize, -zNear / (zFar - zNear), 1.0f}};
+                         Vector4f{-kTwo * position / viewportSize, -zNear / (zFar - zNear), 1.0f}};
 
     return result;
 }

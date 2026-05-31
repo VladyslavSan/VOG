@@ -1,7 +1,6 @@
 Checks:          'clang-diagnostic-*,clang-analyzer-*,-*,readability-*,performance-*,-readability-uppercase-literal-suffix,-readability-convert-member-functions-to-static'
 WarningsAsErrors: ''
 HeaderFilterRegex: ''
-AnalyzeTemporaryDtors: false
 FormatStyle:     none
 CheckOptions:
   - key:             cert-oop54-cpp.WarnOnlyIfThisHasSuspiciousField

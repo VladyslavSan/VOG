@@ -65,7 +65,7 @@ public:
 
 protected:
     /// RenderThread run function
-    static void renderThreadMain(std::weak_ptr<Renderer> renderer);
+    static void renderThreadMain(const std::weak_ptr<Renderer>& renderer);
 
     ThreadType                  mRenderThread;
     std::atomic<RenderJobState> mCurrentState;

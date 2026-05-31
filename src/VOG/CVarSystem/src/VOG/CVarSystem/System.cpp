@@ -1,5 +1,6 @@
 #include <VOG/CVarSystem/System.hpp>
 
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <type_traits>
@@ -14,21 +15,21 @@ public:
     using std::vector<std::unique_ptr<VariableStorage<T>>>::vector;
 
     const T&
-    GetCurrent(std::uint32_t index)
+    getCurrent(std::uint32_t index)
     {
         return this->operator[](index)->current;
     };
 
     void
-    SetCurrent(const T& val, int32_t index)
+    setCurrent(const T& val, int32_t index)
     {
         this->operator[](index)->current = val;
     }
 
     auto
-    Add(const T& value, Parameter param)
+    add(const T& value, Parameter param)
     {
-        this->emplace_back(new VariableStorage<T>{value, value, param});
+        this->emplace_back(new VariableStorage<T>{value, value, std::move(param)});
         return this->size();
     }
 };
@@ -73,7 +74,10 @@ class SystemImpl final : public SystemInterface
 public:
     template <class T>
     auto
-    tryAdd(const std::string& name, T defaultValue, const std::string& description, Flags flags)
+    tryAdd(const std::string& name,
+           const T&           defaultValue,
+           const std::string& description,
+           Flags              flags)
     {
         auto emplaceResult = mVariables.try_emplace(name, VariableRecord{.type = getType<T>()});
         const bool addedNewVariable = emplaceResult.second;
@@ -88,7 +92,7 @@ public:
         {
             if (addedNewVariable)
             {
-                intVariables.Add(
+                intVariables.add(
                     defaultValue,
                     Parameter{.name = name, .description = description, .flags = flags});
 
@@ -102,7 +106,7 @@ public:
         {
             if (addedNewVariable)
             {
-                floatVariables.Add(
+                floatVariables.add(
                     defaultValue,
                     Parameter{.name = name, .description = description, .flags = flags});
 
@@ -116,7 +120,7 @@ public:
         {
             if (addedNewVariable)
             {
-                stringVariables.Add(
+                stringVariables.add(
                     defaultValue,
                     Parameter{.name = name, .description = description, .flags = flags});
 
@@ -177,10 +181,10 @@ protected:
     Array<std::string>                              stringVariables{};
 };
 
-static SystemImpl sSystem{};
+static SystemImpl gSystem{};
 SystemInterface*
 SystemInterface::get()
 {
-    return &sSystem;
+    return &gSystem;
 }
 } // namespace VOG::CVarSystem

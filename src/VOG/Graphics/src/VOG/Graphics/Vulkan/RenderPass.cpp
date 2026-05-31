@@ -9,7 +9,7 @@ RenderPass::RenderPass(DevicePtr                      device,
                        const AttachmentsDescriptions& colorAttachments,
                        const AttachmentsDescription&  depthStencil)
     : vk::raii::RenderPass(nullptr)
-    , mDevice{device}
+    , mDevice{std::move(device)}
     , mAttachmentDescriptions{colorAttachments.begin(), colorAttachments.end()}
     , mDepthStencilProvided{depthStencil.format != vk::Format::eUndefined}
 {
@@ -18,7 +18,7 @@ RenderPass::RenderPass(DevicePtr                      device,
         mAttachmentDescriptions.push_back(depthStencil);
     }
 
-    VOG_ASSERT(mAttachmentDescriptions.size() > 0);
+    VOG_ASSERT(!mAttachmentDescriptions.empty());
 
     std::array<vk::AttachmentReference, 4> attachmentReference;
 
@@ -43,12 +43,12 @@ RenderPass::RenderPass(DevicePtr                      device,
     }
 
     {
-        vk::RenderPassCreateInfo ci = {.attachmentCount = attachmentsCount,
-                                       .pAttachments    = mAttachmentDescriptions.data(),
-                                       .subpassCount    = 1,
-                                       .pSubpasses      = &subpass};
+        vk::RenderPassCreateInfo createInfo = {.attachmentCount = attachmentsCount,
+                                               .pAttachments    = mAttachmentDescriptions.data(),
+                                               .subpassCount    = 1,
+                                               .pSubpasses      = &subpass};
 
-        static_cast<vk::raii::RenderPass&>(*this) = {*device, ci};
+        static_cast<vk::raii::RenderPass&>(*this) = {*device, createInfo};
     }
 }
 
@@ -57,7 +57,9 @@ RenderPass::getRenderpassDescription() const
 {
     RenderpassDescription description;
 
-    for (std::size_t i = 0; i < mAttachmentDescriptions.size() - mDepthStencilProvided; ++i)
+    for (std::size_t i = 0;
+         i < mAttachmentDescriptions.size() - static_cast<std::size_t>(mDepthStencilProvided);
+         ++i)
     {
         description.colorAttachmentFormats.push_back(mAttachmentDescriptions[i].format);
     }

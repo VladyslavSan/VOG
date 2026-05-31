@@ -11,7 +11,7 @@
 namespace VOG::Math
 {
 Matrix4x4f
-calculateCameraMatrix(const Vector3f& position, const Vector3f& direction, const Vector3f& up);
+calculateCameraMatrix(const Vector3f& position, const Vector3f& direction, const Vector3f& upVec);
 
 Matrix4x4f orthographicProjection(const Vector2f& position,
                                   const Vector2f& viewportSize,
