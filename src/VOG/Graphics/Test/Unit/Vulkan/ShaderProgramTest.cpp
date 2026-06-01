@@ -58,7 +58,7 @@ makeMinimalPipelineCreateInfo(DevicePtr                 device,
                               const RenderPass&         renderPass,
                               const vk::PipelineLayout& layout)
 {
-    return {
+    return GraphicsPipeline::CreateInfo{
         .device        = device,
         .cache         = nullptr,
         .shading       = program,

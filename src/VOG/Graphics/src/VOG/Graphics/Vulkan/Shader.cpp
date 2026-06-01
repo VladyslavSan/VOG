@@ -258,7 +258,7 @@ attributeSpirVTypeToVulkanType(const spirv_cross::SPIRType& spirvType)
         throw std::runtime_error{"spirv_cross::SPIRType is not handled."};
     }
 
-    return {
+    return Shader::Reflection::BaseType{
         .type       = type,
         .components = static_cast<std::uint8_t>(spirvType.vecsize),
         .columns    = static_cast<std::uint8_t>(spirvType.columns),

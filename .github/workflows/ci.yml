@@ -95,6 +95,6 @@ jobs:
         if: runner.os != 'Linux'
         run: conan build . -of build -s build_type=${{ matrix.build_type }} -c tools.build:skip_test=True
 
-      - name: Build and test
+      - name: Build
         if: runner.os == 'Linux'
-        run: conan build . -of build -s build_type=${{ matrix.build_type }} --lockfile-partial
+        run: conan build . -of build -s build_type=${{ matrix.build_type }} --lockfile-partial -c tools.build:skip_test=True

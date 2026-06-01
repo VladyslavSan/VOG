@@ -33,7 +33,7 @@ CreateRenderSurface(const Instance&              instance,
 {
     std::shared_ptr<vk::raii::SurfaceKHR> surfaceHandle;
 
-#if defined(PLATFORM_VIDEO_WINDOWS)
+#ifdef PLATFORM_VIDEO_WINDOWS
     {
         void* windowHandle = std::bit_cast<void*>(surface.surfaceHandle);
         void* hinstance    = std::bit_cast<void*>(surface.additionalHandle);
@@ -52,7 +52,7 @@ CreateRenderSurface(const Instance&              instance,
     {
         if (surface.surfaceHandle != 0u)
         {
-    #if defined(TARGET_OS_MAC)
+    #ifdef TARGET_OS_MAC
             NSObject* object = (__bridge NSObject*)std::bit_cast<void*>(surface.surfaceHandle);
             NSView*   view   = nil;
             if ([object isKindOfClass:[NSWindow class]])

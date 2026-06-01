@@ -18,11 +18,13 @@ jobs:
 
       - name: Install clang-format
         run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update -q
-          sudo apt-get install -y clang-format-20
+          sudo apt-get install -y clang-format-22
 
       - name: Check formatting
         working-directory: ./code
         run: |
           find src -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' \) \
-            -print0 | xargs -0 clang-format-20 --dry-run --Werror
+            -print0 | xargs -0 clang-format-22 --dry-run --Werror

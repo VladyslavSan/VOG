@@ -38,3 +38,25 @@
 #endif
 
 #include <vulkan/vulkan_raii.hpp>
+
+#ifdef VK_USE_PLATFORM_XLIB_KHR
+    // X11/Xlib.h defines several macros that conflict with C++ identifiers
+    #ifdef None
+        #undef None
+    #endif
+    #ifdef Bool
+        #undef Bool
+    #endif
+    #ifdef True
+        #undef True
+    #endif
+    #ifdef False
+        #undef False
+    #endif
+    #ifdef Success
+        #undef Success
+    #endif
+    #ifdef Status
+        #undef Status
+    #endif
+#endif

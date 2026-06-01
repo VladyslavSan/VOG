@@ -17,7 +17,7 @@ SDLWindow::makeSurfaceHandles(const SDLWindow::Handle& window)
         return SDL_GetPointerProperty(props, name, default_value);
     };
 
-#if defined(SDL_PLATFORM_WINDOWS)
+#ifdef SDL_PLATFORM_WINDOWS
     {
         const auto hwnd      = propertyGetter(SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
         const auto hInstance = propertyGetter(SDL_PROP_WINDOW_WIN32_INSTANCE_POINTER, nullptr);
@@ -29,7 +29,7 @@ SDLWindow::makeSurfaceHandles(const SDLWindow::Handle& window)
     }
 #elif defined(SDL_PLATFORM_APPLE)
     void* windowHandle = propertyGetter(
-    #if defined(SDL_PLATFORM_MACOS)
+    #ifdef SDL_PLATFORM_MACOS
         SDL_PROP_WINDOW_COCOA_WINDOW_POINTER,
     #else
         SDL_PROP_WINDOW_UIKIT_WINDOW_POINTER

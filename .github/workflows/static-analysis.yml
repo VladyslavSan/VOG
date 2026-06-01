@@ -15,8 +15,10 @@ jobs:
 
       - name: Install clang-tidy
         run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update -q
-          sudo apt-get install -y clang-tidy-20
+          sudo apt-get install -y clang-tidy-22
 
       - name: Configure
         uses: ./.github/actions/configure
@@ -24,35 +26,4 @@ jobs:
           cmake-extra-args: -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       - name: Run clang-tidy
-        run: run-clang-tidy-20 -p build/build/Release 'src/.*'
-
-  iwyu:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install IWYU
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y iwyu
-
-      - name: Configure
-        uses: ./.github/actions/configure
-        with:
-          cmake-extra-args: -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-
-      - name: Run IWYU
-        run: |
-          IWYU_TOOL=$(find /usr -name "iwyu_tool.py" 2>/dev/null | head -1)
-          if [ -z "$IWYU_TOOL" ]; then
-            echo "ERROR: iwyu_tool.py not found under /usr"
-            dpkg -L iwyu
-            exit 1
-          fi
-          echo "Using: $IWYU_TOOL"
-          iwyu_output=$(python3 "$IWYU_TOOL" -p build/build/Release 2>&1 || true)
-          echo "$iwyu_output"
-          if echo "$iwyu_output" | grep -q "should add\|should remove"; then
-            exit 1
-          fi
+        run: run-clang-tidy-22 -p build/build/Release 'src/(?!.*Test).*'

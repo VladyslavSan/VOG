@@ -24,7 +24,7 @@ getInstanceRequiredExtensions()
     };
     // clang-format on
 
-#if defined(PLATFORM_VIDEO_WINDOWS)
+#ifdef PLATFORM_VIDEO_WINDOWS
     requiredExtensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
 #elif defined(PLATFORM_VIDEO_APPLE)
     requiredExtensions.push_back(VK_EXT_METAL_SURFACE_EXTENSION_NAME);
