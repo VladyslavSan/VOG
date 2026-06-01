@@ -44,7 +44,14 @@ jobs:
 
       - name: Run IWYU
         run: |
-          iwyu_output=$(iwyu_tool.py -p build/build/Release 2>&1)
+          IWYU_TOOL=$(find /usr -name "iwyu_tool.py" 2>/dev/null | head -1)
+          if [ -z "$IWYU_TOOL" ]; then
+            echo "ERROR: iwyu_tool.py not found under /usr"
+            dpkg -L iwyu
+            exit 1
+          fi
+          echo "Using: $IWYU_TOOL"
+          iwyu_output=$(python3 "$IWYU_TOOL" -p build/build/Release 2>&1 || true)
           echo "$iwyu_output"
           if echo "$iwyu_output" | grep -q "should add\|should remove"; then
             exit 1
