@@ -65,7 +65,8 @@ public:
 
 protected:
     /// RenderThread run function
-    static void renderThreadMain(std::weak_ptr<Renderer> renderer);
+    static void renderThreadMain(
+        std::weak_ptr<Renderer> renderer); // NOLINT(performance-unnecessary-value-param)
 
     ThreadType                  mRenderThread;
     std::atomic<RenderJobState> mCurrentState;

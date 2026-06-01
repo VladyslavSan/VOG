@@ -5,20 +5,20 @@
 #include <VOG/Graphics/Vulkan/Instance.hpp>
 
 #ifdef PLATFORM_VIDEO_WINDOWS
-#include <Windows.h>
+    #include <Windows.h>
 #endif
 
 #ifdef PLATFORM_APPLE_MACOS
-#import <AppKit/NSView.h>
-#import <AppKit/NSWindow.h>
+    #import <AppKit/NSView.h>
+    #import <AppKit/NSWindow.h>
 #endif
 
 #ifdef PLATFORM_APPLE_IOS
-#import <UIKit/UIWindow.h>
+    #import <UIKit/UIWindow.h>
 #endif
 
 #ifdef PLATFORM_VIDEO_APPLE
-#import <QuartzCore/CAMetalLayer.h>
+    #import <QuartzCore/CAMetalLayer.h>
 #endif
 
 #include <bit>
@@ -33,7 +33,7 @@ CreateRenderSurface(const Instance&              instance,
 {
     std::shared_ptr<vk::raii::SurfaceKHR> surfaceHandle;
 
-#if defined(PLATFORM_VIDEO_WINDOWS)
+#ifdef PLATFORM_VIDEO_WINDOWS
     {
         void* windowHandle = std::bit_cast<void*>(surface.surfaceHandle);
         void* hinstance    = std::bit_cast<void*>(surface.additionalHandle);
@@ -52,7 +52,7 @@ CreateRenderSurface(const Instance&              instance,
     {
         if (surface.surfaceHandle != 0u)
         {
-#if defined(TARGET_OS_MAC)
+    #ifdef TARGET_OS_MAC
             NSObject* object = (__bridge NSObject*)std::bit_cast<void*>(surface.surfaceHandle);
             NSView*   view   = nil;
             if ([object isKindOfClass:[NSWindow class]])
@@ -73,8 +73,8 @@ CreateRenderSurface(const Instance&              instance,
                 vk::MetalSurfaceCreateInfoEXT createInfo{.pLayer = (CAMetalLayer*)view.layer};
                 surfaceHandle = std::make_shared<vk::raii::SurfaceKHR>(instance, createInfo);
             }
-#elif defined(TARGET_OS_IPHONE)
-#endif
+    #elif defined(TARGET_OS_IPHONE)
+    #endif
         }
     }
 #endif

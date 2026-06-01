@@ -1,5 +1,3 @@
-cmake_minimum_required(VERSION 3.10.0)
-
 find_package(VulkanHeaders REQUIRED)
 find_package(VulkanMemoryAllocator REQUIRED)
 find_package(spirv-cross REQUIRED)
@@ -47,7 +45,7 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Vulkan/Device.hpp
             include/VOG/Graphics/Vulkan/Fence.hpp
             include/VOG/Graphics/Vulkan/FencePool.hpp
-            include/VOG/Graphics/Vulkan/Framebuffer.hpp
+            include/VOG/Graphics/Vulkan/FrameBuffer.hpp
             include/VOG/Graphics/Vulkan/GraphicsPipeline.hpp
             include/VOG/Graphics/Vulkan/Instance.hpp
             include/VOG/Graphics/Vulkan/Limits.hpp

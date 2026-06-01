@@ -3,8 +3,7 @@
 #include <VOG/Common/Assert.hpp>
 #include <VOG/Common/SurfaceHandle.hpp>
 
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_syswm.h>
+#include <SDL3/SDL.h>
 
 #include <memory>
 
@@ -29,35 +28,28 @@ class SDLWindow
     using Handle = std::unique_ptr<SDL_Window, void (*)(SDL_Window*)>;
 
 public:
-    static Common::SurfaceHandle makeSurfaceHandles(const SDL_SysWMinfo&);
+    static Common::SurfaceHandle makeSurfaceHandles(const SDLWindow::Handle& window);
 
-    SDLWindow(const char* title, int x, int y, int w, int h, Uint32 flags);
+    SDLWindow(const char* title, int w, int h, SDL_WindowFlags flags);
 
     Uint32 getWindowId() const;
-
-    const SDL_SysWMinfo& getWMInfo() const;
 
     const Common::SurfaceHandle& getSurfaceHandle() const;
 
 protected:
-    Handle        mWindowHandle;
-    Uint32        mWindowId;
-    SDL_SysWMinfo mWmInfo;
+    Handle mWindowHandle;
+    Uint32 mWindowId;
 
     Common::SurfaceHandle mSurfaceHandles;
 };
 
-inline SDLWindow::SDLWindow(const char* title, int x, int y, int w, int h, Uint32 flags)
-    : mWindowHandle{SDL_CreateWindow(title, x, y, w, h, flags), SDL_DestroyWindow}
+inline SDLWindow::SDLWindow(const char* title, int w, int h, const SDL_WindowFlags flags)
+    : mWindowHandle{SDL_CreateWindow(title, w, h, flags), SDL_DestroyWindow}
     , mWindowId{SDL_GetWindowID(mWindowHandle.get())}
 {
     VOG_ASSERT_MSG(mWindowHandle, "Window handle should not be null.");
 
-    SDL_VERSION(&mWmInfo.version);
-    VOG_ASSERT_MSG(SDL_GetWindowWMInfo(mWindowHandle.get(), &mWmInfo) == SDL_TRUE,
-                   "Failed to retrieve window info.");
-
-    mSurfaceHandles = SDLWindow::makeSurfaceHandles(mWmInfo);
+    mSurfaceHandles = SDLWindow::makeSurfaceHandles(mWindowHandle);
 }
 
 inline Uint32
@@ -66,11 +58,6 @@ SDLWindow::getWindowId() const
     return mWindowId;
 }
 
-inline const SDL_SysWMinfo&
-SDLWindow::getWMInfo() const
-{
-    return mWmInfo;
-}
 inline const Common::SurfaceHandle&
 SDLWindow::getSurfaceHandle() const
 {

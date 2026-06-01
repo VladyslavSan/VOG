@@ -26,7 +26,11 @@ CommandBuffer::CommandBuffer(vk::raii::CommandBuffer commandBuffer, CommandBuffe
 {
 }
 
-CommandBuffer::operator bool() const { return static_cast<bool>(**this); }
+CommandBuffer::
+operator bool() const
+{
+    return static_cast<bool>(**this);
+}
 
 void
 CommandBuffer::addBoundResource(const std::shared_ptr<void>& resource)

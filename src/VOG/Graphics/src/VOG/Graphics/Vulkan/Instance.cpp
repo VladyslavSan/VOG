@@ -24,7 +24,7 @@ getInstanceRequiredExtensions()
     };
     // clang-format on
 
-#if defined(PLATFORM_VIDEO_WINDOWS)
+#ifdef PLATFORM_VIDEO_WINDOWS
     requiredExtensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
 #elif defined(PLATFORM_VIDEO_APPLE)
     requiredExtensions.push_back(VK_EXT_METAL_SURFACE_EXTENSION_NAME);
@@ -111,12 +111,12 @@ makeInstance(const vk::raii::Context& context, const Instance::InstanceParameter
                                                          return std::strcmp(first, second) == 0;
                                                      });
     vk::InstanceCreateInfo      instanceCreateInfo{
-             .flags                   = vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR,
-             .pApplicationInfo        = &appInfo,
-             .enabledLayerCount       = static_cast<std::uint32_t>(layersAll.size()),
-             .ppEnabledLayerNames     = layersAll.data(),
-             .enabledExtensionCount   = static_cast<std::uint32_t>(extensionsAll.size()),
-             .ppEnabledExtensionNames = extensionsAll.data()};
+        .flags                   = vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR,
+        .pApplicationInfo        = &appInfo,
+        .enabledLayerCount       = static_cast<std::uint32_t>(layersAll.size()),
+        .ppEnabledLayerNames     = layersAll.data(),
+        .enabledExtensionCount   = static_cast<std::uint32_t>(extensionsAll.size()),
+        .ppEnabledExtensionNames = extensionsAll.data()};
 
     return {context, instanceCreateInfo};
 }
@@ -192,7 +192,9 @@ logExtensions(const std::vector<vk::ExtensionProperties>& extensions)
     spdlog::info("Available device extensions:");
     for (const auto& extension : extensions)
     {
-        spdlog::info("{}: specVersion={}", static_cast<std::string_view>(extension.extensionName), extension.specVersion);
+        spdlog::info("{}: specVersion={}",
+                     static_cast<std::string_view>(extension.extensionName),
+                     extension.specVersion);
     }
 }
 
@@ -204,13 +206,18 @@ makePhysicalDevice(const vk::raii::Instance& instance)
 
     vk::raii::PhysicalDevices physicalDevices{instance};
 
-    spdlog::info("Available devices:");
-    for (std::size_t i = 0; i < physicalDevices.size(); ++i)
-    {
-        const auto& device     = physicalDevices[i];
-        const auto  properties = device.getProperties();
-        spdlog::info("[{}] {}", i, static_cast<std::string_view>(properties.deviceName));
-    }
+    std::call_once(sLogAvailableDevicesFlag,
+                   [&]
+                   {
+                       spdlog::info("Available devices:");
+                       for (std::size_t i = 0; i < physicalDevices.size(); ++i)
+                       {
+                           const auto& device     = physicalDevices[i];
+                           const auto  properties = device.getProperties();
+                           spdlog::info(
+                               "[{}] {}", i, static_cast<std::string_view>(properties.deviceName));
+                       }
+                   });
 
     vk::raii::PhysicalDevice physicalDevice = std::move(physicalDevices[0]);
 
@@ -223,11 +230,12 @@ makePhysicalDevice(const vk::raii::Instance& instance)
 
         std::call_once(
             sLogSelectedDeviceCapabilities,
-            [&]()
+            [&]
             {
                 const vk::PhysicalDeviceProperties& properties =
                     deviceProperties.get<vk::PhysicalDeviceProperties2>().properties;
-                spdlog::info("Device name: \"{}\"", static_cast<std::string_view>(properties.deviceName));
+                spdlog::info("Device name: \"{}\"",
+                             static_cast<std::string_view>(properties.deviceName));
 
                 logPhysicalDeviceProperties(properties);
                 logDescriptorIndexingProperties(

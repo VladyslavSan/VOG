@@ -12,12 +12,12 @@ namespace po = boost::program_options;
 // prints the explanatory string of an exception. If the exception is nested,
 // recurses to print the explanatory of the exception it holds
 void
-print_exception(std::ostream& stream, const std::exception& e, std::uint8_t level = 0)
+printException(std::ostream& stream, const std::exception& exception, std::uint8_t level = 0)
 {
     // Exception message can be multiline.
-    const auto errorString = std::string_view{e.what()};
+    const auto errorString = std::string_view{exception.what()};
 
-    stream << std::string(4u * level, ' ') << "Exception: " << typeid(e).name() << std::endl;
+    stream << std::string(4u * level, ' ') << "Exception: " << typeid(exception).name() << '\n';
 
     std::size_t lastIndex = 0u;
     for (;;)
@@ -26,7 +26,7 @@ print_exception(std::ostream& stream, const std::exception& e, std::uint8_t leve
         std::size_t end    = idx - lastIndex;
         auto        substr = errorString.substr(lastIndex, end);
 
-        stream << std::string(4u * level, ' ') << substr << std::endl;
+        stream << std::string(4u * level, ' ') << substr << '\n';
         lastIndex = idx + 1;
 
         if (idx == std::string_view::npos || lastIndex >= errorString.size())
@@ -37,11 +37,11 @@ print_exception(std::ostream& stream, const std::exception& e, std::uint8_t leve
 
     try
     {
-        std::rethrow_if_nested(e);
+        std::rethrow_if_nested(exception);
     }
     catch (const std::exception& nestedException)
     {
-        print_exception(stream, nestedException, level + 1);
+        printException(stream, nestedException, level + 1);
     }
     catch (...)
     {
@@ -58,37 +58,40 @@ main(int argc, const char** argv)
                                   po::value<std::string>()->required(),
                                   "Path to the shader directory containing config.json.");
 
-        po::variables_map vm;
+        constexpr int kWindowWidth  = 1280;
+        constexpr int kWindowHeight = 720;
+
+        po::variables_map varMap;
         try
         {
-            po::store(po::parse_command_line(argc, argv, description), vm);
+            po::store(po::parse_command_line(argc, argv, description), varMap);
 
             // Required check happens here
-            po::notify(vm);
+            po::notify(varMap);
         }
-        catch (const po::required_option& e)
+        catch (const po::required_option& ex)
         {
-            std::cerr << "Error: " << e.what() << std::endl;
+            std::cerr << "Error: " << ex.what() << '\n';
             return 1;
         }
-        catch (const po::error& e)
+        catch (const po::error& ex)
         {
-            std::cerr << "Error: " << e.what() << std::endl;
+            std::cerr << "Error: " << ex.what() << '\n';
             return 1;
         }
 
         VOG::Application::Application app({
             .title             = "My window",
-            .width             = 1280,
-            .height            = 720,
-            .shaderStoragePath = vm["shader-storage-path"].as<std::string>(),
+            .width             = kWindowWidth,
+            .height            = kWindowHeight,
+            .shaderStoragePath = varMap["shader-storage-path"].as<std::string>(),
         });
 
         app.run();
     }
     catch (const std::exception& ex)
     {
-        print_exception(std::cerr, ex);
+        printException(std::cerr, ex);
     }
 
     return 0;

@@ -23,7 +23,7 @@ makeAttachmentsVector(Framebuffer::ColorAttachmentPtrs colorAttachments,
 
     if (depthStencilAttachment)
     {
-        result.push_back(depthStencilAttachment);
+        result.push_back(std::move(depthStencilAttachment));
     }
 
     return result;
@@ -35,7 +35,9 @@ makeRenderpassDescription(const bool                         hasDepthStencilAtta
 {
     RenderpassDescription description;
 
-    for (std::size_t i = 0; i < attachments.size() - hasDepthStencilAttachment; ++i)
+    const auto colorAttachmentBount =
+        attachments.size() - static_cast<std::size_t>(hasDepthStencilAttachment);
+    for (std::size_t i = 0; i < colorAttachmentBount; ++i)
     {
         description.colorAttachmentFormats.push_back(attachments[i]->getFormat());
     }
@@ -93,7 +95,7 @@ Framebuffer::Framebuffer(DevicePtr           device,
         mAttachments,
         [&imageViews](vk::ImageView view)
         {
-            imageViews.push_back(std::move(view));
+            imageViews.push_back(view);
         },
         [](const auto& attachmentPtr)
         {

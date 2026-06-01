@@ -124,11 +124,11 @@ Renderer::render()
                            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                            .image               = mSwapchain->getImage(),
                            .subresourceRange    = {
-                                  .aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                  .baseMipLevel   = 0,
-                                  .levelCount     = VK_REMAINING_ARRAY_LAYERS,
-                                  .baseArrayLayer = 0,
-                                  .layerCount     = VK_REMAINING_ARRAY_LAYERS,
+                               .aspectMask     = vk::ImageAspectFlagBits::eColor,
+                               .baseMipLevel   = 0,
+                               .levelCount     = VK_REMAINING_ARRAY_LAYERS,
+                               .baseArrayLayer = 0,
+                               .layerCount     = VK_REMAINING_ARRAY_LAYERS,
                            }}});
 
     const double time = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -164,10 +164,10 @@ Renderer::render()
             .shading        = program,
             .vertexLayout   = {.bindingDescription =
                                    {
-                                     {.binding   = 0u,
+                                       {.binding   = 0u,
                                         .stride    = sizeof(VertexData),
                                         .inputRate = vk::VertexInputRate::eVertex},
-                                 },
+                                   },
                                .attributeDescription = {{.location = 0u,
                                                          .binding  = 0u,
                                                          .format   = vk::Format::eR32G32Sfloat,
@@ -214,7 +214,7 @@ Renderer::render()
 
         const Vector3f objectPosition = {0.0, 0.0, 20.0};
         const float    factor         = 300.0;
-        const auto     model          = glm::translate(objectPosition) *
+        const auto model = glm::translate(objectPosition) *
                            glm::scale(Vector3f{1.0 * factor, 1.0 * factor, 1.0}) *
                            glm::rotate(glm::radians(timeFactor * 90.0f), Vector3f{0.0, 0.0, 1.0});
 
@@ -255,11 +255,11 @@ Renderer::render()
                            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                            .image               = mSwapchain->getImage(),
                            .subresourceRange    = {
-                                  .aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                  .baseMipLevel   = 0,
-                                  .levelCount     = VK_REMAINING_ARRAY_LAYERS,
-                                  .baseArrayLayer = 0,
-                                  .layerCount     = VK_REMAINING_ARRAY_LAYERS,
+                               .aspectMask     = vk::ImageAspectFlagBits::eColor,
+                               .baseMipLevel   = 0,
+                               .levelCount     = VK_REMAINING_ARRAY_LAYERS,
+                               .baseArrayLayer = 0,
+                               .layerCount     = VK_REMAINING_ARRAY_LAYERS,
                            }}});
 
     commandBuffer->end();
@@ -314,7 +314,8 @@ Renderer::requestRenderChangeState(RenderJobState newState)
 }
 
 void
-Renderer::renderThreadMain(std::weak_ptr<Renderer> renderer)
+Renderer::renderThreadMain(
+    std::weak_ptr<Renderer> renderer) // NOLINT(performance-unnecessary-value-param)
 {
     while (!boost::this_thread::interruption_requested())
     {

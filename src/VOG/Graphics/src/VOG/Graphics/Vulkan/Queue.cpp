@@ -11,23 +11,23 @@ namespace
 {
 template <std::ranges::range R>
 auto
-toVector(R&& r)
+toVector(R&& range)
 {
-    std::vector<std::ranges::range_value_t<R>> v;
+    std::vector<std::ranges::range_value_t<R>> vec;
 
     // if we can get a size, reserve that much
-    if constexpr (requires { std::ranges::size(r); })
+    if constexpr (requires { std::ranges::size(range); })
     {
-        v.reserve(std::ranges::size(r));
+        vec.reserve(std::ranges::size(range));
     }
 
     // push all the elements
-    for (auto&& e : r)
+    for (auto&& elem : range)
     {
-        v.push_back(static_cast<decltype(e)&&>(e));
+        vec.push_back(static_cast<decltype(elem)&&>(elem));
     }
 
-    return v;
+    return vec;
 }
 } // namespace
 Queue::Queue(const Device&             _device,

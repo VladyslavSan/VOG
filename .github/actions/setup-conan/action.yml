@@ -1,0 +1,42 @@
+name: Set up Conan
+description: Install Python and Conan 2, then detect the default profile.
+
+inputs:
+  python-version:
+    description: Python version to install.
+    required: false
+    default: "3.12"
+  cppstd:
+    description: C++ standard to enforce in the Conan profile. Leave empty to skip patching.
+    required: false
+    default: "20"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install Conan
+      shell: bash
+      run: pip install conan
+
+    - name: Detect Conan profile
+      shell: bash
+      run: |
+        conan profile detect --force
+        echo "CONAN_PROFILE=$HOME/.conan2/profiles/default" >> "$GITHUB_ENV"
+        cat $CONAN_PROFILE
+
+    - name: Patch cppstd in Conan profile if needed
+      if: inputs.cppstd != ''
+      shell: bash
+      run: |
+        if ! grep -q "compiler.cppstd=${{ inputs.cppstd }}" "$CONAN_PROFILE"; then
+          echo "Patching compiler.cppstd to ${{ inputs.cppstd }}"
+          sed 's/compiler\.cppstd=.*/compiler.cppstd=${{ inputs.cppstd }}/' "$CONAN_PROFILE" > /tmp/conan_profile
+          mv /tmp/conan_profile "$CONAN_PROFILE"
+        fi
+        cat "$CONAN_PROFILE"

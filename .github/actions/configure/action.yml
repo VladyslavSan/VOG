@@ -1,0 +1,28 @@
+name: Configure
+description: Set up Conan, install dependencies and configure CMake.
+
+inputs:
+  build-type:
+    description: CMake build type (Debug or Release).
+    required: false
+    default: "Release"
+  cmake-extra-args:
+    description: Extra arguments to pass to cmake configure.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Conan
+      uses: ./.github/actions/setup-conan
+
+    - name: Warm Conan cache
+      uses: ./.github/actions/conan-cache
+      with:
+        build-type: ${{ inputs.build-type }}
+        warm: "true"
+
+    - name: Configure
+      shell: bash
+      run: cmake --preset=${{ inputs.build-type == 'Debug' && 'debug' || 'release' }} ${{ inputs.cmake-extra-args }}

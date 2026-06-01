@@ -98,9 +98,9 @@ protected:
     /**
      * Return command buffer back to the pool.
      *
-     * @param submission Command buffer to return to the pool.
+     * @param commandBuffer Command buffer to return to the pool.
      */
-    void returnCommandBufferToPool(CommandBuffer submission);
+    void returnCommandBufferToPool(CommandBuffer commandBuffer);
 
 protected:
     DevicePtr             mDevice;

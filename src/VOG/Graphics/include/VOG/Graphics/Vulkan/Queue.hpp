@@ -33,11 +33,7 @@ public:
         std::vector<vk::Semaphore>       signalSemaphores;
     };
 
-    struct Submission
-    {
-    };
-
-    Submission
+    void
     submit(const Common::ContiguousSizedRangeOf<vk::Semaphore> auto&          waitSemaphores,
            const Common::ContiguousSizedRangeOf<vk::PipelineStageFlags> auto& waitDstStageMasks,
            Common::ContiguousSizedRangeOf<CommandBufferHandle> auto           commandBuffers,

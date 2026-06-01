@@ -3,12 +3,12 @@
 #include <VOG/Common/Assert.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 
-#include <fmt/format.h>
 #include <glslang/Include/ResourceLimits.h>
 #include <glslang/Public/ShaderLang.h>
 #include <glslang/SPIRV/GlslangToSpv.h>
 #include <spirv_reflect.hpp>
 
+#include <format>
 #include <ranges>
 #include <utility>
 
@@ -17,7 +17,7 @@ namespace VOG::Graphics::Vulkan
 namespace
 {
 
-constexpr TBuiltInResource kDefaultTBuiltInResource = {
+constexpr TBuiltInResource gDefaultTBuiltInResource = {
     .maxLights                                 = 32,
     .maxClipPlanes                             = 6,
     .maxTextureUnits                           = 32,
@@ -133,7 +133,7 @@ constexpr TBuiltInResource kDefaultTBuiltInResource = {
         .generalConstantMatrixVectorIndexing  = true,
     }};
 
-static EShLanguage
+EShLanguage
 convertShadingStage(const vk::ShaderStageFlagBits shader_type)
 {
     switch (shader_type)
@@ -210,14 +210,14 @@ compileGLSLShader(Shader::ShadingStage stage, const std::string& glslCode)
                         glslang::EShTargetLanguageVersion::EShTargetSpv_1_5);
 
     auto includer = glslang::TShader::ForbidIncluder{};
-    if (!shader.parse(&kDefaultTBuiltInResource,
+    if (!shader.parse(&gDefaultTBuiltInResource,
                       glslang::EShTargetClientVersion::EShTargetOpenGL_450,
                       false,
                       messagesFilter,
                       includer))
     {
         throw Shader::CompilationError{
-            fmt::format("Shader info log:\n{}"
+            std::format("Shader info log:\n{}"
                         "Debug log:\n{}",
                         shader.getInfoLog(),
                         shader.getInfoDebugLog())};
@@ -227,7 +227,7 @@ compileGLSLShader(Shader::ShadingStage stage, const std::string& glslCode)
     program.addShader(&shader);
     if (!program.link(messagesFilter))
     {
-        throw Shader::CompilationError{fmt::format("Shader info log:\n{}", program.getInfoLog())};
+        throw Shader::CompilationError{std::format("Shader info log:\n{}", program.getInfoLog())};
     }
 
     std::vector<std::uint32_t> spirv{};
@@ -258,7 +258,7 @@ attributeSpirVTypeToVulkanType(const spirv_cross::SPIRType& spirvType)
         throw std::runtime_error{"spirv_cross::SPIRType is not handled."};
     }
 
-    return {
+    return Shader::Reflection::BaseType{
         .type       = type,
         .components = static_cast<std::uint8_t>(spirvType.vecsize),
         .columns    = static_cast<std::uint8_t>(spirvType.columns),
@@ -338,13 +338,13 @@ checkResourceLocation(const Shader::Reflection::ResourceLocation& location)
 {
     if (location.set > Limits::gMaxNumDescriptorSets)
     {
-        throw Shader::ShaderError{fmt::format("Resource set \"{}\" exceeds the limit of \"{}\"",
+        throw Shader::ShaderError{std::format("Resource set \"{}\" exceeds the limit of \"{}\"",
                                               location.set,
                                               Limits::gMaxNumDescriptorSets)};
     }
     if (location.binding > Limits::gMaxNumDescriptorBindings)
     {
-        throw Shader::ShaderError{fmt::format("Resource binding \"{}\" exceeds the limit of \"{}\"",
+        throw Shader::ShaderError{std::format("Resource binding \"{}\" exceeds the limit of \"{}\"",
                                               location.binding,
                                               Limits::gMaxNumDescriptorBindings)};
     }

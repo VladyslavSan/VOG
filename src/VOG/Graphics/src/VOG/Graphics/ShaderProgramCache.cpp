@@ -4,10 +4,10 @@
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 
-#include <fmt/format.h>
 #include <glslang/Public/ShaderLang.h>
 #include <nlohmann/json.hpp>
 
+#include <format>
 #include <fstream>
 
 namespace VOG::Graphics
@@ -110,7 +110,7 @@ ShaderProgramCache::ShaderProgramCache(const Vulkan::DevicePtr&     device,
             }
             catch (const std::exception&)
             {
-                std::throw_with_nested(std::runtime_error{fmt::format(
+                std::throw_with_nested(std::runtime_error{std::format(
                     "Failed to compile shader \"{}\" ({})", shaderName, stagePath.string())});
             }
             switch (shadingStage)

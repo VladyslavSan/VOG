@@ -1,10 +1,9 @@
 #include "VOG/Application/Application.hpp"
 
 #include <VOG/Common/JSONContainer.hpp>
-#include <VOG/Application/SDL2.hpp>
+#include <VOG/Application/SDL.hpp>
 #include <VOG/Engine/Renderer/Renderer.hpp>
 
-#include <SDL2/SDL_vulkan.h>
 #include <spdlog/spdlog.h>
 
 #include <filesystem>
@@ -31,12 +30,8 @@ validateConfig(const Application::ApplicationConfig& config)
 
 Application::Application(ApplicationConfig config)
     : mSDLHandle{std::make_unique<SDLHandle>(SDL_INIT_EVENTS)}
-    , mWindow{std::make_shared<SDLWindow>(config.title.c_str(),
-                                          SDL_WINDOWPOS_CENTERED,
-                                          SDL_WINDOWPOS_CENTERED,
-                                          static_cast<int>(config.width),
-                                          static_cast<int>(config.height),
-                                          SDL_WINDOW_SHOWN)}
+    , mWindow{std::make_shared<SDLWindow>(
+          config.title.c_str(), static_cast<int>(config.width), static_cast<int>(config.height), 0)}
 {
     validateConfig(config);
 
@@ -64,9 +59,8 @@ Application::run()
     while (true)
     {
         SDL_Event  event;
-        const bool waitEventSuccess = SDL_WaitEventTimeout(&event, 100) == SDL_TRUE;
-        if (waitEventSuccess && event.type == SDL_WINDOWEVENT &&
-            event.window.event == SDL_WINDOWEVENT_CLOSE)
+        const bool waitEventSuccess = SDL_WaitEventTimeout(&event, 100);
+        if (waitEventSuccess && event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED)
         {
             mRenderer->requestRenderChangeState(VOG::Engine::Renderer::RenderJobState::eInactive);
             mRenderer.reset();

@@ -16,7 +16,7 @@ namespace
 constexpr std::uint64_t gAcquireTimeout = 10000u;
 
 std::uint32_t
-FindPresentQueueFamilyIndex(const Device& device, const vk::raii::SurfaceKHR& surface)
+findPresentQueueFamilyIndex(const Device& device, const vk::raii::SurfaceKHR& surface)
 {
     {
 
@@ -58,7 +58,7 @@ Swapchain::Swapchain(DevicePtr device, const SwapchainParameters& parameters)
     : AttachmentInterface{AttachmentUsage::eColor, vk::Format::eUndefined, {}, SampleCount::e1}
     , mDevice{std::move(device)}
     , mSurface{CreateRenderSurface(*mDevice->instance, parameters.surface, true)}
-    , mPresentQueueFamilyIndex{FindPresentQueueFamilyIndex(*mDevice, *mSurface)}
+    , mPresentQueueFamilyIndex{findPresentQueueFamilyIndex(*mDevice, *mSurface)}
     , mPresentQueueIsSameToGraphicsQueue{mPresentQueueFamilyIndex ==
                                          mDevice->queueInfos.graphics.familyIndex}
     , mPresentQueue{*mDevice, mPresentQueueFamilyIndex, 0}

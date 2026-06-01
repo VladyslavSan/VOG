@@ -4,6 +4,7 @@
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 
 #include <array>
+#include <variant>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -75,7 +76,8 @@ public: // use create()
     ShaderProgram(ShadingStagesChecked stages);
 
 private:
-    const DevicePtr                device;
+    const DevicePtr device;
+
 public:
     const ShadingStages            stages;
     const DescriptorSets           descriptorSets;

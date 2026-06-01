@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.os }} / ${{ matrix.build_type }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-26, windows-2025-vs2026]
+        build_type: [Debug, Release]
+        exclude:
+          - build_type: Debug
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install software Vulkan renderer (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
+
+      - name: Install MoltenVK (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install molten-vk vulkan-loader
+          echo "VK_ICD_FILENAMES=$(brew --prefix molten-vk)/share/vulkan/icd.d/MoltenVK_icd.json" >> "$GITHUB_ENV"
+
+      - name: Set up Conan
+        uses: ./.github/actions/setup-conan
+
+      - name: Install dependencies
+        uses: ./.github/actions/conan-cache
+        with:
+          build-type: ${{ matrix.build_type }}
+          warm: "true"
+
+      - name: Build
+        if: runner.os != 'Linux'
+        run: conan build . -of build -s build_type=${{ matrix.build_type }} -c tools.build:skip_test=True
+
+      - name: Build
+        if: runner.os == 'Linux'
+        run: conan build . -of build -s build_type=${{ matrix.build_type }} --lockfile-partial -c tools.build:skip_test=True
