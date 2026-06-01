@@ -37,16 +37,17 @@ runs:
       shell: bash
       run: |
         conan install . -of build --build=missing -s build_type=${{ inputs.build-type }} \
-          --lockfile=${{ inputs.lockfile }} --lockfile-partial \
+          --lockfile-partial \
           -c tools.system.package_manager:mode=install \
-          -c tools.system.package_manager:sudo=True
+          -c tools.system.package_manager:sudo=True \
+          -c tools.cmake.cmaketoolchain:generator=Ninja
 
     - name: Install dependencies
       if: inputs.warm == 'true' && runner.os != 'Linux'
       shell: bash
-      run: >-
-        conan install . -of build --build=missing -s build_type=${{ inputs.build-type }}
-        --lockfile=${{ inputs.lockfile }} --lockfile-partial
+      run: |
+        conan install . -of build --build=missing -s build_type=${{ inputs.build-type }} \
+          -c tools.cmake.cmaketoolchain:generator=Ninja
 
     - name: Save Conan cache
       if: inputs.warm == 'true' && steps.conan-cache.outputs.cache-hit != 'true'

@@ -23,20 +23,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
       - name: Set up MSVC environment
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Install Conan
-        run: pip install conan
-
-      - name: Detect Conan profile
-        run: conan profile detect --force
 
       - name: Install software Vulkan renderer (Linux)
         if: runner.os == 'Linux'
@@ -50,46 +39,14 @@ jobs:
           brew install molten-vk vulkan-loader
           echo "VK_ICD_FILENAMES=$(brew --prefix molten-vk)/share/vulkan/icd.d/MoltenVK_icd.json" >> "$GITHUB_ENV"
 
-      - name: Restore Conan cache
-        id: conan-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.conan2
-          key: conan-${{ runner.os }}-${{ matrix.build_type }}-${{ hashFiles('conan.lock') }}
-          restore-keys: |
-            conan-${{ runner.os }}-${{ matrix.build_type }}-
-            conan-${{ runner.os }}-
-            
-      - name: Fix C++ standard in Conan profile
-        shell: bash
-        run: |
-          sed 's/compiler\.cppstd=.*/compiler.cppstd=20/' ~/.conan2/profiles/default > /tmp/conan_profile
-          cat /tmp/conan_profile
-          mv /tmp/conan_profile ~/.conan2/profiles/default
+      - name: Set up Conan
+        uses: ./.github/actions/setup-conan
 
       - name: Install dependencies
-        if: runner.os != 'Linux'
-        shell: bash
-        run: |
-          cat ~/.conan2/profiles/default
-          conan install . -of build --build=missing -s build_type=${{ matrix.build_type }} \
-            -c tools.cmake.cmaketoolchain:generator=Ninja
-
-      - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          cat ~/.conan2/profiles/default
-          conan install . -of build --build=missing -s build_type=${{ matrix.build_type }} --lockfile-partial \
-            -c tools.system.package_manager:mode=install \
-            -c tools.system.package_manager:sudo=True \
-            -c tools.cmake.cmaketoolchain:generator=Ninja
-
-      - name: Save Conan cache
-        if: steps.conan-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: ./.github/actions/conan-cache
         with:
-          path: ~/.conan2
-          key: conan-${{ runner.os }}-${{ matrix.build_type }}-${{ hashFiles('conan.lock') }}
+          build-type: ${{ matrix.build_type }}
+          warm: "true"
 
       - name: Build
         if: runner.os != 'Linux'
