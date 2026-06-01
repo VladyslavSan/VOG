@@ -20,7 +20,7 @@ class VOGConan(ConanFile):
         self.requires("boost/1.91.0")
         self.requires("glm/0.9.9.8")
 
-        self.requires("sdl/2.26.5")
+        self.requires("sdl/3.4.8")
         self.requires("spdlog/1.15.3")
 
         # Private dependencies
@@ -46,6 +46,9 @@ class VOGConan(ConanFile):
         self.options["spirv-tools"].build_executables = False
         self.options["spirv-cross"].build_executable = False
         self.options["glslang"].build_executables = False
+
+        self.options["sdl"].opengl = False
+        self.options["sdl"].opengles = False
 
     def layout(self):
         cmake_layout(self)

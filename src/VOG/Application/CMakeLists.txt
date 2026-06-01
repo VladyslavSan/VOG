@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10.0)
 
-find_package(SDL2 REQUIRED)
+find_package(SDL3 REQUIRED)
 find_package(Boost COMPONENTS headers program_options process REQUIRED)
 find_package(spdlog COMPONENTS)
 
@@ -21,14 +21,14 @@ target_sources(Application
         include/VOG/Application/Application.hpp
     PRIVATE
         src/VOG/Application/Application.cpp
-        src/VOG/Application/SDL2.hpp
-        src/VOG/Application/SDL2.cpp
+        src/VOG/Application/SDL.hpp
+        src/VOG/Application/SDL.cpp
 )
 
 target_link_libraries(Application
     PUBLIC
         ${PROJECT_NAME}::Engine
-        SDL2::SDL2
+        sdl::sdl
     PRIVATE
         Boost::headers
         Boost::program_options
@@ -38,7 +38,7 @@ target_link_libraries(Application
 
 if(APPLE)
     # For apple compile this file as an obj-c file.
-    set_property(SOURCE src/VOG/Application/SDL2.cpp PROPERTY LANGUAGE OBJCXX)
+    set_property(SOURCE src/VOG/Application/SDL.cpp PROPERTY LANGUAGE OBJCXX)
 endif()
 
 
