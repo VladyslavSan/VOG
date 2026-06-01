@@ -1,5 +1,3 @@
-cmake_minimum_required(VERSION 3.10.0)
-
 find_package(SDL3 REQUIRED)
 find_package(Boost COMPONENTS headers program_options process REQUIRED)
 find_package(spdlog COMPONENTS)

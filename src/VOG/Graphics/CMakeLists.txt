@@ -1,5 +1,3 @@
-cmake_minimum_required(VERSION 3.10.0)
-
 find_package(VulkanHeaders REQUIRED)
 find_package(VulkanMemoryAllocator REQUIRED)
 find_package(spirv-cross REQUIRED)

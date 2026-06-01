@@ -1,5 +1,3 @@
-cmake_minimum_required(VERSION 3.10.0)
-
 find_package(Boost COMPONENTS thread REQUIRED)
 
 add_library(Engine)
