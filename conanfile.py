@@ -41,14 +41,14 @@ class VOGConan(ConanFile):
         check_min_cppstd(self, 20, gnu_extensions=False)
 
     def configure(self):
-        self.settings.compiler.cppstd = 20
-
         self.options["spirv-tools"].build_executables = False
         self.options["spirv-cross"].build_executable = False
         self.options["glslang"].build_executables = False
 
         self.options["sdl"].opengl = False
         self.options["sdl"].opengles = False
+
+        self.options["boost"].without_cobalt = True
 
     def layout(self):
         cmake_layout(self)
@@ -63,11 +63,11 @@ class VOGConan(ConanFile):
 
     def build(self):
         cmake = CMake(self)
+        cmake.configure()
         cmake.build()
 
-    def test(self):
-        cmake = CMake(self)
-        cmake.test()
+        if not self.conf.get("tools.build:skip_test", default=False):
+            cmake.test()
 
     def package(self):
         cmake = CMake(self)

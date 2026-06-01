@@ -13,6 +13,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: code
 
       - name: Install clang-format
         run: |
@@ -20,6 +22,7 @@ jobs:
           sudo apt-get install -y clang-format-20
 
       - name: Check formatting
+        working-directory: ./code
         run: |
           find src -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' \) \
             -print0 | xargs -0 clang-format-20 --dry-run --Werror

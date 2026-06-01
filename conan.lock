@@ -1,0 +1,30 @@
+{
+    "version": "0.5",
+    "requires": [
+        "zlib/1.3.2#1cb806da49011867778ffb6ac7190fcb%1777558780.503",
+        "vulkan-memory-allocator/3.3.0#5393b5bc9a6b8a2fb9612df877706608%1761667136.618",
+        "vulkan-headers/1.4.350.0#40281e91ad8723fb102e36396da35409%1778774701.016",
+        "spirv-tools/1.4.350.0#cfeb4688808ef44cd892c93a10dc6762%1778774685.159",
+        "spirv-headers/1.4.350.0#e00d02f9314156c0d0afa8cecc7e43c7%1778774681.399",
+        "spirv-cross/1.4.350.0#904299c8c5fd6cbe677e09fb9ce8ff5f%1778774679.723",
+        "spdlog/1.15.3#855569172102c04e3e0db21ae95cf017%1767604739.328",
+        "sdl/3.4.8#7b801ff8822a8bbc3b9019140966f5b1%1779717074.661",
+        "nlohmann_json/3.10.5#1ebcf334c3f52d96e057d5aba398c491%1700513003.127",
+        "libiconv/1.17#9923bc6dc6f106646d6967e0039a5ada%1774021608.288",
+        "libbacktrace/cci.20210118#a7691bfccd8caaf66309df196790a5a1%1722218217.276",
+        "gtest/1.17.0#5224b3b3ff3b4ce1133cbdd27d53ee7d%1755784855.585",
+        "glslang/1.4.350.0#c4d9cb1ccdcdb314655e9648fe6cf5d0%1778774694.76",
+        "glm/0.9.9.8#066beab93048a0dc791188715074be42%1713951421.694",
+        "fmt/11.2.0#579bb2cdf4a7607621beea4eb4651e0f%1746298708.362",
+        "bzip2/1.0.8#c470882369c2d95c5c77e970c0c7e321%1762886692.465",
+        "boost/1.91.0#ea540ca2133d831b560036aa24dece3c%1778050991.9"
+    ],
+    "build_requires": [
+        "ninja/1.13.2#c8c5dc2a52ed6e4e42a66d75b4717ceb%1764096931.974",
+        "cmake/4.3.2#c740c22f711eb5ef0cec51c40b84657b%1776934625.055",
+        "cmake/3.31.12#074b543418bfd044b7171af3399d8602%1776882511.03",
+        "b2/5.4.2#ffd6084a119587e70f11cd45d1a386e2%1766594659.866"
+    ],
+    "python_requires": [],
+    "config_requires": []
+}

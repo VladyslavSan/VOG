@@ -13,10 +13,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-2025-vs2026]
+        os: [ubuntu-latest, macos-26, windows-2025-vs2026]
         build_type: [Debug, Release]
         exclude:
-          - build_type: Release
+          - build_type: Debug
 
     runs-on: ${{ matrix.os }}
 
@@ -38,10 +38,12 @@ jobs:
       - name: Detect Conan profile
         run: conan profile detect --force
 
-      - name: Fix C++ standard in Conan profile (Windows)
-        if: runner.os == 'Windows'
+      - name: Fix C++ standard in Conan profile
+        if: runner.os != 'Linux'
         shell: bash
-        run: sed -i 's/compiler\.cppstd=.*/compiler.cppstd=20/' ~/.conan2/profiles/default
+        run: >-
+          sed 's/compiler\.cppstd=.*/compiler.cppstd=20/' ~/.conan2/profiles/default
+          > /tmp/conan_profile && mv /tmp/conan_profile ~/.conan2/profiles/default
 
       - name: Install software Vulkan renderer (Linux)
         if: runner.os == 'Linux'
@@ -55,32 +57,41 @@ jobs:
           brew install molten-vk vulkan-loader
           echo "VK_ICD_FILENAMES=$(brew --prefix molten-vk)/share/vulkan/icd.d/MoltenVK_icd.json" >> "$GITHUB_ENV"
 
-      - name: Cache Conan packages
-        uses: actions/cache@v4
+      - name: Restore Conan cache
+        id: conan-cache
+        uses: actions/cache/restore@v4
         with:
           path: ~/.conan2
-          key: conan-${{ runner.os }}-${{ matrix.build_type }}-${{ hashFiles('conanfile.py') }}
+          key: conan-${{ runner.os }}-${{ matrix.build_type }}-${{ hashFiles('conan.lock') }}
           restore-keys: |
             conan-${{ runner.os }}-${{ matrix.build_type }}-
             conan-${{ runner.os }}-
 
+      - name: Install dependencies
+        if: runner.os != 'Linux'
+        run: >-
+          conan install . -of build --build=missing -s build_type=${{ matrix.build_type }}
+          -c tools.cmake.cmaketoolchain:generator=Ninja
+
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: >-
-          conan install . --build=missing -s build_type=${{ matrix.build_type }}
+          conan install . -of build --build=missing -s build_type=${{ matrix.build_type }} --lockfile-partial
           -c tools.system.package_manager:mode=install
           -c tools.system.package_manager:sudo=True
+          -c tools.cmake.cmaketoolchain:generator=Ninja
 
-      - name: Install dependencies
-        if: runner.os != 'Linux'
-        run: conan install . --build=missing -s build_type=${{ matrix.build_type }}
-
-      - name: Configure
-        run: cmake --preset=${{ matrix.build_type == 'Debug' && 'debug' || 'release' }}
+      - name: Save Conan cache
+        if: steps.conan-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.conan2
+          key: conan-${{ runner.os }}-${{ matrix.build_type }}-${{ hashFiles('conan.lock') }}
 
       - name: Build
-        run: cmake --build build/${{ matrix.build_type }}
+        if: runner.os != 'Linux'
+        run: conan build . -of build -s build_type=${{ matrix.build_type }} -c tools.build:skip_test=True
 
-      - name: Test
+      - name: Build and test
         if: runner.os == 'Linux'
-        run: ctest --test-dir build/${{ matrix.build_type }} --output-on-failure
+        run: conan build . -of build -s build_type=${{ matrix.build_type }}
