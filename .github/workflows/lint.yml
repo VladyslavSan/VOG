@@ -7,24 +7,31 @@ on:
     branches: [main]
 
 jobs:
-  clang-format:
-    name: clang-format
+  cpp-linter:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Configure (generate compile_commands.json)
+        uses: ./.github/actions/configure
         with:
-          path: code
+          cmake-extra-args: -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
-      - name: Install clang-format
-        run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
-          echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list
-          sudo apt-get update -q
-          sudo apt-get install -y clang-format-22
+      - uses: cpp-linter/cpp-linter-action@v2
+        id: linter
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          version: '22'
+          style: 'file'
+          tidy-checks: ''
+          database: 'build/build/Release'
+          ignore-tidy: 'src/VOG/Common/Test|src/VOG/Graphics/Test'
+          thread-comments: ${{ github.event_name == 'pull_request' && 'update' || 'false' }}
+          step-summary: true
 
-      - name: Check formatting
-        working-directory: ./code
-        run: |
-          find src -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' \) \
-            -print0 | xargs -0 clang-format-22 --dry-run --Werror
+      - if: steps.linter.outputs.checks-failed > 0
+        run: exit 1

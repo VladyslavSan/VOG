@@ -20,7 +20,5 @@ target_link_libraries(VOG.Common.Unit
         GTest::gtest_main
 )
 
-add_test(
-    NAME VOG.Common.Unit
-    COMMAND VOG.Common.Unit
-)
+include(GoogleTest)
+gtest_discover_tests(VOG.Common.Unit)

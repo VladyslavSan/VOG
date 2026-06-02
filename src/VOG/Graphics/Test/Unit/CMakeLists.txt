@@ -26,7 +26,5 @@ target_link_libraries(VOG.Graphics.Unit
         GTest::gtest_main
 )
 
-add_test(
-    NAME VOG.Graphics.Unit
-    COMMAND VOG.Graphics.Unit
-)
+include(GoogleTest)
+gtest_discover_tests(VOG.Graphics.Unit)
