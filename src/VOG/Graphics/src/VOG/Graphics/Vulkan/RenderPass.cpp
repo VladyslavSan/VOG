@@ -48,7 +48,7 @@ RenderPass::RenderPass(DevicePtr                      device,
                                                .subpassCount    = 1,
                                                .pSubpasses      = &subpass};
 
-        static_cast<vk::raii::RenderPass&>(*this) = {*device, createInfo};
+        static_cast<vk::raii::RenderPass&>(*this) = {*mDevice, createInfo};
     }
 }
 

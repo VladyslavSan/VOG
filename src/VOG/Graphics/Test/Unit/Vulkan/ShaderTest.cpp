@@ -72,8 +72,7 @@ void main() {
 TEST_F(VulkanFixture, Shader_instantiate_vertex_shader)
 {
     EXPECT_NO_THROW({
-        auto shader =
-            Shader::create(VulkanDevice, Shader::ShadingStage::eVertex, gVertexShaderString);
+        auto        shader     = createShader(Shader::ShadingStage::eVertex, gVertexShaderString);
         const auto& reflection = shader->reflection;
 
         EXPECT_EQ(reflection.inAttributes.size(), 3u);
@@ -101,9 +100,7 @@ TEST_F(VulkanFixture, Shader_instantiate_vertex_shader)
 
 TEST_F(VulkanFixture, Shader_instantiate_fragment_shader)
 {
-    EXPECT_NO_THROW({
-        auto shader =
-            Shader::create(VulkanDevice, Shader::ShadingStage::eFragment, gFragmentShaderString);
-    });
+    EXPECT_NO_THROW(
+        { auto shader = createShader(Shader::ShadingStage::eFragment, gFragmentShaderString); });
 }
 } // namespace VOG::Tests

@@ -10,6 +10,9 @@ on:
 jobs:
   build:
     name: ${{ matrix.os }} / ${{ matrix.build_type }}
+    permissions:
+      checks: write
+      pull-requests: write
     strategy:
       fail-fast: false
       matrix:
@@ -32,6 +35,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
+          echo "VK_ICD_FILENAMES=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' | head -1)" >> "$GITHUB_ENV"
 
       - name: Install MoltenVK (macOS)
         if: runner.os == 'macOS'
@@ -52,6 +56,22 @@ jobs:
         if: runner.os != 'Linux'
         run: conan build . -of build -s build_type=${{ matrix.build_type }} -c tools.build:skip_test=True
 
-      - name: Build
+      - name: Build (Linux)
         if: runner.os == 'Linux'
         run: conan build . -of build -s build_type=${{ matrix.build_type }} --lockfile-partial -c tools.build:skip_test=True
+
+      - name: Test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          ctest --test-dir build/build/${{ matrix.build_type }} \
+            --output-on-failure \
+            --output-junit ${{ runner.temp }}/test-results.xml
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: runner.os == 'Linux' && (success() || failure())
+        with:
+          name: Tests
+          path: ${{ runner.temp }}/test-results.xml
+          reporter: java-junit
+          fail-on-empty: 'false'

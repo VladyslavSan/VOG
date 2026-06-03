@@ -81,7 +81,7 @@ makeInstance(const vk::raii::Context& context, const Instance::InstanceParameter
                              [](const vk::ExtensionProperties& prop)
                              {
                                  return std::strcmp(prop.extensionName,
-                                                    gPortabilityEnumerationExtension);
+                                                    gPortabilityEnumerationExtension) == 0;
                              }) != availableInstanceExtensions.end())
     {
         requiredExtensions.push_back(gPortabilityEnumerationExtension);

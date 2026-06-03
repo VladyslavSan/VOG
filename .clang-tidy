@@ -1,4 +1,4 @@
-Checks:          'clang-diagnostic-*,clang-analyzer-*,-*,readability-*,performance-*,-readability-uppercase-literal-suffix,-readability-convert-member-functions-to-static'
+Checks:          'clang-diagnostic-*,clang-analyzer-*,-*,bugprone-*,readability-*,performance-*,modernize-use-override,modernize-use-emplace,concurrency-mt-unsafe,-readability-uppercase-literal-suffix,-readability-convert-member-functions-to-static'
 WarningsAsErrors: ''
 HeaderFilterRegex: ''
 FormatStyle:     none

@@ -17,6 +17,7 @@ target_sources(VOG.Graphics.Unit
         Vulkan/GraphicsPipelineTest.cpp
         Vulkan/ShaderProgramTest.cpp
         VulkanFixture.hpp
+        TestShaderCompiler.hpp
 )
 
 target_link_libraries(VOG.Graphics.Unit
@@ -26,7 +27,5 @@ target_link_libraries(VOG.Graphics.Unit
         GTest::gtest_main
 )
 
-add_test(
-    NAME VOG.Graphics.Unit
-    COMMAND VOG.Graphics.Unit
-)
+include(GoogleTest)
+gtest_discover_tests(VOG.Graphics.Unit)

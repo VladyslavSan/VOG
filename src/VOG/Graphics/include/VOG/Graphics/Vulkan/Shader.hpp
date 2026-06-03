@@ -111,18 +111,6 @@ public:
     };
 
     /**
-     * Helper create method.
-     *
-     * @param device Vulkan device to construct the shader module.
-     * @param stage Shading stage.
-     * @param glslCode SPIR-V shader binary code.
-     *
-     * @return shared pointer to Shader instance.
-     */
-    static std::shared_ptr<Shader>
-    create(DevicePtr device, ShadingStage stage, const std::string& glslCode);
-
-    /**
      * Utility function used for validation whether @p provided vertex format is compatible with
      * @p shaderVertexFormat.
      *
@@ -134,32 +122,17 @@ public:
     static bool vertexFormatCompatible(Shader::Reflection::BaseType shaderVertexFormat,
                                        vk::Format                   provided);
 
-    /**
-     * Construct from glsl shader code. Very expensive as it involves glsl to spirv compilation.
-     *
-     * @param device Vulkan device to construct the shader module.
-     * @param stage Shading stage.
-     * @param glslCode SPIR-V shader binary code.
-     */
-    Shader(DevicePtr device, ShadingStage stage, const std::string& glslCode);
-
-    /**
-     * Construct from SPIR-V shader binary.
-     *
-     * @param device Vulkan device to construct the shader module.
-     * @param stage Shading stage.
-     * @param shaderBinary SPIR-V shader binary code.
-     */
-    Shader(DevicePtr device, ShadingStage stage, std::vector<std::uint32_t> shaderBinary);
-
 private:
+    friend class Device;
+
+    Shader(DevicePtr device, ShadingStage stage, std::span<const std::uint32_t> shaderBinary);
+
     const DevicePtr device;
 
 public:
-    const vk::ShaderStageFlagBits    stage;
-    const std::vector<std::uint32_t> binary;
-    const vk::raii::ShaderModule     module;
-    const Reflection                 reflection;
+    const vk::ShaderStageFlagBits stage;
+    const vk::raii::ShaderModule  module;
+    const Reflection              reflection;
 };
 using ShaderPtr = std::shared_ptr<Shader>;
 } // namespace VOG::Graphics::Vulkan

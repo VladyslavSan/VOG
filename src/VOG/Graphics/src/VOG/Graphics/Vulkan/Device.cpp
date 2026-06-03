@@ -182,6 +182,14 @@ Device::init()
         std::shared_ptr<FencePool>{new FencePool{shared_from_this()}};
 }
 
+Device::~Device() = default;
+
+ShaderPtr
+Device::createShader(Shader::ShadingStage stage, std::span<const std::uint32_t> binary)
+{
+    return std::shared_ptr<Shader>(new Shader{shared_from_this(), stage, binary});
+}
+
 const PhysicalDevice&
 Device::getPhysicalDevice() const
 {
