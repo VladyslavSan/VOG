@@ -4,6 +4,7 @@
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
 #include <VOG/Graphics/Vulkan/Queue.hpp>
+#include <VOG/Graphics/Vulkan/Shader.hpp>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -26,10 +27,8 @@ public:
         QueueFamilyInfo transfer;
     };
 
-public:
     PhysicalDevice(vk::raii::PhysicalDevice physicalDevice);
 
-public:
     const QueueInfos queueInfos;
 };
 
@@ -44,12 +43,15 @@ class Device
     void init();
 
 public:
+    ~Device();
+
     const PhysicalDevice& getPhysicalDevice() const;
+
+    ShaderPtr createShader(Shader::ShadingStage stage, std::span<const std::uint32_t> binary);
 
     using vk::raii::Device::operator*;
     using vk::raii::Device::getDispatcher;
 
-public:
     const InstancePtr             instance;
     const FencePoolPtr            fencePool;
     const Vulkan::Queue           graphicsQueue;

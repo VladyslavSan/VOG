@@ -52,6 +52,7 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Vulkan/MemoryAllocator.hpp
             include/VOG/Graphics/Vulkan/Queue.hpp
             include/VOG/Graphics/Vulkan/RenderPass.hpp
+            include/VOG/Graphics/Vulkan/GLSLCompiler.hpp
             include/VOG/Graphics/Vulkan/Shader.hpp
             include/VOG/Graphics/Vulkan/ShaderProgram.hpp
             include/VOG/Graphics/Vulkan/TimelineSemaphore.hpp
@@ -82,6 +83,7 @@ target_sources(VOG.Graphics
         src/VOG/Graphics/Vulkan/MemoryAllocatorVmaImpl.cpp
         src/VOG/Graphics/Vulkan/Queue.cpp
         src/VOG/Graphics/Vulkan/RenderPass.cpp
+        src/VOG/Graphics/Vulkan/GLSLCompiler.cpp
         src/VOG/Graphics/Vulkan/Shader.cpp
         src/VOG/Graphics/Vulkan/ShaderProgram.cpp
         src/VOG/Graphics/Vulkan/TimelineSemaphore.cpp

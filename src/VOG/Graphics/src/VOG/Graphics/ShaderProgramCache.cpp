@@ -1,10 +1,11 @@
 #include "VOG/Graphics/ShaderProgramCache.hpp"
 
 #include <VOG/Common/JSONContainer.hpp>
+#include <VOG/Graphics/Vulkan/Device.hpp>
+#include <VOG/Graphics/Vulkan/GLSLCompiler.hpp>
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 
-#include <glslang/Public/ShaderLang.h>
 #include <nlohmann/json.hpp>
 
 #include <format>
@@ -70,8 +71,6 @@ ShaderProgramCache::ShaderProgramCache(const Vulkan::DevicePtr&     device,
     : mDevice{device}
     , mShaderSourcePath{shaderSourcePath}
 {
-    glslang::InitializeProcess();
-
     if (!std::filesystem::exists(shaderSourcePath) ||
         !std::filesystem::exists(shaderSourcePath / gShaderConfigName))
     {
@@ -106,7 +105,8 @@ ShaderProgramCache::ShaderProgramCache(const Vulkan::DevicePtr&     device,
             std::shared_ptr<Vulkan::Shader> shader = nullptr;
             try
             {
-                shader = Vulkan::Shader::create(device, shadingStage, shaderSource);
+                auto binary = Vulkan::compileGLSL(shadingStage, shaderSource);
+                shader      = device->createShader(shadingStage, binary);
             }
             catch (const std::exception&)
             {
@@ -131,7 +131,7 @@ ShaderProgramCache::ShaderProgramCache(const Vulkan::DevicePtr&     device,
     }
 }
 
-ShaderProgramCache::~ShaderProgramCache() { glslang::FinalizeProcess(); }
+ShaderProgramCache::~ShaderProgramCache() = default;
 
 std::shared_ptr<Vulkan::ShaderProgram>
 ShaderProgramCache::get(const std::string& name)

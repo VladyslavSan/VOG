@@ -5,6 +5,8 @@
 
 #include <gtest/gtest.h>
 
+#include "TestShaderCompiler.hpp"
+
 namespace VOG::Tests
 {
 class VulkanFixture : public testing::Test
@@ -19,6 +21,12 @@ public:
           })}
         , VulkanDevice{VulkanInstance->makeDevice()}
     {
+    }
+
+    Graphics::Vulkan::ShaderPtr
+    createShader(Graphics::Vulkan::Shader::ShadingStage stage, const std::string& glslCode)
+    {
+        return VulkanDevice->createShader(stage, compileGLSL(stage, glslCode));
     }
 
 protected:

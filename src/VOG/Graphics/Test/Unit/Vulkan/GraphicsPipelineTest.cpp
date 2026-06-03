@@ -82,10 +82,9 @@ TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
 
     {
         SCOPED_TRACE("correct pipeline compiles");
-        auto vertexShader =
-            Shader::create(VulkanDevice, Shader::ShadingStage::eVertex, gVertexShaderString);
-        auto fragmentShader = Shader::create(
-            VulkanDevice, Shader::ShadingStage::eFragment, gFragmentShaderGoodString);
+        auto vertexShader = createShader(Shader::ShadingStage::eVertex, gVertexShaderString);
+        auto fragmentShader =
+            createShader(Shader::ShadingStage::eFragment, gFragmentShaderGoodString);
 
         auto createInfo = createInfoTemplate;
         createInfo.shading =

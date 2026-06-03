@@ -1,3 +1,4 @@
+#include <VOG/Graphics/Vulkan/GLSLCompiler.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/RenderPass.hpp>
 #include <VOG/Graphics/Vulkan/Shader.hpp>
@@ -148,6 +149,12 @@ protected:
         VulkanDevice = VulkanInstance->makeDevice();
     }
 
+    Graphics::Vulkan::ShaderPtr
+    createShader(Graphics::Vulkan::Shader::ShadingStage stage, const std::string& glslCode)
+    {
+        return VulkanDevice->createShader(stage, Graphics::Vulkan::compileGLSL(stage, glslCode));
+    }
+
     Graphics::Vulkan::InstancePtr    VulkanInstance;
     vk::raii::DebugUtilsMessengerEXT messenger{nullptr};
     Graphics::Vulkan::DevicePtr      VulkanDevice;
@@ -160,9 +167,8 @@ protected:
 
 TEST_F(VulkanFixture, ShaderProgram_create_noDescriptorSets)
 {
-    auto vert = Shader::create(VulkanDevice, Shader::ShadingStage::eVertex, gMinimalVertexShader);
-    auto frag =
-        Shader::create(VulkanDevice, Shader::ShadingStage::eFragment, gMinimalFragmentShader);
+    auto vert = createShader(Shader::ShadingStage::eVertex, gMinimalVertexShader);
+    auto frag = createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
     EXPECT_NO_THROW(
         ShaderProgram::create({.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
@@ -170,9 +176,8 @@ TEST_F(VulkanFixture, ShaderProgram_create_noDescriptorSets)
 
 TEST_F(VulkanFixture, ShaderProgram_descriptorSets_consecutiveSets)
 {
-    auto vert = Shader::create(VulkanDevice, Shader::ShadingStage::eVertex, gVertexShaderSets01);
-    auto frag =
-        Shader::create(VulkanDevice, Shader::ShadingStage::eFragment, gMinimalFragmentShader);
+    auto vert = createShader(Shader::ShadingStage::eVertex, gVertexShaderSets01);
+    auto frag = createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
     std::shared_ptr<ShaderProgram> program;
     ASSERT_NO_THROW(program = ShaderProgram::create(
@@ -188,9 +193,8 @@ TEST_F(VulkanFixture, ShaderProgram_descriptorSets_gapInSets)
 {
     // buildDescriptorSets leaves set 1 null because no binding is declared for it.
     // makePipelineLayout is responsible for filling the gap with an empty layout.
-    auto vert = Shader::create(VulkanDevice, Shader::ShadingStage::eVertex, gVertexShaderSets02Gap);
-    auto frag =
-        Shader::create(VulkanDevice, Shader::ShadingStage::eFragment, gMinimalFragmentShader);
+    auto vert = createShader(Shader::ShadingStage::eVertex, gVertexShaderSets02Gap);
+    auto frag = createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
     std::shared_ptr<ShaderProgram> program;
     ASSERT_NO_THROW(program = ShaderProgram::create(
@@ -204,10 +208,8 @@ TEST_F(VulkanFixture, ShaderProgram_descriptorSets_gapInSets)
 
 TEST_F(VulkanFixture, ShaderProgram_pushConstants_reflectedCorrectly)
 {
-    auto vert =
-        Shader::create(VulkanDevice, Shader::ShadingStage::eVertex, gVertexShaderPushConstants);
-    auto frag =
-        Shader::create(VulkanDevice, Shader::ShadingStage::eFragment, gMinimalFragmentShader);
+    auto vert = createShader(Shader::ShadingStage::eVertex, gVertexShaderPushConstants);
+    auto frag = createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
     std::shared_ptr<ShaderProgram> program;
     ASSERT_NO_THROW(program = ShaderProgram::create(
@@ -234,9 +236,8 @@ TEST_F(VulkanValidationFixture, ShaderProgram_makePipelineLayout_gapFilledCorrec
     if (!VulkanDevice)
         GTEST_SKIP() << "VK_LAYER_KHRONOS_validation or VK_EXT_debug_utils not available";
 
-    auto vert = Shader::create(VulkanDevice, Shader::ShadingStage::eVertex, gVertexShaderSets02Gap);
-    auto frag =
-        Shader::create(VulkanDevice, Shader::ShadingStage::eFragment, gMinimalFragmentShader);
+    auto vert = createShader(Shader::ShadingStage::eVertex, gVertexShaderSets02Gap);
+    auto frag = createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
     std::shared_ptr<ShaderProgram> shaderProgram;
     ASSERT_NO_THROW(shaderProgram = ShaderProgram::create(
