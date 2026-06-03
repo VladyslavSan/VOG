@@ -43,7 +43,7 @@ class Device
     void init();
 
 public:
-    ~Device();
+    ~Device(); // NOLINT(bugprone-derived-method-shadowing-base-method)
 
     const PhysicalDevice& getPhysicalDevice() const;
 
