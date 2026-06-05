@@ -170,8 +170,8 @@ TEST_F(VulkanFixture, ShaderProgram_create_noDescriptorSets)
     auto vert = createShader(Shader::ShadingStage::eVertex, gMinimalVertexShader);
     auto frag = createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
-    EXPECT_NO_THROW(
-        ShaderProgram::create({.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
+    EXPECT_NO_THROW(VulkanDevice->createShaderProgram(
+        {.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
 }
 
 TEST_F(VulkanFixture, ShaderProgram_descriptorSets_consecutiveSets)
@@ -180,7 +180,7 @@ TEST_F(VulkanFixture, ShaderProgram_descriptorSets_consecutiveSets)
     auto frag = createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
     std::shared_ptr<ShaderProgram> program;
-    ASSERT_NO_THROW(program = ShaderProgram::create(
+    ASSERT_NO_THROW(program = VulkanDevice->createShaderProgram(
                         {.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
 
     EXPECT_TRUE(static_cast<bool>(*program->descriptorSets[0].setLayout));
@@ -197,7 +197,7 @@ TEST_F(VulkanFixture, ShaderProgram_descriptorSets_gapInSets)
     auto frag = createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
     std::shared_ptr<ShaderProgram> program;
-    ASSERT_NO_THROW(program = ShaderProgram::create(
+    ASSERT_NO_THROW(program = VulkanDevice->createShaderProgram(
                         {.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
 
     EXPECT_TRUE(static_cast<bool>(*program->descriptorSets[0].setLayout));
@@ -212,7 +212,7 @@ TEST_F(VulkanFixture, ShaderProgram_pushConstants_reflectedCorrectly)
     auto frag = createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
     std::shared_ptr<ShaderProgram> program;
-    ASSERT_NO_THROW(program = ShaderProgram::create(
+    ASSERT_NO_THROW(program = VulkanDevice->createShaderProgram(
                         {.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
 
     ASSERT_EQ(program->pushConstants.ranges.size(), 1u);
@@ -240,20 +240,19 @@ TEST_F(VulkanValidationFixture, ShaderProgram_makePipelineLayout_gapFilledCorrec
     auto frag = createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
     std::shared_ptr<ShaderProgram> shaderProgram;
-    ASSERT_NO_THROW(shaderProgram = ShaderProgram::create(
+    ASSERT_NO_THROW(shaderProgram = VulkanDevice->createShaderProgram(
                         {.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
 
     auto renderPass =
-        RenderPass::create(VulkanDevice,
-                           {{.format      = vk::Format::eR32G32B32A32Sfloat,
-                             .loadOp      = vk::AttachmentLoadOp::eClear,
-                             .storeOp     = vk::AttachmentStoreOp::eStore,
-                             .finalLayout = vk::ImageLayout::eColorAttachmentOptimal}},
-                           {});
+        VulkanDevice->createRenderPass({{.format      = vk::Format::eR32G32B32A32Sfloat,
+                                         .loadOp      = vk::AttachmentLoadOp::eClear,
+                                         .storeOp     = vk::AttachmentStoreOp::eStore,
+                                         .finalLayout = vk::ImageLayout::eColorAttachmentOptimal}},
+                                       {});
 
     ASSERT_NO_THROW({
-        GraphicsPipeline pipeline{makeMinimalPipelineCreateInfo(
-            VulkanDevice, shaderProgram, *renderPass, *shaderProgram->pipelineLayout)};
+        auto pipeline = VulkanDevice->createGraphicsPipeline(makeMinimalPipelineCreateInfo(
+            VulkanDevice, shaderProgram, *renderPass, *shaderProgram->pipelineLayout));
     });
 
     EXPECT_TRUE(validationErrors.empty())

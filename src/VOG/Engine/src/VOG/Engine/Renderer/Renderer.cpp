@@ -27,7 +27,14 @@ using namespace VOG::Math;
 
 namespace VOG::Engine
 {
-Renderer::~Renderer() { requestRenderChangeState(RenderJobState::eInactive); }
+Renderer::~Renderer()
+try
+{
+    requestRenderChangeState(RenderJobState::eInactive);
+}
+catch (...) // NOLINT(bugprone-empty-catch)
+{
+}
 
 Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle,
                    const Common::JSONContainer& parameters)
@@ -45,12 +52,10 @@ Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle,
     , mShaderProgramCache{std::make_shared<Graphics::ShaderProgramCache>(
           mVulkanDevice,
           std::filesystem::path{parameters["shader_source_path"].getOr<std::string>("")})}
-    , mSwapchain{std::make_shared<Graphics::Vulkan::Swapchain>(
-          mVulkanDevice,
-          Graphics::Vulkan::Swapchain::SwapchainParameters{
-              .framesInFlight = mMaxFramesInFlight,
-              .surface        = surfaceHandle,
-          })}
+    , mSwapchain{mVulkanDevice->createSwapchain(Graphics::Vulkan::Swapchain::SwapchainParameters{
+          .framesInFlight = mMaxFramesInFlight,
+          .surface        = surfaceHandle,
+      })}
     , mFrameObjectManager{std::make_shared<Graphics::Frame::FrameObjectManager>(
           mVulkanDevice, mMaxFramesInFlight, 1u)}
     , mScene{std::make_shared<Scene::Scene>()}
@@ -92,7 +97,7 @@ Renderer::render()
 
     constexpr std::size_t kVertexDataSize = std::size(vertexData) * sizeof(VertexData);
 
-    triangleBuffer = mVulkanDevice->memoryAllocator->makeBuffer(
+    triangleBuffer = mVulkanDevice->createBuffer(
         {.size = kVertexDataSize, .usage = vk::BufferUsageFlagBits::eVertexBuffer},
         {.usage = VMA_MEMORY_USAGE_CPU_TO_GPU});
 
@@ -131,34 +136,32 @@ Renderer::render()
                                .layerCount     = VK_REMAINING_ARRAY_LAYERS,
                            }}});
 
-    const double time = std::chrono::duration_cast<std::chrono::milliseconds>(
-                            std::chrono::high_resolution_clock::now() -
-                            std::chrono::high_resolution_clock::time_point{})
-                            .count();
+    const double time = static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                std::chrono::high_resolution_clock::now() -
+                                                std::chrono::high_resolution_clock::time_point{})
+                                                .count());
 
-    const float red  = (std::sin(time / (2 * std::numbers::pi) / 100) + 1) / 2;
-    const float blue = (std::cos(time / (2 * std::numbers::pi) / 100) + 1) / 2;
+    const float red  = static_cast<float>((std::sin(time / (2 * std::numbers::pi) / 100) + 1) / 2);
+    const float blue = static_cast<float>((std::cos(time / (2 * std::numbers::pi) / 100) + 1) / 2);
 
     const std::array clearColor = {red * 0.2f, 0.0f, blue * 0.2f, 1.0f};
 
-    auto renderPass = Graphics::Vulkan::RenderPass::create(
-        mVulkanDevice,
-        {{.format        = mSwapchain->getFormat(),
-          .loadOp        = vk::AttachmentLoadOp::eClear,
-          .storeOp       = vk::AttachmentStoreOp::eStore,
-          .initialLayout = vk::ImageLayout::eUndefined,
-          .finalLayout   = vk::ImageLayout::eColorAttachmentOptimal}},
-        {});
+    auto renderPass =
+        mVulkanDevice->createRenderPass({{.format        = mSwapchain->getFormat(),
+                                          .loadOp        = vk::AttachmentLoadOp::eClear,
+                                          .storeOp       = vk::AttachmentStoreOp::eStore,
+                                          .initialLayout = vk::ImageLayout::eUndefined,
+                                          .finalLayout = vk::ImageLayout::eColorAttachmentOptimal}},
+                                        {});
 
-    auto framebuffer =
-        Graphics::Vulkan::Framebuffer::create(mVulkanDevice, renderPass, {mSwapchain}, nullptr);
+    auto framebuffer = mVulkanDevice->createFramebuffer(renderPass, {mSwapchain}, nullptr);
 
     {
         recorder.beginRenderPass(renderPass, framebuffer, {vk::ClearColorValue{clearColor}});
 
         auto program = mShaderProgramCache->get("WorldSpace");
 
-        auto pipeline = std::make_shared<GraphicsPipeline>(GraphicsPipeline::CreateInfo{
+        auto pipeline = mVulkanDevice->createGraphicsPipeline(GraphicsPipeline::CreateInfo{
             .device         = mVulkanDevice,
             .cache          = nullptr,
             .shading        = program,
@@ -210,7 +213,7 @@ Renderer::render()
                                  },
                              });
 
-        const float timeFactor = std::sin(time / (2 * std::numbers::pi) / 100);
+        const float timeFactor = static_cast<float>(std::sin(time / (2 * std::numbers::pi) / 100));
 
         const Vector3f objectPosition = {0.0, 0.0, 20.0};
         const float    factor         = 300.0;

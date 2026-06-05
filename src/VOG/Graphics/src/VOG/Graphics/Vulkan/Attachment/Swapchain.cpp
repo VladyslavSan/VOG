@@ -48,7 +48,7 @@ successAcquirePresentResult(vk::Result result)
 
 Swapchain::SwapchainImageSyncData::SwapchainImageSyncData(const DevicePtr& device)
     : semaphore{*device, vk::SemaphoreCreateInfo{}}
-    , fence{device}
+    , fence{device->createFence()}
 {
 }
 
@@ -179,6 +179,7 @@ Swapchain::getImage() const
         mCurrentSwapchainImageIndex,
         "Swapchain::acquireNextImage should have been called before calling this function.");
 
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
     return mSwapchainImages[mCurrentSwapchainImageIndex.value()];
 }
 
@@ -189,6 +190,7 @@ Swapchain::getImageView() const
         mCurrentSwapchainImageIndex,
         "Swapchain::acquireNextImage should have been called before calling this function.");
 
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
     return mImageViews[mCurrentSwapchainImageIndex.value()];
 }
 
@@ -226,7 +228,8 @@ Swapchain::present(const vk::ArrayProxy<const vk::Semaphore> waitSemaphores)
         .pWaitSemaphores    = waitSemaphores.data(),
         .swapchainCount     = 1u,
         .pSwapchains        = &*mSwapchain,
-        .pImageIndices      = &mCurrentSwapchainImageIndex.value(),
+        .pImageIndices =
+            &mCurrentSwapchainImageIndex.value(), // NOLINT(bugprone-unchecked-optional-access)
     };
 
     auto result = mPresentQueue.presentKHR(presentInfoKHR);

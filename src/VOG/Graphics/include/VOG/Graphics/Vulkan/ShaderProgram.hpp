@@ -70,12 +70,11 @@ public:
         std::vector<vk::PushConstantRange> ranges;
     };
 
-    static std::shared_ptr<ShaderProgram> create(ShadingStages stages);
+private:
+    friend class Device;
 
-public: // use create()
     ShaderProgram(ShadingStagesChecked stages);
 
-private:
     const DevicePtr device;
 
 public:

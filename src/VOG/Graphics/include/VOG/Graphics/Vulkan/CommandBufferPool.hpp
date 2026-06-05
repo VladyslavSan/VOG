@@ -62,6 +62,8 @@ protected:
 class CommandBufferPool : public std::enable_shared_from_this<CommandBufferPool>
 {
     friend class CommandBufferHandle;
+    friend class Device;
+
     CommandBufferPool(const DevicePtr& device);
 
     struct SubmittedCommandBuffer
@@ -73,12 +75,6 @@ class CommandBufferPool : public std::enable_shared_from_this<CommandBufferPool>
 public:
     CommandBufferPool(const CommandBufferPool&) = delete;
     CommandBufferPool(CommandBufferPool&&)      = default;
-
-    static std::shared_ptr<CommandBufferPool>
-    create(const DevicePtr& device)
-    {
-        return std::shared_ptr<CommandBufferPool>{new CommandBufferPool{device}};
-    }
 
     /**
      * Retrieves clean command buffer from cache or allocates new if cache is exhausted.
@@ -102,7 +98,6 @@ protected:
      */
     void returnCommandBufferToPool(CommandBuffer commandBuffer);
 
-protected:
     DevicePtr             mDevice;
     vk::raii::CommandPool mVulkanPool;
 

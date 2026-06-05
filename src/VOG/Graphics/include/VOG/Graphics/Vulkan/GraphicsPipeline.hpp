@@ -76,6 +76,9 @@ public:
         RenderpassDescription                       renderpassDescription;
     };
 
+private:
+    friend class Device;
+
     GraphicsPipeline(CreateInfo createInfo);
 
     GraphicsPipeline(CreateInfoFromDescription createInfo);

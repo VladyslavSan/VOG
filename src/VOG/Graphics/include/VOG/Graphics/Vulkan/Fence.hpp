@@ -24,13 +24,15 @@ class Fence : protected vk::raii::Fence
         eUsedAndWaited
     };
 
-public:
+private:
+    friend class Device;
+
     /**
-     * Public ctor for the fence
      * @param device Vulkan device to use for fence construction.
      */
     Fence(DevicePtr device);
 
+public:
     /*
      * Wait for fence to be signaled.
      * @param timeout Amount of time to wait.

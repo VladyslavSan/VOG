@@ -1,14 +1,19 @@
 #pragma once
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
+#include <VOG/Graphics/Typedefs.hpp>
 
+#include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace VOG::Graphics::Vulkan
 {
-class Device;
+VOG_DECLARE_PTR(Device);
 class DescriptorAllocator
 {
+    friend class Device;
+
 public:
     /**
      * Struct that configures construction of the DescriptorAllocator.
@@ -36,15 +41,16 @@ public:
         std::uint32_t numUniformBuffers = kDefaultNum;
     };
 
-    DescriptorAllocator(const Device& device, const ConstructionParameters& params);
-
     void reset();
+
+private:
+    DescriptorAllocator(DevicePtr device, const ConstructionParameters& params);
 
 protected:
     using Pool = vk::raii::DescriptorPool;
 
     /** Device handle used to allocate objects. */
-    const Device& mDevice;
+    DevicePtr mDevice;
 
     /** Currently active pool used to allocate objects. */
     Pool mCurrentPool;

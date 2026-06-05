@@ -207,12 +207,6 @@ ShaderProgram::ShadingStagesChecked::ShadingStagesChecked(
                fragment.shader->stage == vk::ShaderStageFlagBits::eFragment);
 }
 
-std::shared_ptr<ShaderProgram>
-ShaderProgram::create(ShadingStages stages)
-{
-    return std::make_shared<ShaderProgram>(ShadingStagesChecked{std::move(stages)});
-}
-
 ShaderProgram::ShaderProgram(ShaderProgram::ShadingStagesChecked _stages)
     : device{_stages.vertex.shader->device}
     , stages{std::move(_stages)}

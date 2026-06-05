@@ -10,7 +10,9 @@ VOG_DECLARE_PTR(Device);
 
 class RenderBuffer : public AttachmentInterface
 {
-public:
+    friend class Device;
+
+private:
     RenderBuffer(DevicePtr               device,
                  AttachmentUsage         usage,
                  vk::Format              desiredFormat,
@@ -22,6 +24,7 @@ public:
                  vk::ImageLayout         initialLayout,
                  vk::MemoryPropertyFlags memoryProperties);
 
+public:
     const vk::Image&                            getImage() const override;
     const std::shared_ptr<vk::raii::ImageView>& getImageView() const override;
 

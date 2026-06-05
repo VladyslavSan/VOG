@@ -28,15 +28,15 @@ makeDescriptorPool(const Device& device, const DescriptorAllocator::Construction
 }
 } // namespace
 
-DescriptorAllocator::DescriptorAllocator(const Device&                                      device,
+DescriptorAllocator::DescriptorAllocator(DevicePtr                                          device,
                                          const DescriptorAllocator::ConstructionParameters& params)
-    : mDevice{device}
+    : mDevice{std::move(device)}
     , mCurrentPool{nullptr}
 {
     mPools.reserve(params.numPoolsPreallocate);
     for (std::uint32_t i = 0; i < params.numPoolsPreallocate; ++i)
     {
-        mPools.push_back(makeDescriptorPool(mDevice, params));
+        mPools.push_back(makeDescriptorPool(*mDevice, params));
     }
 }
 

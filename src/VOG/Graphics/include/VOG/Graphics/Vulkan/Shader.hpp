@@ -14,7 +14,7 @@
 namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Device);
-class ShaderProgram;
+VOG_DECLARE_PTR(ShaderProgram);
 
 class Shader
 {
