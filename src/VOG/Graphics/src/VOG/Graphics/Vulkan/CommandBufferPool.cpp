@@ -18,7 +18,7 @@ CommandBufferHandle::CommandBufferHandle(CommandBufferPoolPtr pool,
 {
 }
 
-CommandBufferHandle::~CommandBufferHandle()
+CommandBufferHandle::~CommandBufferHandle() noexcept(false)
 {
     if (!mPool || !*mCommandBuffer)
     {
@@ -66,10 +66,12 @@ CommandBufferPool::get(vk::CommandBufferLevel type)
     auto& pool = type == vk::CommandBufferLevel::ePrimary ? mPrimaryBuffers : mSecondaryBuffers;
     if (pool.empty())
     {
-        auto newBuffers = Vulkan::CommandBuffer::create(*mDevice, mVulkanPool, type, gGrowSize);
-        for (auto& buffer : newBuffers)
+        vk::raii::CommandBuffers rawBuffers{
+            *mDevice,
+            {.commandPool = *mVulkanPool, .level = type, .commandBufferCount = gGrowSize}};
+        for (auto& buffer : rawBuffers)
         {
-            pool.push_back(std::move(buffer));
+            pool.push_back(CommandBuffer{std::move(buffer), type});
         }
     }
 

@@ -53,13 +53,13 @@ layout(push_constant) uniform PC { vec4 transform; } pc;
 void main() { gl_Position = inPosition + pc.transform; }
 )";
 
-GraphicsPipeline::CreateInfo
-makeMinimalPipelineCreateInfo(DevicePtr                 device,
+GraphicsPipeline::ParametersLegacy
+makeMinimalPipelineParameters(DevicePtr                 device,
                               ShaderProgramPtr          program,
                               const RenderPass&         renderPass,
                               const vk::PipelineLayout& layout)
 {
-    return GraphicsPipeline::CreateInfo{
+    return GraphicsPipeline::ParametersLegacy{
         .device        = device,
         .cache         = nullptr,
         .shading       = program,
@@ -251,7 +251,7 @@ TEST_F(VulkanValidationFixture, ShaderProgram_makePipelineLayout_gapFilledCorrec
                                        {});
 
     ASSERT_NO_THROW({
-        auto pipeline = VulkanDevice->createGraphicsPipeline(makeMinimalPipelineCreateInfo(
+        auto pipeline = VulkanDevice->createGraphicsPipeline(makeMinimalPipelineParameters(
             VulkanDevice, shaderProgram, *renderPass, *shaderProgram->pipelineLayout));
     });
 

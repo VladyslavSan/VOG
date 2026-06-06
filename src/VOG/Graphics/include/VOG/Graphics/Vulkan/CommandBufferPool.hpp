@@ -30,7 +30,7 @@ class CommandBufferHandle
 public:
     CommandBufferHandle(CommandBufferHandle&&) = default;
 
-    ~CommandBufferHandle();
+    ~CommandBufferHandle() noexcept(false);
 
     vk::CommandBuffer consumeForSubmission(std::shared_ptr<FencePool::FenceHandle> fence);
 
@@ -64,7 +64,7 @@ class CommandBufferPool : public std::enable_shared_from_this<CommandBufferPool>
     friend class CommandBufferHandle;
     friend class Device;
 
-    CommandBufferPool(const DevicePtr& device);
+    explicit CommandBufferPool(const DevicePtr& device);
 
     struct SubmittedCommandBuffer
     {

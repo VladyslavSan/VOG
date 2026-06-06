@@ -43,7 +43,7 @@ public:
         StaticVector<vk::PipelineColorBlendAttachmentState, Limits::gMaxNumAttachments> attachments;
     };
 
-    struct CreateInfo
+    struct ParametersLegacy
     {
         DevicePtr                                   device;
         vk::Optional<const vk::raii::PipelineCache> cache;
@@ -60,7 +60,7 @@ public:
         std::uint32_t                               subpass;
     };
 
-    struct CreateInfoFromDescription
+    struct Parameters
     {
         DevicePtr                                   device;
         vk::Optional<const vk::raii::PipelineCache> cache;
@@ -79,9 +79,9 @@ public:
 private:
     friend class Device;
 
-    GraphicsPipeline(CreateInfo createInfo);
+    explicit GraphicsPipeline(ParametersLegacy createInfo);
 
-    GraphicsPipeline(CreateInfoFromDescription createInfo);
+    GraphicsPipeline(Parameters createInfo);
 
 public:
     const RenderpassDescription renderpassDescription;

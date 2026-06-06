@@ -37,7 +37,7 @@ validateVertexAttributes(const ShaderProgram& shaderProgram, const VertexLayout&
     return true;
 }
 
-GraphicsPipeline::GraphicsPipeline(CreateInfo createInfo)
+GraphicsPipeline::GraphicsPipeline(ParametersLegacy createInfo)
     : vk::raii::Pipeline{nullptr}
     , renderpassDescription{createInfo.renderPass.getRenderpassDescription()}
     , device{std::move(createInfo.device)}
@@ -123,7 +123,7 @@ GraphicsPipeline::GraphicsPipeline(CreateInfo createInfo)
     }
 }
 
-GraphicsPipeline::GraphicsPipeline(CreateInfoFromDescription createInfo)
+GraphicsPipeline::GraphicsPipeline(Parameters createInfo)
     : vk::raii::Pipeline{nullptr}
     , renderpassDescription{createInfo.renderpassDescription}
     , device{std::move(createInfo.device)}

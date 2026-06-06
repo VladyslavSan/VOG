@@ -28,12 +28,14 @@ using namespace VOG::Math;
 namespace VOG::Engine
 {
 Renderer::~Renderer()
-try
 {
-    requestRenderChangeState(RenderJobState::eInactive);
-}
-catch (...) // NOLINT(bugprone-empty-catch)
-{
+    try
+    {
+        requestRenderChangeState(RenderJobState::eInactive);
+    }
+    catch (...) // NOLINT(bugprone-empty-catch)
+    {
+    }
 }
 
 Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle,
@@ -161,7 +163,7 @@ Renderer::render()
 
         auto program = mShaderProgramCache->get("WorldSpace");
 
-        auto pipeline = mVulkanDevice->createGraphicsPipeline(GraphicsPipeline::CreateInfo{
+        auto pipeline = mVulkanDevice->createGraphicsPipeline(GraphicsPipeline::ParametersLegacy{
             .device         = mVulkanDevice,
             .cache          = nullptr,
             .shading        = program,

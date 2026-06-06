@@ -76,9 +76,9 @@ public:
         AttachmentInterfacePtr depthStencilAttachment);
     std::shared_ptr<ShaderProgram> createShaderProgram(ShaderProgram::ShadingStages stages);
     std::shared_ptr<GraphicsPipeline>
-    createGraphicsPipeline(GraphicsPipeline::CreateInfo createInfo);
+    createGraphicsPipeline(GraphicsPipeline::ParametersLegacy createInfo);
     std::shared_ptr<GraphicsPipeline>
-    createGraphicsPipeline(GraphicsPipeline::CreateInfoFromDescription createInfo);
+                                  createGraphicsPipeline(GraphicsPipeline::Parameters createInfo);
     std::shared_ptr<Swapchain>    createSwapchain(const Swapchain::SwapchainParameters& parameters);
     std::shared_ptr<RenderBuffer> createRenderBuffer(AttachmentUsage         usage,
                                                      vk::Format              desiredFormat,

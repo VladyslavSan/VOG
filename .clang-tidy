@@ -1,4 +1,15 @@
-Checks:          'clang-diagnostic-*,clang-analyzer-*,-*,bugprone-*,readability-*,performance-*,modernize-use-override,modernize-use-emplace,concurrency-mt-unsafe,-readability-uppercase-literal-suffix,-readability-convert-member-functions-to-static'
+Checks: >
+  -*,
+  clang-diagnostic-*,
+  clang-analyzer-*,
+  bugprone-*,
+  readability-*,
+  performance-*,
+  modernize-use-override,
+  modernize-use-emplace,
+  concurrency-mt-unsafe,
+  -readability-uppercase-literal-suffix,
+#  cppcoreguidelines-*
 WarningsAsErrors: ''
 HeaderFilterRegex: ''
 FormatStyle:     none
@@ -121,7 +132,7 @@ CheckOptions:
   - key:    readability-identifier-naming.UnionCase
     value:  CamelCase
 
-  # Class rules
+#Class rules
   - key:    readability-identifier-naming.ClassCase
     value:  CamelCase
   - key:    readability-identifier-naming.MethodCase
@@ -131,7 +142,7 @@ CheckOptions:
   - key:    readability-identifier-naming.ClassMemberPrefix
     value:  'm'
 
-  # Enum rules
+#Enum rules
   - key:    readability-identifier-naming.EnumCase
     value:  CamelCase
   - key:    readability-identifier-naming.EnumConstantCase
@@ -143,7 +154,7 @@ CheckOptions:
   - key:    readability-identifier-naming.ScopedEnumConstantPrefix
     value:  'e'
 
-  # Constants
+#Constants
   - key:    readability-identifier-naming.StaticConstantCase
     value:  CamelCase
   - key:    readability-identifier-naming.StaticConstantPrefix
@@ -157,4 +168,4 @@ CheckOptions:
   - key:    readability-identifier-naming.GlobalConstantPrefix
     value:  'g'
   - key:    readability-identifier-naming.GlobalVariablePrefix
-    value:  'g'    
+    value:  'g'

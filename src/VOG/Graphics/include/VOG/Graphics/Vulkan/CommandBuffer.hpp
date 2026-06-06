@@ -23,7 +23,7 @@ public:
         eEmpty,
         eRecording,
         eRecordingEnded,
-        eSubmited,
+        eSubmitted,
         // eFinishedExecution
     };
 
@@ -39,6 +39,10 @@ protected:
 
 class CommandBuffer : public vk::raii::CommandBuffer
 {
+    friend class CommandBufferPool;
+
+    CommandBuffer(vk::raii::CommandBuffer commandBuffer, CommandBufferType type);
+
 public:
     constexpr static std::size_t kMaxNumVertexBufferBind = 8u;
 
@@ -47,13 +51,6 @@ public:
         std::shared_ptr<Buffer> buffer;
         const vk::DeviceSize    offset;
     };
-
-    static std::vector<CommandBuffer> create(const vk::raii::Device&      device,
-                                             const vk::raii::CommandPool& commandPool,
-                                             CommandBufferType            level,
-                                             std::uint32_t                count);
-
-    CommandBuffer(vk::raii::CommandBuffer commandBuffer, CommandBufferType type);
 
     CommandBuffer(const CommandBuffer&) = delete;
     CommandBuffer(CommandBuffer&&)      = default;
