@@ -45,7 +45,6 @@ public:
 
     struct ParametersLegacy
     {
-        DevicePtr                                   device;
         vk::Optional<const vk::raii::PipelineCache> cache;
         ShaderProgramPtr                            shading;
         VertexLayout                                vertexLayout;
@@ -62,7 +61,6 @@ public:
 
     struct Parameters
     {
-        DevicePtr                                   device;
         vk::Optional<const vk::raii::PipelineCache> cache;
         ShaderProgramPtr                            shading;
         VertexLayout                                vertexLayout;
@@ -79,9 +77,9 @@ public:
 private:
     friend class Device;
 
-    explicit GraphicsPipeline(ParametersLegacy createInfo);
+    explicit GraphicsPipeline(DevicePtr device, ParametersLegacy createInfo);
 
-    GraphicsPipeline(Parameters createInfo);
+    explicit GraphicsPipeline(DevicePtr device, Parameters createInfo);
 
 public:
     const RenderpassDescription renderpassDescription;

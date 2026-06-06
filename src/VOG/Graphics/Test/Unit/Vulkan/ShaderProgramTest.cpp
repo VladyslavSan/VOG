@@ -54,13 +54,11 @@ void main() { gl_Position = inPosition + pc.transform; }
 )";
 
 GraphicsPipeline::ParametersLegacy
-makeMinimalPipelineParameters(DevicePtr                 device,
-                              ShaderProgramPtr          program,
+makeMinimalPipelineParameters(ShaderProgramPtr          program,
                               const RenderPass&         renderPass,
                               const vk::PipelineLayout& layout)
 {
     return GraphicsPipeline::ParametersLegacy{
-        .device        = device,
         .cache         = nullptr,
         .shading       = program,
         .vertexLayout  = {.bindingDescription   = {{.binding   = 0u,
@@ -252,7 +250,7 @@ TEST_F(VulkanValidationFixture, ShaderProgram_makePipelineLayout_gapFilledCorrec
 
     ASSERT_NO_THROW({
         auto pipeline = VulkanDevice->createGraphicsPipeline(makeMinimalPipelineParameters(
-            VulkanDevice, shaderProgram, *renderPass, *shaderProgram->pipelineLayout));
+            shaderProgram, *renderPass, *shaderProgram->pipelineLayout));
     });
 
     EXPECT_TRUE(validationErrors.empty())

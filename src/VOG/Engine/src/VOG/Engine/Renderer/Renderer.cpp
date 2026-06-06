@@ -164,7 +164,6 @@ Renderer::render()
         auto program = mShaderProgramCache->get("WorldSpace");
 
         auto pipeline = mVulkanDevice->createGraphicsPipeline(GraphicsPipeline::ParametersLegacy{
-            .device         = mVulkanDevice,
             .cache          = nullptr,
             .shading        = program,
             .vertexLayout   = {.bindingDescription =

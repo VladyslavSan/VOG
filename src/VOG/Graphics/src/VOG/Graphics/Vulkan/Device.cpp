@@ -253,13 +253,15 @@ Device::createShaderProgram(ShaderProgram::ShadingStages stages)
 std::shared_ptr<GraphicsPipeline>
 Device::createGraphicsPipeline(GraphicsPipeline::ParametersLegacy createInfo)
 {
-    return std::shared_ptr<GraphicsPipeline>(new GraphicsPipeline{std::move(createInfo)});
+    return std::shared_ptr<GraphicsPipeline>(
+        new GraphicsPipeline{shared_from_this(), std::move(createInfo)});
 }
 
 std::shared_ptr<GraphicsPipeline>
 Device::createGraphicsPipeline(GraphicsPipeline::Parameters createInfo)
 {
-    return std::shared_ptr<GraphicsPipeline>(new GraphicsPipeline{std::move(createInfo)});
+    return std::shared_ptr<GraphicsPipeline>(
+        new GraphicsPipeline{shared_from_this(), std::move(createInfo)});
 }
 
 std::shared_ptr<Swapchain>

@@ -52,7 +52,6 @@ TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
     vk::raii::PipelineLayout pipelineLayout{*VulkanDevice, vk::PipelineLayoutCreateInfo{}};
 
     const GraphicsPipeline::ParametersLegacy createInfoTemplate{
-        .device  = VulkanDevice,
         .cache   = nullptr,
         .shading = {},
         .vertexLayout =
