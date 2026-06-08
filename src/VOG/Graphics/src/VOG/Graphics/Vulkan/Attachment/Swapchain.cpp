@@ -63,12 +63,12 @@ Swapchain::Swapchain(DevicePtr device, const SwapchainParameters& parameters)
                                          mDevice->queueInfos.graphics.familyIndex}
     , mPresentQueue{*mDevice, mPresentQueueFamilyIndex, 0}
     , mSwapchain{nullptr}
-    , mSurfaceFormat{mDevice->getPhysicalDevice().getSurfaceFormatsKHR(**mSurface).at(0u)}
+    , mSurfaceFormat{mDevice->getSurfaceFormatsKHR(**mSurface).at(0u)}
 {
     mFormat = mSurfaceFormat.format;
 
-    auto surfaceCapabilities = mDevice->getPhysicalDevice().getSurfaceCapabilitiesKHR(**mSurface);
-    auto surfacePresentModes = mDevice->getPhysicalDevice().getSurfacePresentModesKHR(**mSurface);
+    auto surfaceCapabilities = mDevice->getSurfaceCapabilitiesKHR(**mSurface);
+    auto surfacePresentModes = mDevice->getSurfacePresentModesKHR(**mSurface);
 
     vk::Extent2D surfaceSize;
     if (surfaceCapabilities.currentExtent.width != std::numeric_limits<uint32_t>::max() &&

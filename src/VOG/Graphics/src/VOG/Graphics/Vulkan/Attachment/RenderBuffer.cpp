@@ -36,10 +36,8 @@ RenderBuffer::RenderBuffer(DevicePtr               device,
     mImage                       = std::make_shared<vk::raii::Image>(*mDevice, imageCreateInfo);
     auto imageMemoryRequirements = mImage->getMemoryRequirements();
 
-    std::uint32_t memoryTypeIndex =
-        FindMemoryType(mDevice->getPhysicalDevice().getMemoryProperties(),
-                       imageMemoryRequirements.memoryTypeBits,
-                       memoryProperties);
+    std::uint32_t memoryTypeIndex = FindMemoryType(
+        mDevice->getMemoryProperties(), imageMemoryRequirements.memoryTypeBits, memoryProperties);
     vk::MemoryAllocateInfo memoryAllocateInfo{.allocationSize  = imageMemoryRequirements.size,
                                               .memoryTypeIndex = memoryTypeIndex};
     mMemory = std::make_shared<vk::raii::DeviceMemory>(*mDevice, memoryAllocateInfo);

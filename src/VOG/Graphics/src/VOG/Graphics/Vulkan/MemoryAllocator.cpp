@@ -98,11 +98,11 @@ MemoryAllocator::MemoryAllocator(const DevicePtr& device)
     };
 
     VmaAllocatorCreateInfo allocatorInfo = {
-        .physicalDevice   = *mDevice->getPhysicalDevice(),
+        .physicalDevice   = *static_cast<const PhysicalDevice&>(*mDevice),
         .device           = **mDevice,
         .pVulkanFunctions = &vulkanFunctions,
         .instance         = **mDevice->instance,
-        .vulkanApiVersion = mDevice->getPhysicalDevice().getProperties2().properties.apiVersion,
+        .vulkanApiVersion = mDevice->getProperties2().properties.apiVersion,
     };
 
     auto result = vmaCreateAllocator(&allocatorInfo, &mAllocator);

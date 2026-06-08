@@ -306,10 +306,4 @@ Device::createBuffer(const vk::BufferCreateInfo&                  createInfo,
 {
     return mMemoryAllocator->makeBuffer(createInfo, allocationInfo);
 }
-
-const PhysicalDevice&
-Device::getPhysicalDevice() const
-{
-    return *this;
-}
 } // namespace VOG::Graphics::Vulkan

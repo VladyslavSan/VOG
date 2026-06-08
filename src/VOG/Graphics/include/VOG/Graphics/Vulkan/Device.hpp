@@ -62,11 +62,6 @@ public:
     using vk::raii::Device::getDispatcher;
 
     /**
-     * @return The underlying physical device.
-     */
-    const PhysicalDevice& getPhysicalDevice() const;
-
-    /**
      * @return The device's shared fence pool.
      */
     const FencePoolPtr& getFencePool() const;
