@@ -10,6 +10,7 @@
 namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Device);
+
 class DescriptorAllocator
 {
     friend class Device;

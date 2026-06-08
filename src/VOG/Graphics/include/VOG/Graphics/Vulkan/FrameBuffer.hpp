@@ -11,6 +11,7 @@ namespace VOG::Graphics::Vulkan
 VOG_DECLARE_PTR(AttachmentInterface);
 VOG_DECLARE_PTR(Device);
 VOG_DECLARE_PTR(RenderPass);
+
 class Framebuffer : public vk::raii::Framebuffer
 {
     friend class Device;

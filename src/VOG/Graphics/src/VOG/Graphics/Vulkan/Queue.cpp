@@ -30,6 +30,7 @@ toVector(R&& range)
     return vec;
 }
 } // namespace
+
 Queue::Queue(const Device&             _device,
              std::uint32_t             _familyIndex,
              vk::QueueFamilyProperties _familyProperties)

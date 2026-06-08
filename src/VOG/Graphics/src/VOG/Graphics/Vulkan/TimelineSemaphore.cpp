@@ -35,6 +35,7 @@ TimelineSemaphore::incrementCounter()
 {
     ++mCurrentValue;
 }
+
 TimelineSemaphore::
 operator WaitRequest() const
 {

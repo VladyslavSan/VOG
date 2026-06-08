@@ -48,6 +48,7 @@ protected:
 
     std::shared_ptr<RenderPass> mCurrentRenderPass;
 };
+
 VOG_DECLARE_PTR(CommandBufferRecorder);
 
 inline Vulkan::CommandBuffer*

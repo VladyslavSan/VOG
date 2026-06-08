@@ -134,5 +134,6 @@ public:
     const vk::raii::ShaderModule  module;
     const Reflection              reflection;
 };
+
 using ShaderPtr = std::shared_ptr<Shader>;
 } // namespace VOG::Graphics::Vulkan

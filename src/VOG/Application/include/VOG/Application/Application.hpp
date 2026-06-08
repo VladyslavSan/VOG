@@ -13,6 +13,7 @@ namespace VOG::Application
 {
 struct SDLHandle;
 class SDLWindow;
+
 class Application
 {
 public:
