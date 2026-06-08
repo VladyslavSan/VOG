@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Limits.hpp>
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 
@@ -8,6 +9,8 @@
 
 namespace VOG::Graphics::Vulkan
 {
+VOG_DECLARE_PTR(Device);
+
 class ShaderProgram
 {
 public:
@@ -70,12 +73,11 @@ public:
         std::vector<vk::PushConstantRange> ranges;
     };
 
-    static std::shared_ptr<ShaderProgram> create(ShadingStages stages);
-
-public: // use create()
-    ShaderProgram(ShadingStagesChecked stages);
-
 private:
+    friend class Device;
+
+    ShaderProgram(DevicePtr device, ShadingStagesChecked stages);
+
     const DevicePtr device;
 
 public:

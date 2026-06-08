@@ -1,7 +1,17 @@
 #include "VOG/Graphics/Vulkan/Device.hpp"
 
+#include <VOG/Graphics/Vulkan/Attachment/RenderBuffer.hpp>
+#include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
+#include <VOG/Graphics/Vulkan/Buffer.hpp>
+#include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
+#include <VOG/Graphics/Vulkan/DescriptorAllocator.hpp>
 #include <VOG/Graphics/Vulkan/FencePool.hpp>
+#include <VOG/Graphics/Vulkan/FrameBuffer.hpp>
+#include <VOG/Graphics/Vulkan/Instance.hpp>
 #include <VOG/Graphics/Vulkan/MemoryAllocator.hpp>
+#include <VOG/Graphics/Vulkan/RenderPass.hpp>
+#include <VOG/Graphics/Vulkan/Shader.hpp>
+#include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -164,9 +174,9 @@ PhysicalDevice::PhysicalDevice(vk::raii::PhysicalDevice physicalDevice)
 }
 
 Device::Device(InstancePtr _instance, vk::raii::PhysicalDevice physicalDevice)
-    : instance{std::move(_instance)}
-    , PhysicalDevice{std::move(physicalDevice)}
+    : PhysicalDevice{std::move(physicalDevice)}
     , vk::raii::Device{makeDevice(*this, queueInfos)}
+    , instance{std::move(_instance)}
     , graphicsQueue{*this, queueInfos.graphics.familyIndex, queueInfos.graphics.familyProperties}
     , transferQueue{*this, queueInfos.transfer.familyIndex, queueInfos.transfer.familyProperties}
     , pipelineCache{*this, {}}
@@ -176,13 +186,17 @@ Device::Device(InstancePtr _instance, vk::raii::PhysicalDevice physicalDevice)
 void
 Device::init()
 {
-    const_cast<MemoryAllocatorPtr&>(memoryAllocator) =
-        std::shared_ptr<MemoryAllocator>(new MemoryAllocator{shared_from_this()});
-    const_cast<FencePoolPtr&>(fencePool) =
-        std::shared_ptr<FencePool>{new FencePool{shared_from_this()}};
+    mMemoryAllocator = std::shared_ptr<MemoryAllocator>(new MemoryAllocator{shared_from_this()});
+    mFencePool       = std::shared_ptr<FencePool>{new FencePool{shared_from_this()}};
 }
 
 Device::~Device() = default;
+
+const FencePoolPtr&
+Device::getFencePool() const
+{
+    return mFencePool;
+}
 
 ShaderPtr
 Device::createShader(Shader::ShadingStage stage, std::span<const std::uint32_t> binary)
@@ -190,9 +204,106 @@ Device::createShader(Shader::ShadingStage stage, std::span<const std::uint32_t> 
     return std::shared_ptr<Shader>(new Shader{shared_from_this(), stage, binary});
 }
 
-const PhysicalDevice&
-Device::getPhysicalDevice() const
+Fence
+Device::createFence()
 {
-    return *this;
+    return Fence{shared_from_this()};
+}
+
+TimelineSemaphore
+Device::createTimelineSemaphore()
+{
+    return TimelineSemaphore{shared_from_this()};
+}
+
+std::shared_ptr<RenderPass>
+Device::createRenderPass(const StaticVector<vk::AttachmentDescription,
+                                            Limits::gMaxNumAttachments - 1u>& colorAttachments,
+                         const vk::AttachmentDescription&                     depthStencil)
+{
+    return std::shared_ptr<RenderPass>(
+        new RenderPass{shared_from_this(), colorAttachments, depthStencil});
+}
+
+std::shared_ptr<CommandBufferPool>
+Device::createCommandBufferPool()
+{
+    return std::shared_ptr<CommandBufferPool>(new CommandBufferPool{shared_from_this()});
+}
+
+std::shared_ptr<Framebuffer>
+Device::createFramebuffer(
+    std::shared_ptr<RenderPass>                                           renderPass,
+    StaticVector<AttachmentInterfacePtr, Limits::gMaxNumAttachments - 1u> colorAttachments,
+    AttachmentInterfacePtr                                                depthStencilAttachment)
+{
+    return std::shared_ptr<Framebuffer>(new Framebuffer{shared_from_this(),
+                                                        std::move(renderPass),
+                                                        std::move(colorAttachments),
+                                                        std::move(depthStencilAttachment)});
+}
+
+std::shared_ptr<ShaderProgram>
+Device::createShaderProgram(ShaderProgram::ShadingStages stages)
+{
+    return std::shared_ptr<ShaderProgram>(new ShaderProgram{
+        shared_from_this(), ShaderProgram::ShadingStagesChecked{std::move(stages)}});
+}
+
+std::shared_ptr<GraphicsPipeline>
+Device::createGraphicsPipeline(GraphicsPipeline::ParametersLegacy createInfo)
+{
+    return std::shared_ptr<GraphicsPipeline>(
+        new GraphicsPipeline{shared_from_this(), std::move(createInfo)});
+}
+
+std::shared_ptr<GraphicsPipeline>
+Device::createGraphicsPipeline(GraphicsPipeline::Parameters createInfo)
+{
+    return std::shared_ptr<GraphicsPipeline>(
+        new GraphicsPipeline{shared_from_this(), std::move(createInfo)});
+}
+
+std::shared_ptr<Swapchain>
+Device::createSwapchain(const Swapchain::SwapchainParameters& parameters)
+{
+    return std::shared_ptr<Swapchain>(new Swapchain{shared_from_this(), parameters});
+}
+
+std::shared_ptr<RenderBuffer>
+Device::createRenderBuffer(AttachmentUsage         usage,
+                           vk::Format              desiredFormat,
+                           vk::Extent2D            extent,
+                           SampleCount             sampleCount,
+                           std::uint32_t           mipLevels,
+                           std::uint32_t           arrayLevels,
+                           vk::ImageTiling         imageTiling,
+                           vk::ImageLayout         initialLayout,
+                           vk::MemoryPropertyFlags memoryProperties)
+{
+    return std::shared_ptr<RenderBuffer>(new RenderBuffer{shared_from_this(),
+                                                          usage,
+                                                          desiredFormat,
+                                                          extent,
+                                                          sampleCount,
+                                                          mipLevels,
+                                                          arrayLevels,
+                                                          imageTiling,
+                                                          initialLayout,
+                                                          memoryProperties});
+}
+
+std::unique_ptr<DescriptorAllocator>
+Device::createDescriptorAllocator(const DescriptorAllocator::ConstructionParameters& params)
+{
+    return std::unique_ptr<DescriptorAllocator>(
+        new DescriptorAllocator{shared_from_this(), params});
+}
+
+std::unique_ptr<Buffer>
+Device::createBuffer(const vk::BufferCreateInfo&                  createInfo,
+                     const MemoryAllocator::AllocationParameters& allocationInfo)
+{
+    return mMemoryAllocator->makeBuffer(createInfo, allocationInfo);
 }
 } // namespace VOG::Graphics::Vulkan

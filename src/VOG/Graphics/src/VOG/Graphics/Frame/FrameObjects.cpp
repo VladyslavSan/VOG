@@ -18,7 +18,7 @@ FrameObjects::FrameObjects(const Vulkan::DevicePtr& device, std::size_t threadCo
                     threadCount,
                     [this]()
                     {
-                        return Vulkan::CommandBufferPool::create(mDevice);
+                        return mDevice->createCommandBufferPool();
                     });
 }
 

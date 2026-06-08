@@ -30,6 +30,7 @@ toVector(R&& range)
     return vec;
 }
 } // namespace
+
 Queue::Queue(const Device&             _device,
              std::uint32_t             _familyIndex,
              vk::QueueFamilyProperties _familyProperties)
@@ -43,6 +44,6 @@ Queue::Queue(const Device&             _device,
 std::shared_ptr<FencePool::FenceHandle>
 Queue::getFenceHandle(const Device& device)
 {
-    return device.fencePool->getShared();
+    return device.getFencePool()->getShared();
 }
 } // namespace VOG::Graphics::Vulkan

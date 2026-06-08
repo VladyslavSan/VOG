@@ -39,11 +39,13 @@ public:
            Common::ContiguousSizedRangeOf<CommandBufferHandle> auto           commandBuffers,
            const Common::ContiguousSizedRangeOf<vk::Semaphore> auto& signalSemaphores) const
     {
+        auto fence = getFenceHandle(device);
+
         std::vector<vk::CommandBuffer> commandBuffersTmp;
         commandBuffersTmp.reserve(commandBuffers.size());
         for (CommandBufferHandle& handle : commandBuffers)
         {
-            commandBuffersTmp.push_back(handle.consumeForSubmission(getFenceHandle(device)));
+            commandBuffersTmp.push_back(handle.consumeForSubmission(fence));
         }
 
         vk::SubmitInfo submitInfo{
@@ -56,7 +58,7 @@ public:
             .pSignalSemaphores    = std::ranges::data(signalSemaphores),
         };
 
-        vk::raii::Queue::submit(submitInfo);
+        vk::raii::Queue::submit(submitInfo, **fence->useFence());
     }
 
     const Device&                   device;

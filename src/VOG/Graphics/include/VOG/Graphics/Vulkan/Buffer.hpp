@@ -8,6 +8,8 @@ class Buffer
     : protected MemoryAllocator::Allocation
     , public vk::raii::Buffer
 {
+    friend class MemoryAllocator;
+
 public:
     template <class PtrType = std::byte*>
     struct MemoryMapping
@@ -39,11 +41,12 @@ public:
         MemoryMapping(MemoryMapping&&)      = delete;
     };
 
-    Buffer(MemoryAllocator::Allocation allocation, vk::raii::Buffer buffer);
-
     [[nodiscard]] MemoryMapping<std::byte*> mapForWrite();
 
     [[nodiscard]] MemoryMapping<const std::byte*> mapForRead();
+
+private:
+    Buffer(MemoryAllocator::Allocation allocation, vk::raii::Buffer buffer);
 };
 
 template <class PtrType>

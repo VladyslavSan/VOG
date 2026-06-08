@@ -182,6 +182,7 @@ protected:
 };
 
 static SystemImpl gSystem{};
+
 SystemInterface*
 SystemInterface::get()
 {

@@ -4,14 +4,14 @@
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 
-#include <cstdint>
 #include <memory>
 
 namespace VOG::Graphics::Vulkan
 {
-class Buffer;
+VOG_DECLARE_PTR(Buffer);
 VOG_DECLARE_PTR(MemoryAllocator);
 VOG_DECLARE_PTR(Device);
+
 class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator>
 {
     friend class Device;
@@ -19,29 +19,29 @@ class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator>
 
 public:
     class Allocation;
-    struct AllocationInfo;
+    struct AllocationParameters;
 
     ~MemoryAllocator();
 
     operator VmaAllocator() const;
 
-    std::unique_ptr<Buffer> makeBuffer(const vk::BufferCreateInfo& createInfo,
-                                       const AllocationInfo&       allocationCreateInfo);
-
-public:
     const DevicePtr mDevice;
 
 protected:
     VmaAllocator mAllocator;
+
+private:
+    std::unique_ptr<Buffer> makeBuffer(const vk::BufferCreateInfo& createInfo,
+                                       const AllocationParameters& allocationCreateInfo);
 };
 
-struct MemoryAllocator::AllocationInfo
+struct MemoryAllocator::AllocationParameters
 {
     VmaAllocationCreateFlags flags;
-    VmaMemoryUsage           usage          = VMA_MEMORY_USAGE_AUTO;
-    vk::MemoryPropertyFlags  requiredFlags  = {};
-    vk::MemoryPropertyFlags  preferredFlags = {};
-    const char*              tag            = nullptr;
+    VmaMemoryUsage           usage = VMA_MEMORY_USAGE_AUTO;
+    vk::MemoryPropertyFlags  requiredFlags;
+    vk::MemoryPropertyFlags  preferredFlags;
+    const char*              tag = nullptr;
 
     operator VmaAllocationCreateInfo() const noexcept;
 };
@@ -51,10 +51,10 @@ class MemoryAllocator::Allocation
 public:
     ~Allocation();
 
-    Allocation(MemoryAllocatorPtr allocator,
-               VmaAllocation      allocation,
-               VmaAllocationInfo  info,
-               AllocationInfo     createInfo);
+    Allocation(MemoryAllocatorPtr   allocator,
+               VmaAllocation        allocation,
+               VmaAllocationInfo    info,
+               AllocationParameters createInfo);
 
     Allocation(Allocation&&) noexcept;
 
@@ -71,7 +71,7 @@ protected:
     const VmaAllocationInfo info;
 
     /** Creation info*/
-    const AllocationInfo createInfo;
+    const AllocationParameters createInfo;
 
     /** Is this allocation is mapped persistently. If yes there - no need to call map/unmap */
     const bool isPersistentlyMapped;

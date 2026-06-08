@@ -49,13 +49,16 @@ public:
 
     ~Swapchain();
 
+private:
+    friend class Device;
+
     Swapchain(DevicePtr device, const SwapchainParameters& parameters);
 
+public:
     ImageAcquireResult acquireNextImage();
 
     vk::Result present(vk::ArrayProxy<const vk::Semaphore> waitSemaphores);
 
-public: // from AttachmentInterface
     const vk::Image&                            getImage() const override;
     const std::shared_ptr<vk::raii::ImageView>& getImageView() const override;
 

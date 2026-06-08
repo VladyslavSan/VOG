@@ -2,24 +2,6 @@
 
 namespace VOG::Graphics::Vulkan
 {
-std::vector<CommandBuffer>
-CommandBuffer::create(const vk::raii::Device&      device,
-                      const vk::raii::CommandPool& commandPool,
-                      CommandBufferType            level,
-                      std::uint32_t                count)
-{
-    vk::raii::CommandBuffers commandBuffers{
-        device, {.commandPool = *commandPool, .level = level, .commandBufferCount = count}};
-    std::vector<CommandBuffer> result{};
-    result.reserve(count);
-    for (auto& commandBuffer : commandBuffers)
-    {
-        result.emplace_back(std::move(commandBuffer), level);
-    }
-
-    return result;
-}
-
 CommandBuffer::CommandBuffer(vk::raii::CommandBuffer commandBuffer, CommandBufferType _type)
     : vk::raii::CommandBuffer{std::move(commandBuffer)}
     , type{_type}

@@ -5,6 +5,7 @@
 namespace VOG::Scene
 {
 Scene::Scene() {}
+
 Scene::~Scene() {}
 
 bool

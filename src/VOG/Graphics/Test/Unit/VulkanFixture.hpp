@@ -2,6 +2,7 @@
 
 #include <VOG/Common/JSONContainer.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
+#include <VOG/Graphics/Vulkan/Instance.hpp>
 
 #include <gtest/gtest.h>
 

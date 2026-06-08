@@ -1,6 +1,7 @@
 #pragma once
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
+#include <VOG/Graphics/Typedefs.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -87,4 +88,5 @@ AttachmentInterface::getNumSamples() const
     return mSampleCount;
 }
 
+VOG_DECLARE_PTR(AttachmentInterface);
 } // namespace VOG::Graphics::Vulkan

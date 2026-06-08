@@ -38,12 +38,6 @@ public:
         FencePoolPtr mFencePool;
     };
 
-    static std::shared_ptr<FencePool>
-    create(DevicePtr device)
-    {
-        return std::shared_ptr<FencePool>(new FencePool{std::move(device)});
-    }
-
     FenceHandle get();
 
     std::shared_ptr<FenceHandle> getShared();

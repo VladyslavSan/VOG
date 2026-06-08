@@ -1,5 +1,6 @@
 #include "VOG/Graphics/Vulkan/FencePool.hpp"
 
+#include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/Fence.hpp>
 
 namespace VOG::Graphics::Vulkan
@@ -29,7 +30,7 @@ FencePool::get()
     {
         for (std::size_t i = 0u; i < gGrowthSize; ++i)
         {
-            mFences.emplace_back(mDevice);
+            mFences.push_back(mDevice->createFence());
         }
     }
 
@@ -46,7 +47,7 @@ FencePool::getShared()
     {
         for (std::size_t i = 0u; i < gGrowthSize; ++i)
         {
-            mFences.emplace_back(mDevice);
+            mFences.push_back(mDevice->createFence());
         }
     }
 

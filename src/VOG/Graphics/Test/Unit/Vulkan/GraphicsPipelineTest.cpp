@@ -42,18 +42,16 @@ TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
     using namespace VOG::Graphics::Vulkan;
 
     auto renderPass =
-        RenderPass::create(VulkanDevice,
-                           {{.format        = vk::Format::eR32G32B32A32Sfloat,
-                             .loadOp        = vk::AttachmentLoadOp::eClear,
-                             .storeOp       = vk::AttachmentStoreOp::eStore,
-                             .initialLayout = vk::ImageLayout::eUndefined,
-                             .finalLayout   = vk::ImageLayout::eColorAttachmentOptimal}},
-                           {});
+        VulkanDevice->createRenderPass({{.format        = vk::Format::eR32G32B32A32Sfloat,
+                                         .loadOp        = vk::AttachmentLoadOp::eClear,
+                                         .storeOp       = vk::AttachmentStoreOp::eStore,
+                                         .initialLayout = vk::ImageLayout::eUndefined,
+                                         .finalLayout = vk::ImageLayout::eColorAttachmentOptimal}},
+                                       {});
 
     vk::raii::PipelineLayout pipelineLayout{*VulkanDevice, vk::PipelineLayoutCreateInfo{}};
 
-    const GraphicsPipeline::CreateInfo createInfoTemplate{
-        .device  = VulkanDevice,
+    const GraphicsPipeline::ParametersLegacy createInfoTemplate{
         .cache   = nullptr,
         .shading = {},
         .vertexLayout =
@@ -86,12 +84,12 @@ TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
         auto fragmentShader =
             createShader(Shader::ShadingStage::eFragment, gFragmentShaderGoodString);
 
-        auto createInfo = createInfoTemplate;
-        createInfo.shading =
-            ShaderProgram::create({.vertex   = {.shader = vertexShader, .entryPoint = "main"},
-                                   .fragment = {.shader = fragmentShader, .entryPoint = "main"}});
+        auto createInfo    = createInfoTemplate;
+        createInfo.shading = VulkanDevice->createShaderProgram(
+            {.vertex   = {.shader = vertexShader, .entryPoint = "main"},
+             .fragment = {.shader = fragmentShader, .entryPoint = "main"}});
 
-        EXPECT_NO_THROW(auto pipeline = std::make_shared<GraphicsPipeline>(createInfo););
+        EXPECT_NO_THROW(auto pipeline = VulkanDevice->createGraphicsPipeline(createInfo););
     }
 }
 } // namespace VOG::Tests

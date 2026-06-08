@@ -43,9 +43,8 @@ public:
         StaticVector<vk::PipelineColorBlendAttachmentState, Limits::gMaxNumAttachments> attachments;
     };
 
-    struct CreateInfo
+    struct ParametersLegacy
     {
-        DevicePtr                                   device;
         vk::Optional<const vk::raii::PipelineCache> cache;
         ShaderProgramPtr                            shading;
         VertexLayout                                vertexLayout;
@@ -60,9 +59,8 @@ public:
         std::uint32_t                               subpass;
     };
 
-    struct CreateInfoFromDescription
+    struct Parameters
     {
-        DevicePtr                                   device;
         vk::Optional<const vk::raii::PipelineCache> cache;
         ShaderProgramPtr                            shading;
         VertexLayout                                vertexLayout;
@@ -76,9 +74,12 @@ public:
         RenderpassDescription                       renderpassDescription;
     };
 
-    GraphicsPipeline(CreateInfo createInfo);
+private:
+    friend class Device;
 
-    GraphicsPipeline(CreateInfoFromDescription createInfo);
+    explicit GraphicsPipeline(DevicePtr device, ParametersLegacy createInfo);
+
+    explicit GraphicsPipeline(DevicePtr device, Parameters createInfo);
 
 public:
     const RenderpassDescription renderpassDescription;

@@ -12,6 +12,8 @@ VOG_DECLARE_PTR(Device);
 
 class RenderPass : public vk::raii::RenderPass
 {
+    friend class Device;
+
 public:
     using AttachmentsDescription = vk::AttachmentDescription;
     using AttachmentsDescriptions =
@@ -19,18 +21,12 @@ public:
     using AttachmentsDescriptionsInternal =
         StaticVector<AttachmentsDescription, Limits::gMaxNumAttachments>;
 
-    static std::shared_ptr<RenderPass>
-    create(DevicePtr                      device,
-           const AttachmentsDescriptions& colorAttachments,
-           const AttachmentsDescription&  depthStencil)
-    {
-        return std::make_shared<RenderPass>(std::move(device), colorAttachments, depthStencil);
-    }
-
+private:
     RenderPass(DevicePtr                      device,
                const AttachmentsDescriptions& colorAttachments,
                const AttachmentsDescription&  depthStencil);
 
+public:
     RenderpassDescription getRenderpassDescription() const;
 
 protected:

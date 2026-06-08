@@ -10,7 +10,6 @@ PointerAlignment: Left
 ColumnLimit: 100
 FixNamespaceComments: true
 
-SortIncludes: "CaseSensitive"
 SortUsingDeclarations: true
 
 AlignAfterOpenBracket: true
@@ -35,11 +34,17 @@ IndentPPDirectives: BeforeHash
 
 #PackConstructorInitializers: Never
 
+EmptyLineBeforeAccessModifier: Always
+EmptyLineAfterAccessModifier: Never
+SeparateDefinitionBlocks: Always
+
 BreakBeforeBraces: Allman
 AlwaysBreakAfterDefinitionReturnType: All
 AlwaysBreakBeforeMultilineStrings: true
 AlwaysBreakTemplateDeclarations: Yes
 BreakInheritanceList: BeforeComma
+
+SortIncludes: "CaseSensitive"
 IncludeBlocks: Regroup
 IncludeIsMainRegex: ''
 IncludeCategories:

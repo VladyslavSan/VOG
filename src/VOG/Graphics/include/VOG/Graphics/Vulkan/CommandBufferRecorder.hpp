@@ -11,8 +11,8 @@
 
 namespace VOG::Graphics::Vulkan
 {
-class CommandBuffer;
-class Device;
+VOG_DECLARE_PTR(CommandBuffer);
+VOG_DECLARE_PTR(Device);
 VOG_DECLARE_PTR(Framebuffer);
 VOG_DECLARE_PTR(RenderPass);
 VOG_DECLARE_PTR(GraphicsPipeline);
@@ -48,6 +48,7 @@ protected:
 
     std::shared_ptr<RenderPass> mCurrentRenderPass;
 };
+
 VOG_DECLARE_PTR(CommandBufferRecorder);
 
 inline Vulkan::CommandBuffer*

@@ -48,7 +48,7 @@ successAcquirePresentResult(vk::Result result)
 
 Swapchain::SwapchainImageSyncData::SwapchainImageSyncData(const DevicePtr& device)
     : semaphore{*device, vk::SemaphoreCreateInfo{}}
-    , fence{device}
+    , fence{device->createFence()}
 {
 }
 
@@ -63,12 +63,12 @@ Swapchain::Swapchain(DevicePtr device, const SwapchainParameters& parameters)
                                          mDevice->queueInfos.graphics.familyIndex}
     , mPresentQueue{*mDevice, mPresentQueueFamilyIndex, 0}
     , mSwapchain{nullptr}
-    , mSurfaceFormat{mDevice->getPhysicalDevice().getSurfaceFormatsKHR(**mSurface).at(0u)}
+    , mSurfaceFormat{mDevice->getSurfaceFormatsKHR(**mSurface).at(0u)}
 {
     mFormat = mSurfaceFormat.format;
 
-    auto surfaceCapabilities = mDevice->getPhysicalDevice().getSurfaceCapabilitiesKHR(**mSurface);
-    auto surfacePresentModes = mDevice->getPhysicalDevice().getSurfacePresentModesKHR(**mSurface);
+    auto surfaceCapabilities = mDevice->getSurfaceCapabilitiesKHR(**mSurface);
+    auto surfacePresentModes = mDevice->getSurfacePresentModesKHR(**mSurface);
 
     vk::Extent2D surfaceSize;
     if (surfaceCapabilities.currentExtent.width != std::numeric_limits<uint32_t>::max() &&
@@ -179,6 +179,7 @@ Swapchain::getImage() const
         mCurrentSwapchainImageIndex,
         "Swapchain::acquireNextImage should have been called before calling this function.");
 
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
     return mSwapchainImages[mCurrentSwapchainImageIndex.value()];
 }
 
@@ -189,6 +190,7 @@ Swapchain::getImageView() const
         mCurrentSwapchainImageIndex,
         "Swapchain::acquireNextImage should have been called before calling this function.");
 
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
     return mImageViews[mCurrentSwapchainImageIndex.value()];
 }
 
@@ -226,7 +228,8 @@ Swapchain::present(const vk::ArrayProxy<const vk::Semaphore> waitSemaphores)
         .pWaitSemaphores    = waitSemaphores.data(),
         .swapchainCount     = 1u,
         .pSwapchains        = &*mSwapchain,
-        .pImageIndices      = &mCurrentSwapchainImageIndex.value(),
+        .pImageIndices =
+            &mCurrentSwapchainImageIndex.value(), // NOLINT(bugprone-unchecked-optional-access)
     };
 
     auto result = mPresentQueue.presentKHR(presentInfoKHR);

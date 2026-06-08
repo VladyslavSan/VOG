@@ -14,6 +14,7 @@ namespace
 struct GlslangProcess
 {
     GlslangProcess() { glslang::InitializeProcess(); }
+
     ~GlslangProcess() { glslang::FinalizeProcess(); }
 };
 

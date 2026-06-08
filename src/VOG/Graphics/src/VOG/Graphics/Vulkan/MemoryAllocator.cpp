@@ -2,6 +2,7 @@
 
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
+#include <VOG/Graphics/Vulkan/Instance.hpp>
 
 #include <stdexcept>
 
@@ -19,7 +20,7 @@ getMemoryFlags(VmaAllocator allocator, std::uint32_t memoryIndex)
 }
 } // namespace
 
-MemoryAllocator::AllocationInfo::
+MemoryAllocator::AllocationParameters::
 operator VmaAllocationCreateInfo() const noexcept
 {
     return {
@@ -31,10 +32,10 @@ operator VmaAllocationCreateInfo() const noexcept
     };
 }
 
-MemoryAllocator::Allocation::Allocation(MemoryAllocatorPtr      _allocator,
-                                        const VmaAllocation     _allocation,
-                                        const VmaAllocationInfo _info,
-                                        const AllocationInfo    _createInfo)
+MemoryAllocator::Allocation::Allocation(MemoryAllocatorPtr         _allocator,
+                                        const VmaAllocation        _allocation,
+                                        const VmaAllocationInfo    _info,
+                                        const AllocationParameters _createInfo)
     : allocator{std::move(_allocator)}
     , allocation{_allocation}
     , info{_info}
@@ -97,11 +98,11 @@ MemoryAllocator::MemoryAllocator(const DevicePtr& device)
     };
 
     VmaAllocatorCreateInfo allocatorInfo = {
-        .physicalDevice   = *mDevice->getPhysicalDevice(),
+        .physicalDevice   = *static_cast<const PhysicalDevice&>(*mDevice),
         .device           = **mDevice,
         .pVulkanFunctions = &vulkanFunctions,
         .instance         = **mDevice->instance,
-        .vulkanApiVersion = mDevice->getPhysicalDevice().getProperties2().properties.apiVersion,
+        .vulkanApiVersion = mDevice->getProperties2().properties.apiVersion,
     };
 
     auto result = vmaCreateAllocator(&allocatorInfo, &mAllocator);
@@ -115,7 +116,7 @@ MemoryAllocator::~MemoryAllocator() { vmaDestroyAllocator(mAllocator); }
 
 std::unique_ptr<Buffer>
 MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
-                            const AllocationInfo&       allocationCreateInfo)
+                            const AllocationParameters& allocationCreateInfo)
 {
     VkBuffer                buffer;
     VmaAllocation           allocation;
@@ -135,9 +136,9 @@ MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
         throw std::runtime_error{"Buffer creation failed."};
     }
 
-    return std::make_unique<Buffer>(
-        Allocation{shared_from_this(), allocation, allocationInfo, allocationCreateInfo},
-        vk::raii::Buffer{*mDevice, buffer});
+    return std::unique_ptr<Buffer>(
+        new Buffer{Allocation{shared_from_this(), allocation, allocationInfo, allocationCreateInfo},
+                   vk::raii::Buffer{*mDevice, buffer}});
 }
 
 MemoryAllocator::

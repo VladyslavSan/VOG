@@ -9,6 +9,7 @@ isDepthFormat(vk::Format format)
            format == vk::Format::eD16Unorm || format == vk::Format::eD32Sfloat ||
            format == vk::Format::eD16UnormS8Uint;
 }
+
 bool
 isStencilFormat(vk::Format format)
 {

@@ -28,8 +28,12 @@ public:
         const std::uint64_t      value     = 0u;
     };
 
+private:
+    friend class Device;
+
     TimelineSemaphore(const Vulkan::DevicePtr& device);
 
+public:
     [[nodiscard("Wait result can end with success, fail and timeout.")]] vk::Result
     waitOnCPU(std::uint64_t value, std::uint64_t timeout);
 

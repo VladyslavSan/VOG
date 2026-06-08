@@ -37,10 +37,10 @@ validateVertexAttributes(const ShaderProgram& shaderProgram, const VertexLayout&
     return true;
 }
 
-GraphicsPipeline::GraphicsPipeline(CreateInfo createInfo)
+GraphicsPipeline::GraphicsPipeline(DevicePtr _device, ParametersLegacy createInfo)
     : vk::raii::Pipeline{nullptr}
     , renderpassDescription{createInfo.renderPass.getRenderpassDescription()}
-    , device{std::move(createInfo.device)}
+    , device{std::move(_device)}
     , program{std::move(createInfo.shading)}
 {
     using ShadingStateInfo = vk::PipelineShaderStageCreateInfo;
@@ -123,10 +123,10 @@ GraphicsPipeline::GraphicsPipeline(CreateInfo createInfo)
     }
 }
 
-GraphicsPipeline::GraphicsPipeline(CreateInfoFromDescription createInfo)
+GraphicsPipeline::GraphicsPipeline(DevicePtr _device, Parameters createInfo)
     : vk::raii::Pipeline{nullptr}
     , renderpassDescription{createInfo.renderpassDescription}
-    , device{std::move(createInfo.device)}
+    , device{std::move(_device)}
     , program{std::move(createInfo.shading)}
 {
     using ShadingStateInfo = vk::PipelineShaderStageCreateInfo;

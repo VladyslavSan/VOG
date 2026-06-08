@@ -13,6 +13,7 @@ namespace VOG::Application
 {
 struct SDLHandle;
 class SDLWindow;
+
 class Application
 {
 public:
@@ -20,8 +21,8 @@ public:
     {
         // Generic application info.
         std::string   title  = "Application";
-        std::uint32_t width  = 640;
-        std::uint32_t height = 480;
+        std::uint32_t width  = 640u; // NOLINT(readability-magic-numbers)
+        std::uint32_t height = 480u; // NOLINT(readability-magic-numbers)
 
         // Vulkan extensions
         std::vector<std::string> extensions;
