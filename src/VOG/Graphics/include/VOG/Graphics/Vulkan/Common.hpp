@@ -18,7 +18,7 @@ struct RenderpassDescription
 {
     using ColorFormats = StaticVector<vk::Format, Limits::gMaxNumAttachments - 1>;
 
-    ColorFormats colorAttachmentFormats  = {};
+    ColorFormats colorAttachmentFormats;
     vk::Format   depthAttachmentFormat   = vk::Format::eUndefined;
     vk::Format   stencilAttachmentFormat = vk::Format::eUndefined;
 
