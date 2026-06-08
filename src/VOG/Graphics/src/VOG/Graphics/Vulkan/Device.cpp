@@ -246,8 +246,8 @@ Device::createFramebuffer(
 std::shared_ptr<ShaderProgram>
 Device::createShaderProgram(ShaderProgram::ShadingStages stages)
 {
-    return std::shared_ptr<ShaderProgram>(
-        new ShaderProgram{ShaderProgram::ShadingStagesChecked{std::move(stages)}});
+    return std::shared_ptr<ShaderProgram>(new ShaderProgram{
+        shared_from_this(), ShaderProgram::ShadingStagesChecked{std::move(stages)}});
 }
 
 std::shared_ptr<GraphicsPipeline>

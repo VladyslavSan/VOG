@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Limits.hpp>
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 
@@ -8,6 +9,8 @@
 
 namespace VOG::Graphics::Vulkan
 {
+VOG_DECLARE_PTR(Device);
+
 class ShaderProgram
 {
 public:
@@ -73,7 +76,7 @@ public:
 private:
     friend class Device;
 
-    ShaderProgram(ShadingStagesChecked stages);
+    ShaderProgram(DevicePtr device, ShadingStagesChecked stages);
 
     const DevicePtr device;
 

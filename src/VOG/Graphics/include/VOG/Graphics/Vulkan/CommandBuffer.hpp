@@ -18,7 +18,7 @@ using CommandBufferType = vk::CommandBufferLevel;
 class CommandBufferState
 {
 public:
-    enum class State
+    enum class State : std::uint8_t
     {
         eEmpty,
         eRecording,
@@ -80,7 +80,6 @@ public:
 
     void reset();
 
-public:
     const CommandBufferType type;
 
 protected:
