@@ -58,49 +58,119 @@ class Device
 public:
     ~Device(); // NOLINT(bugprone-derived-method-shadowing-base-method)
 
-    /** @brief Returns the underlying physical device. */
-    const PhysicalDevice& getPhysicalDevice() const;
-
-    /** @brief Returns the device's internal fence pool. */
-    const FencePoolPtr& getFencePool() const;
-
     using vk::raii::Device::operator*;
     using vk::raii::Device::getDispatcher;
 
-    /** @brief Compiles a single shader stage from a SPIR-V binary. */
+    /**
+     * @return The underlying physical device.
+     */
+    const PhysicalDevice& getPhysicalDevice() const;
+
+    /**
+     * @return The device's shared fence pool.
+     */
+    const FencePoolPtr& getFencePool() const;
+
+    /**
+     * Compiles a single shader stage from a SPIR-V binary.
+     *
+     * @param stage   Shader stage (vertex, fragment, etc.).
+     * @param binary  SPIR-V bytecode words.
+     *
+     * @return Compiled shader object.
+     */
     ShaderPtr createShader(Shader::ShadingStage stage, std::span<const std::uint32_t> binary);
 
-    /** @brief Links vertex and fragment shaders into a shader program with reflected layout. */
+    /**
+     * Links vertex and fragment shaders into a shader program.
+     * Descriptor set layouts and push constant ranges are derived through shader reflection.
+     *
+     * @param stages  Vertex and fragment shader stage descriptors.
+     *
+     * @return Linked shader program with a reflected pipeline layout.
+     */
     std::shared_ptr<ShaderProgram> createShaderProgram(ShaderProgram::ShadingStages stages);
 
-    /** @brief Creates a graphics pipeline using a legacy render-pass-based description. */
+    /**
+     * Creates a graphics pipeline using a legacy render-pass-based description.
+     *
+     * @param createInfo  Pipeline parameters including the render pass object.
+     *
+     * @return Compiled graphics pipeline.
+     */
     std::shared_ptr<GraphicsPipeline>
     createGraphicsPipeline(GraphicsPipeline::ParametersLegacy createInfo);
 
-    /** @brief Creates a graphics pipeline from a renderpass description. */
+    /**
+     * Creates a graphics pipeline from a renderpass description.
+     *
+     * @param createInfo  Pipeline parameters with a renderpass description.
+     *
+     * @return Compiled graphics pipeline.
+     */
     std::shared_ptr<GraphicsPipeline>
     createGraphicsPipeline(GraphicsPipeline::Parameters createInfo);
 
-    /** @brief Creates a render pass from color and depth/stencil attachment descriptions. */
+    /**
+     * Creates a render pass from attachment descriptions.
+     *
+     * @param colorAttachments  Descriptions of color attachments.
+     * @param depthStencil      Description of the depth/stencil attachment.
+     *
+     * @return Render pass object.
+     */
     std::shared_ptr<RenderPass>
     createRenderPass(const StaticVector<vk::AttachmentDescription, Limits::gMaxNumAttachments - 1u>&
                                                       colorAttachments,
                      const vk::AttachmentDescription& depthStencil);
 
-    /** @brief Creates a framebuffer binding color and depth/stencil attachments to a render pass.
+    /**
+     * Creates a framebuffer by binding attachments to a render pass.
+     *
+     * @param renderPass              Render pass the framebuffer is compatible with.
+     * @param colorAttachments        Color attachment views.
+     * @param depthStencilAttachment  Depth/stencil attachment view.
+     *
+     * @return Framebuffer object.
      */
     std::shared_ptr<Framebuffer> createFramebuffer(
         std::shared_ptr<RenderPass>                                           renderPass,
         StaticVector<AttachmentInterfacePtr, Limits::gMaxNumAttachments - 1u> colorAttachments,
         AttachmentInterfacePtr depthStencilAttachment);
 
-    /** @brief Creates a command buffer pool for recording GPU commands. */
+    /**
+     * Creates a command buffer pool for recording GPU commands.
+     *
+     * @note Each pool should be used from a single thread at a time.
+     *
+     * @return Command buffer pool.
+     */
     std::shared_ptr<CommandBufferPool> createCommandBufferPool();
 
-    /** @brief Creates a swapchain for presenting rendered frames to a window surface. */
+    /**
+     * Creates a swapchain for presenting rendered frames to a window surface.
+     *
+     * @param parameters  Swapchain creation parameters (surface, format, extent, etc.).
+     *
+     * @return Swapchain object.
+     */
     std::shared_ptr<Swapchain> createSwapchain(const Swapchain::SwapchainParameters& parameters);
 
-    /** @brief Creates an image-backed render attachment (color or depth/stencil). */
+    /**
+     * Creates an image-backed render attachment (color or depth/stencil).
+     *
+     * @param usage             Intended attachment usage.
+     * @param desiredFormat     Requested image format.
+     * @param extent            Width and height in pixels.
+     * @param sampleCount       MSAA sample count.
+     * @param mipLevels         Number of mip levels.
+     * @param arrayLevels       Number of array layers.
+     * @param imageTiling       Tiling mode (optimal or linear).
+     * @param initialLayout     Initial image layout.
+     * @param memoryProperties  Required memory property flags.
+     *
+     * @return Render buffer object.
+     */
     std::shared_ptr<RenderBuffer> createRenderBuffer(AttachmentUsage         usage,
                                                      vk::Format              desiredFormat,
                                                      vk::Extent2D            extent,
@@ -111,19 +181,42 @@ public:
                                                      vk::ImageLayout         initialLayout,
                                                      vk::MemoryPropertyFlags memoryProperties);
 
-    /** @brief Creates a descriptor allocator pre-configured with the given pool sizes. */
+    /**
+     * Creates a descriptor allocator pre-configured with the given pool sizes.
+     *
+     * @param params  Pool sizes and max set count.
+     *
+     * @return Descriptor allocator.
+     */
     std::unique_ptr<DescriptorAllocator>
     createDescriptorAllocator(const DescriptorAllocator::ConstructionParameters& params);
 
-    /** @brief Allocates a GPU buffer with the specified usage and memory properties. */
+    /**
+     * Allocates a GPU buffer with the specified usage and memory properties.
+     *
+     * @param createInfo      Buffer size, usage flags, and sharing mode.
+     * @param allocationInfo  VMA memory usage and required/preferred memory flags.
+     *
+     * @return Allocated buffer.
+     */
     std::unique_ptr<Buffer>
     createBuffer(const vk::BufferCreateInfo&                  createInfo,
                  const MemoryAllocator::AllocationParameters& allocationInfo);
 
-    /** @brief Creates a CPU/GPU synchronization fence (starts unsignaled). */
+    /**
+     * Creates a binary fence for CPU/GPU synchronization.
+     * The fence starts in the unsignaled state.
+     *
+     * @return Fence object.
+     */
     Fence createFence();
 
-    /** @brief Creates a timeline semaphore for ordered multi-stage GPU synchronization. */
+    /**
+     * Creates a timeline semaphore for ordered multi-stage GPU synchronization.
+     * The counter starts at zero and increments on each signal operation.
+     *
+     * @return Timeline semaphore.
+     */
     TimelineSemaphore createTimelineSemaphore();
 
     const InstancePtr             instance;
