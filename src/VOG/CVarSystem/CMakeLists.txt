@@ -1,5 +1,3 @@
-find_package(GTest REQUIRED)
-
 add_library(VOG.CVarSystem SHARED)
 add_library(${PROJECT_NAME}::CVarSystem ALIAS VOG.CVarSystem)
 set_target_properties(VOG.CVarSystem PROPERTIES FOLDER "VOG")
@@ -25,3 +23,5 @@ target_link_libraries(VOG.CVarSystem
 )
 
 target_compile_definitions(VOG.CVarSystem PRIVATE CVARSYSTEM_API_EXPORT)
+
+add_subdirectory(Test)

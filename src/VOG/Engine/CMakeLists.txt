@@ -1,4 +1,4 @@
-find_package(Boost COMPONENTS thread REQUIRED)
+find_package(spdlog REQUIRED)
 
 add_library(Engine)
 add_library(${PROJECT_NAME}::Engine ALIAS Engine)
@@ -35,8 +35,9 @@ target_link_libraries(Engine
     PUBLIC
         ${PROJECT_NAME}::Common
         VOG.Math
-        Boost::thread
         ${PROJECT_NAME}::Graphics
+    PRIVATE
+        spdlog::spdlog
 )
 
 install(TARGETS Engine
