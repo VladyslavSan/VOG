@@ -16,7 +16,7 @@ using StaticVectorStrict = boost::container::static_vector<
     boost::container::static_vector_options<boost::container::throw_on_overflow<true>>::type>;
 
 template <class T, std::size_t N>
-std::strong_ordering
+constexpr auto
 operator<=>(const StaticVector<T, N>& lhs, const StaticVector<T, N>& rhs)
 {
     return std::lexicographical_compare_three_way(lhs.begin(), lhs.end(), rhs.begin(), rhs.end());
