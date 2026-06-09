@@ -5,6 +5,7 @@
 #include <concepts>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace VOG::CVarSystem
@@ -64,10 +65,10 @@ template <typename T>
 class Variable
 {
 public:
-    constexpr Variable(const std::string& name,
-                       T                  defaultValue,
-                       const std::string& description,
-                       Flags              flags = Flags::eNone)
+    Variable(const std::string& name,
+             T                  defaultValue,
+             const std::string& description,
+             Flags              flags = Flags::eNone)
         : mStorage{SystemInterface::get()->registerConsoleVariable(
               name, defaultValue, description, flags)}
     {
@@ -76,16 +77,16 @@ public:
     T
     get() const
     {
-        mStorage->current;
+        return mStorage->current;
     }
 
     void
     set(T value)
     {
-        mStorage->current = value;
+        mStorage->current = std::move(value);
     }
 
 protected:
-    const VariableStorage<T>* mStorage;
+    VariableStorage<T>* mStorage;
 };
 } // namespace VOG::CVarSystem

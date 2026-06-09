@@ -17,6 +17,7 @@
 #include <VOG/Math/Math.hpp>
 #include <VOG/Math/Projections.hpp>
 
+#include <spdlog/spdlog.h>
 #include <stddef.h>
 
 #include <chrono>
@@ -292,6 +293,8 @@ Renderer::getRenderJobState() const
 bool
 Renderer::requestRenderChangeState(RenderJobState newState)
 {
+    const std::scoped_lock lock{mStateMutex};
+
     if (newState == mCurrentState.load())
     {
         return false;
@@ -301,34 +304,48 @@ Renderer::requestRenderChangeState(RenderJobState newState)
     {
     case RenderJobState::eActive:
     {
-        mRenderThread = ThreadType{&Renderer::renderThreadMain, weak_from_this()};
+        mRenderThread = std::jthread{
+            [renderer = weak_from_this()](
+                std::stop_token stopToken) // NOLINT(performance-unnecessary-value-param)
+            {
+                try
+                {
+                    while (!stopToken.stop_requested())
+                    {
+                        auto locked = renderer.lock();
+                        if (!locked)
+                        {
+                            break;
+                        }
+                        locked->render();
+                    }
+                }
+                catch (const std::exception& exception)
+                {
+                    spdlog::error("Render thread stopped due to exception: {}", exception.what());
+                }
+                catch (...)
+                {
+                    spdlog::error("Render thread stopped due to an unknown exception.");
+                }
+
+                if (auto locked = renderer.lock())
+                {
+                    locked->mCurrentState.store(RenderJobState::eInactive);
+                }
+            }};
         break;
     }
     case RenderJobState::eInactive:
     {
-        mRenderThread = ThreadType{};
-    }
-    default:
+        // Move-assigning an empty thread requests stop on the old one and joins it.
+        mRenderThread = std::jthread{};
         break;
+    }
     }
 
     mCurrentState.store(newState);
 
     return true;
-}
-
-void
-Renderer::renderThreadMain(
-    std::weak_ptr<Renderer> renderer) // NOLINT(performance-unnecessary-value-param)
-{
-    while (!boost::this_thread::interruption_requested())
-    {
-        auto locked = renderer.lock();
-        if (!locked)
-        {
-            break;
-        }
-        locked->render();
-    }
 }
 } // namespace VOG::Engine

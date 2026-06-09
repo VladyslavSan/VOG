@@ -4,9 +4,10 @@
 #include <VOG/Common/SurfaceHandle.hpp>
 #include <VOG/Engine/Scene/Scene.hpp>
 
-#include <boost/thread/scoped_thread.hpp>
-
+#include <atomic>
 #include <memory>
+#include <mutex>
+#include <thread>
 
 namespace VOG::Common
 {
@@ -37,8 +38,6 @@ class Renderer
     : public std::enable_shared_from_this<Renderer>
     , public VOG::Common::NoCopyable
 {
-    using ThreadType = boost::scoped_thread<boost::interrupt_and_join_if_joinable, boost::thread>;
-
 public:
     static constexpr std::uint8_t kMaxFramesInFlight = 3;
 
@@ -64,11 +63,9 @@ public:
     bool requestRenderChangeState(RenderJobState newState);
 
 protected:
-    /// RenderThread run function
-    static void renderThreadMain(
-        std::weak_ptr<Renderer> renderer); // NOLINT(performance-unnecessary-value-param)
-
-    ThreadType                  mRenderThread;
+    /** Serializes state transitions and render thread start/stop. */
+    std::mutex                  mStateMutex;
+    std::jthread                mRenderThread;
     std::atomic<RenderJobState> mCurrentState;
 
     std::uint8_t mMaxFramesInFlight;
