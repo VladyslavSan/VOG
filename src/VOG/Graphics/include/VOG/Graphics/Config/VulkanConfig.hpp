@@ -4,6 +4,8 @@
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #define VK_NO_PROTOTYPES
 
+#define VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS
+
 #include <VOG/Common/Config/PlatformConfig.hpp>
 
 #ifdef PLATFORM_VIDEO_WINDOWS
