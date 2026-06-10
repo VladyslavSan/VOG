@@ -1,11 +1,12 @@
 # Resource Ownership Model
 
-VOG deliberately mimics the **Metal API ownership semantics**: when a resource is
-recorded into another entity (a command buffer, an encoder-like recorder), that
-entity takes shared ownership of the resource and keeps it alive until the GPU
-has provably finished using it. User code never manages GPU resource lifetimes
-manually — letting a `shared_ptr` go out of scope is always safe, even for
-resources referenced by in-flight frames.
+VOG's core resource-management design decision: when a resource is recorded
+into another entity (a command buffer, an encoder-like recorder), that entity
+takes shared ownership of the resource and keeps it alive until the GPU has
+provably finished using it — the same ownership model the Metal API provides.
+The point is to ease resource management: user code never manages GPU resource
+lifetimes manually — letting a `shared_ptr` go out of scope is always safe,
+even for resources referenced by in-flight frames.
 
 This costs a layer of `std::shared_ptr` traffic on recording paths, and buys
 safety: there is no "destroyed while the GPU still reads it" class of bugs for

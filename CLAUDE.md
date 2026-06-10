@@ -3,11 +3,12 @@
 C++20 Vulkan rendering engine. Module layering (each links only downward):
 `Common → Math / CVarSystem → Graphics (Vulkan layer) → Engine (renderer, scene) → Application (SDL3 shell) → Examples`.
 
-## Critical: resource ownership mimics the Metal API
+## Critical: automatic resource ownership (Metal-like)
 
-Recording a resource into a command buffer/recorder makes that entity share
-ownership until the GPU finished using it (fence-keyed release on frame-slot
-reuse). Letting a `shared_ptr` die at scope end is safe even for in-flight
+Resource management is eased by design: recording a resource into a command
+buffer/recorder makes that entity share ownership until the GPU finished using
+it (fence-keyed release on frame-slot reuse) — the same model the Metal API
+provides. Letting a `shared_ptr` die at scope end is safe even for in-flight
 resources — do NOT diagnose "destroyed while GPU in use" bugs or add deletion
 queues / wait-idle calls before tracing the retention chain. Any new recording
 API must retain its resource via `CommandBuffer::addBoundResource`.
