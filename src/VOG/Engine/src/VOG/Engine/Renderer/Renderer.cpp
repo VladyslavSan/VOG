@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cmath>
 #include <numbers>
+#include <thread>
 
 using namespace VOG::Math;
 
@@ -107,10 +108,21 @@ Renderer::render()
     auto mapping = triangleBuffer->mapForWrite();
     std::memcpy(mapping.data, vertexData, kVertexDataSize);
 
+    constexpr std::chrono::milliseconds kZeroExtentBackoff{16};
+
     const auto acquireResult = mSwapchain->acquireNextImage();
-    if (acquireResult.result != vk::Result::eSuccess)
+    if (acquireResult.status == Swapchain::AcquireStatus::eOutOfDate)
     {
-        throw std::runtime_error{"Could not acquire image"};
+        if (!mSwapchain->recreate())
+        {
+            // Surface is zero-sized (minimized); back off instead of spinning.
+            std::this_thread::sleep_for(kZeroExtentBackoff);
+        }
+        return;
+    }
+    if (acquireResult.status == Swapchain::AcquireStatus::eSkip)
+    {
+        return;
     }
 
     auto& frame = mFrameObjectManager->acquireNextFrame();
@@ -275,7 +287,14 @@ Renderer::render()
         std::array{std::move(commandBuffer)},
         std::array{*frame.getFramePresentSemaphore()});
 
-    mSwapchain->present({*frame.getFramePresentSemaphore()});
+    if (mSwapchain->present({*frame.getFramePresentSemaphore()}) ==
+        Swapchain::PresentStatus::eOutOfDate)
+    {
+        if (!mSwapchain->recreate())
+        {
+            std::this_thread::sleep_for(kZeroExtentBackoff);
+        }
+    }
 }
 
 const std::shared_ptr<Scene::Scene>&

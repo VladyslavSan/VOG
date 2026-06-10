@@ -41,10 +41,28 @@ public:
         Common::SurfaceHandle surface;
     };
 
+    enum class AcquireStatus : std::uint8_t
+    {
+        /** An image was acquired and is ready to be rendered into. */
+        eReady,
+        /** The swapchain no longer matches the surface and must be recreated. */
+        eOutOfDate,
+        /** No image this iteration (timeout / not ready); retry next loop. */
+        eSkip
+    };
+
+    enum class PresentStatus : std::uint8_t
+    {
+        /** Presentation succeeded and the swapchain still matches the surface. */
+        eReady,
+        /** The swapchain no longer matches the surface and must be recreated. */
+        eOutOfDate
+    };
+
     struct ImageAcquireResult
     {
-        vk::Result                 result;
-        const vk::raii::Semaphore* semaphore;
+        AcquireStatus              status;
+        const vk::raii::Semaphore* semaphore; // Valid only when status == eReady.
     };
 
     ~Swapchain();
@@ -54,10 +72,27 @@ private:
 
     Swapchain(DevicePtr device, const SwapchainParameters& parameters);
 
+    /**
+     * (Re)creates the swapchain, image views and per-image sync data for the given extent.
+     *
+     * @param extent        Target image extent (must be non-zero).
+     * @param oldSwapchain  Previous swapchain handle for driver resource reuse (may be null).
+     */
+    void build(vk::Extent2D extent, vk::SwapchainKHR oldSwapchain);
+
 public:
     ImageAcquireResult acquireNextImage();
 
-    vk::Result present(vk::ArrayProxy<const vk::Semaphore> waitSemaphores);
+    PresentStatus present(vk::ArrayProxy<const vk::Semaphore> waitSemaphores);
+
+    /**
+     * Recreates the swapchain to match the current surface size. Waits for the device to be idle
+     * before tearing down the old swapchain.
+     *
+     * @return true if the swapchain was rebuilt; false if skipped because the surface is currently
+     *         zero-sized (e.g. the window is minimized).
+     */
+    bool recreate();
 
     const vk::Image&                            getImage() const override;
     const std::shared_ptr<vk::raii::ImageView>& getImageView() const override;
@@ -70,14 +105,19 @@ protected:
     const bool          mPresentQueueIsSameToGraphicsQueue;
     vk::raii::Queue     mPresentQueue;
 
-    vk::SurfaceFormatKHR   mSurfaceFormat;
+    vk::SurfaceFormatKHR mSurfaceFormat;
+
+    /** Selected once at construction and reused on every rebuild. */
+    std::uint32_t      mMinImageCount = 1u;
+    vk::PresentModeKHR mPresentMode   = vk::PresentModeKHR::eFifo;
+
     vk::raii::SwapchainKHR mSwapchain;
     std::vector<vk::Image> mSwapchainImages;
 
     std::vector<std::shared_ptr<vk::raii::ImageView>> mImageViews;
 
     /** Index of the current swapchain image data */
-    std::uint32_t mSwapchainImageSyncIndex;
+    std::uint32_t mSwapchainImageSyncIndex = 0u;
 
     /** Array of sync elements for each image out of k frames in flight */
     std::vector<SwapchainImageSyncData> mSwapchainImageSyncData;
