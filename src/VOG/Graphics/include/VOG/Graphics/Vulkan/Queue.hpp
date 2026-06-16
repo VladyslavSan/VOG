@@ -33,7 +33,12 @@ public:
         std::vector<vk::Semaphore>       signalSemaphores;
     };
 
-    void
+    struct Submission
+    {
+        std::shared_ptr<FencePool::FenceHandle> fence;
+    };
+
+    Submission
     submit(const Common::ContiguousSizedRangeOf<vk::Semaphore> auto&          waitSemaphores,
            const Common::ContiguousSizedRangeOf<vk::PipelineStageFlags> auto& waitDstStageMasks,
            Common::ContiguousSizedRangeOf<CommandBufferHandle> auto           commandBuffers,
@@ -59,6 +64,8 @@ public:
         };
 
         vk::raii::Queue::submit(submitInfo, **fence->useFence());
+
+        return Submission{.fence = std::move(fence)};
     }
 
     const Device&                   device;

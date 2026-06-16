@@ -9,9 +9,8 @@
 
 namespace VOG::Graphics::Frame
 {
-FrameObjects::FrameObjects(const Vulkan::DevicePtr& device, std::size_t threadCount)
-    : mDevice{device}
-    , mFramePresentWaitSemaphore{*mDevice, vk::SemaphoreCreateInfo{}}
+FrameObjects::FrameObjects(Vulkan::DevicePtr device, std::size_t threadCount)
+    : mDevice{std::move(device)}
 {
     mCommandBufferPools.reserve(threadCount);
     std::generate_n(std::back_inserter(mCommandBufferPools),
@@ -30,18 +29,12 @@ FrameObjects::~FrameObjects()
     }
 }
 
-const vk::raii::Semaphore&
-FrameObjects::getFramePresentSemaphore() const
-{
-    return mFramePresentWaitSemaphore;
-}
-
-Vulkan::CommandBufferPool&
+Vulkan::CommandBufferPoolPtr
 FrameObjects::getCommandBufferPoolForThread(std::size_t threadId)
 {
     VOG_ASSERT_MSG(threadId < mCommandBufferPools.size(), "Invalid threadId requested.");
 
-    return *mCommandBufferPools[threadId];
+    return mCommandBufferPools[threadId];
 }
 
 void

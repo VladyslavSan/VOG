@@ -1,11 +1,10 @@
 #pragma once
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
-#include <VOG/Graphics/Typedefs.hpp>
 
 namespace VOG::Graphics::Vulkan
 {
-VOG_DECLARE_PTR(Device);
+class Device;
 
 /**
  * Timeline semaphore's main perk is that it allows very easy mechanism for chaining synchronization
@@ -31,11 +30,11 @@ public:
 private:
     friend class Device;
 
-    TimelineSemaphore(const Vulkan::DevicePtr& device);
+    TimelineSemaphore(std::shared_ptr<Device> device);
 
 public:
-    [[nodiscard("Wait result can end with success, fail and timeout.")]] vk::Result
-    waitOnCPU(std::uint64_t value, std::uint64_t timeout);
+    [[nodiscard("Wait result can end with success, fail and timeout.")]]
+    vk::Result waitOnCPU(std::uint64_t value, std::uint64_t timeout) const;
 
     /**
      * Get counter value that might be used for waitOnCPU() or wait/signal value.
@@ -60,7 +59,7 @@ public:
     operator SignalRequest() const;
 
 protected:
-    Vulkan::DevicePtr mDevice;
-    std::uint64_t     mCurrentValue = 0u;
+    std::shared_ptr<Device> mDevice;
+    std::uint64_t           mCurrentValue = 0u;
 };
 } // namespace VOG::Graphics::Vulkan

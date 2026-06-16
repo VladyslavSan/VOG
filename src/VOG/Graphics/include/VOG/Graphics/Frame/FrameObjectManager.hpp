@@ -20,9 +20,9 @@ public:
                        std::size_t              frameCount,
                        std::size_t              threadCount);
 
-    FrameObjects& getCurrentFrame();
+    FrameObjectsPtr getCurrentFrame();
 
-    FrameObjects& acquireNextFrame();
+    FrameObjectsPtr acquireNextFrame();
 
 private:
     std::size_t getCurrentFrameIndex() const;
@@ -35,6 +35,6 @@ protected:
     std::size_t mRenderFrame;
 
     /** Per each frame in-flight objects */
-    std::vector<FrameObjects> mFrameObjects;
+    std::vector<std::shared_ptr<FrameObjects>> mFrameObjects;
 };
 } // namespace VOG::Graphics::Frame
