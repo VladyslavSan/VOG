@@ -59,8 +59,6 @@ public:
         /** PE signals this after finishing display of the image (PE→GPU "present done" signal).
          *  Populated via the swap trick in acquireNextImage(). Submit waits this. */
         vk::raii::Semaphore imageAvailableSemaphore;
-        /** Signaled by the graphics submit; waited by present(). Safe to reuse once re-acquired. */
-        vk::raii::Semaphore renderFinishedSemaphore;
     };
 
     struct ImageAcquireResult
@@ -68,8 +66,6 @@ public:
         AcquireStatus status;
         // valid when eReady; submit waits this
         const vk::raii::Semaphore* imageAvailableSemaphore;
-        // valid when eReady; submit signals this
-        const vk::raii::Semaphore* renderFinishedSemaphore;
     };
 
     ~Swapchain() override;
@@ -89,7 +85,7 @@ private:
 public:
     ImageAcquireResult acquireNextImage();
 
-    PresentStatus present();
+    PresentStatus present(vk::Semaphore renderFinishedSemaphore);
 
     /**
      * Recreates the swapchain to match the current surface size. Waits for the device to be idle

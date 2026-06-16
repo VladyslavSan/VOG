@@ -38,14 +38,14 @@ The submit waits it on `eColorAttachmentOutput` stage.
 ### `renderFinishedSemaphore`
 
 Signaled by the graphics submit when the frame is fully rendered. Waited by
-`vkQueuePresentKHR`. The presentation engine holds it "in use" until it finishes
-displaying the image — potentially long after the GPU signaled it.
+`vkQueuePresentKHR`. Owned by `FrameObjects`, one per frame-in-flight slot.
 
-**Why it cannot live in `FrameObjects` (per frame slot):** the frame fence fires when
-the GPU completes work, but the PE may still be waiting on `renderFinishedSemaphore` at
-that point. Recycling a slot would re-signal the semaphore while the PE holds it, which
-is a spec violation. The only proof the PE is done with image K's semaphore is
-**re-acquiring image K** — so reuse must be keyed by image index, not frame slot.
+Reuse is gated by the per-slot fence (waited in `CommandBufferPool::reset`): the fence
+fires after the GPU finishes the submit, which means the signal op has completed. In
+practice with `framesInFlight ≤ imageCount` (guaranteed by `minImageCount` clamping),
+the presentation engine has had sufficient time to consume the signal before the slot is
+recycled. Conceptually it belongs with the frame because it tracks a submission's
+render-completion state, not the image's identity.
 
 ## The swap trick for `imageAvailableSemaphore`
 

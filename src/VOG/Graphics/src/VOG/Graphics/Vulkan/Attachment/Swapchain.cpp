@@ -163,7 +163,6 @@ Swapchain::build(vk::SwapchainKHR oldSwapchain)
                 .image     = image,
                 .imageView = std::make_shared<vk::raii::ImageView>(*mDevice, createInfo),
                 .imageAvailableSemaphore = vk::raii::Semaphore{*mDevice, vk::SemaphoreCreateInfo{}},
-                .renderFinishedSemaphore = vk::raii::Semaphore{*mDevice, vk::SemaphoreCreateInfo{}},
             });
         }
     }
@@ -234,16 +233,12 @@ Swapchain::acquireNextImage()
 
     if (result == vk::Result::eErrorOutOfDateKHR)
     {
-        return {.status                  = AcquireStatus::eOutOfDate,
-                .imageAvailableSemaphore = nullptr,
-                .renderFinishedSemaphore = nullptr};
+        return {.status = AcquireStatus::eOutOfDate, .imageAvailableSemaphore = nullptr};
     }
 
     if ((result == vk::Result::eTimeout) || (result == vk::Result::eNotReady))
     {
-        return {.status                  = AcquireStatus::eSkip,
-                .imageAvailableSemaphore = nullptr,
-                .renderFinishedSemaphore = nullptr};
+        return {.status = AcquireStatus::eSkip, .imageAvailableSemaphore = nullptr};
     }
 
     // eSuccess or eSuboptimalKHR: swap the spare with mImages[index].imageAvailableSemaphore.
@@ -255,13 +250,11 @@ Swapchain::acquireNextImage()
     std::swap(mSpareAcquireSemaphore, mImages[index].imageAvailableSemaphore);
     mCurrentSwapchainImageIndex.emplace(index);
 
-    return {.status                  = AcquireStatus::eReady,
-            .imageAvailableSemaphore = &mImages[index].imageAvailableSemaphore,
-            .renderFinishedSemaphore = &mImages[index].renderFinishedSemaphore};
+    return {.status = AcquireStatus::eReady, .imageAvailableSemaphore = &mImages[index].imageAvailableSemaphore};
 }
 
 Swapchain::PresentStatus
-Swapchain::present()
+Swapchain::present(vk::Semaphore renderFinishedSemaphore)
 {
     VOG_ASSERT_MSG(
         mCurrentSwapchainImageIndex,
@@ -269,10 +262,9 @@ Swapchain::present()
 
     // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
     const std::uint32_t      imageIndex = mCurrentSwapchainImageIndex.value();
-    const vk::Semaphore      waitSem    = *mImages[imageIndex].renderFinishedSemaphore;
     const vk::PresentInfoKHR presentInfoKHR{
         .waitSemaphoreCount = 1u,
-        .pWaitSemaphores    = &waitSem,
+        .pWaitSemaphores    = &renderFinishedSemaphore,
         .swapchainCount     = 1u,
         .pSwapchains        = &*mSwapchain,
         .pImageIndices      = &imageIndex,

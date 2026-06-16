@@ -11,6 +11,7 @@ namespace VOG::Graphics::Frame
 {
 FrameObjects::FrameObjects(Vulkan::DevicePtr device, std::size_t threadCount)
     : mDevice{std::move(device)}
+    , mRenderFinishedSemaphore{*mDevice, vk::SemaphoreCreateInfo{}}
 {
     mCommandBufferPools.reserve(threadCount);
     std::generate_n(std::back_inserter(mCommandBufferPools),
@@ -27,6 +28,12 @@ FrameObjects::~FrameObjects()
     {
         resetPools();
     }
+}
+
+const vk::raii::Semaphore&
+FrameObjects::getRenderFinishedSemaphore() const
+{
+    return mRenderFinishedSemaphore;
 }
 
 Vulkan::CommandBufferPoolPtr

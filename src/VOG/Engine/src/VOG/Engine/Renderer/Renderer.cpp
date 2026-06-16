@@ -285,9 +285,9 @@ Renderer::render()
         std::array{**acquireResult.imageAvailableSemaphore},
         std::array{vk::PipelineStageFlags{vk::PipelineStageFlagBits::eColorAttachmentOutput}},
         std::array{std::move(commandBuffer)},
-        std::array{**acquireResult.renderFinishedSemaphore});
+        std::array{*frame->getRenderFinishedSemaphore()});
 
-    if (mSwapchain->present() == Swapchain::PresentStatus::eOutOfDate)
+    if (mSwapchain->present(*frame->getRenderFinishedSemaphore()) == Swapchain::PresentStatus::eOutOfDate)
     {
         if (!mSwapchain->recreate())
         {

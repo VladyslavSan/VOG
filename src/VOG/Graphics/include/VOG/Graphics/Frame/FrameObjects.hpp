@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 
 #include <vector>
@@ -35,6 +36,8 @@ public:
      * @note for a thread pool thread ids should be unique as access to thread objects is not
      * guarded.
      */
+    const vk::raii::Semaphore& getRenderFinishedSemaphore() const;
+
     Vulkan::CommandBufferPoolPtr getCommandBufferPoolForThread(std::size_t threadId);
 
 protected:
@@ -51,6 +54,11 @@ protected:
 protected:
     /** Vulkan device provider */
     Vulkan::DevicePtr mDevice;
+
+    /** Signaled by the graphics submit; waited by vkQueuePresentKHR. Safe to reuse after the
+     *  frame fence fires — the fence proves the GPU finished the submit, which means the signal
+     *  op completed and the PE's wait has been or will be satisfied before the next submit. */
+    vk::raii::Semaphore mRenderFinishedSemaphore;
 
     /** Per working thread command buffer pools */
     std::vector<Vulkan::CommandBufferPoolPtr> mCommandBufferPools;
