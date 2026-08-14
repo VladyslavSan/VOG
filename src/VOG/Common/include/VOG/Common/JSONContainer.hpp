@@ -61,7 +61,7 @@ public:
         return std::variant_size_v<StorageType>;
     }
 
-    JSONContainer() noexcept
+    JSONContainer()
         : mTypeInfo{.numeric = 0, .string = {}}
     {
     }

@@ -2,6 +2,7 @@
 
 namespace VOG::Common
 {
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 const JSONContainer JSONContainer::kEmptyJSONContainer{};
 
 std::string
