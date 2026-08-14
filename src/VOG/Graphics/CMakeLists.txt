@@ -42,7 +42,6 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Vulkan/CommandBufferRecorder.hpp
             include/VOG/Graphics/Vulkan/Common.hpp
             include/VOG/Graphics/Vulkan/Containers.hpp
-            include/VOG/Graphics/Vulkan/DescriptorAllocator.hpp
             include/VOG/Graphics/Vulkan/Device.hpp
             include/VOG/Graphics/Vulkan/Fence.hpp
             include/VOG/Graphics/Vulkan/FencePool.hpp
@@ -54,7 +53,6 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Vulkan/GLSLCompiler.hpp
             include/VOG/Graphics/Vulkan/Shader.hpp
             include/VOG/Graphics/Vulkan/ShaderProgram.hpp
-            include/VOG/Graphics/Vulkan/TimelineSemaphore.hpp
             include/VOG/Graphics/ShaderProgramCache.hpp
             include/VOG/Graphics/Typedefs.hpp
 
@@ -72,7 +70,6 @@ target_sources(VOG.Graphics
         src/VOG/Graphics/Vulkan/CommandBufferPool.cpp
         src/VOG/Graphics/Vulkan/CommandBufferRecorder.cpp
         src/VOG/Graphics/Vulkan/Common.cpp
-        src/VOG/Graphics/Vulkan/DescriptorAllocator.cpp
         src/VOG/Graphics/Vulkan/Device.cpp
         src/VOG/Graphics/Vulkan/Fence.cpp
         src/VOG/Graphics/Vulkan/FencePool.cpp
@@ -84,7 +81,6 @@ target_sources(VOG.Graphics
         src/VOG/Graphics/Vulkan/GLSLCompiler.cpp
         src/VOG/Graphics/Vulkan/Shader.cpp
         src/VOG/Graphics/Vulkan/ShaderProgram.cpp
-        src/VOG/Graphics/Vulkan/TimelineSemaphore.cpp
         src/VOG/Graphics/ShaderProgramCache.cpp
 )
 

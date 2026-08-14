@@ -4,11 +4,8 @@
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/CommandBuffer.hpp>
 #include <VOG/Graphics/Vulkan/FencePool.hpp>
-#include <VOG/Graphics/Vulkan/TimelineSemaphore.hpp>
 
 #include <memory>
-#include <optional>
-#include <unordered_map>
 #include <vector>
 
 namespace VOG::Graphics::Vulkan
@@ -57,12 +54,11 @@ protected:
 };
 
 /**
- * Manages a pool of command buffers.
+ * Manages a pool of command buffers for a single recording thread.
  *
- * @note
- * Should be used by only a one thread at a time as pool manages growth of the space for command
- * buffers allocated from it and if multiple thead record command buffers allocated from one pool
- * internally it will result in race condition.
+ * @note One pool must be used by only one thread at a time. FrameObjects can
+ * allocate several pools (threadCount), but the engine currently hardcodes
+ * threadCount = 1 until a second recorder thread exists.
  */
 class CommandBufferPool : public std::enable_shared_from_this<CommandBufferPool>
 {
