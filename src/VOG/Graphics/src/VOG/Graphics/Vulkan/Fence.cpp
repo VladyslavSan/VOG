@@ -3,6 +3,8 @@
 #include <VOG/Common/Assert.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 
+#include <utility>
+
 namespace VOG::Graphics::Vulkan
 {
 Fence::Fence(DevicePtr device)
@@ -10,6 +12,19 @@ Fence::Fence(DevicePtr device)
     , mDevice{std::move(device)}
     , mState{State::eNotUsed}
 {
+}
+
+Fence::Fence(DevicePtr device, vk::raii::Fence fence)
+    : vk::raii::Fence{std::move(fence)}
+    , mDevice{std::move(device)}
+    , mState{State::eNotUsed}
+{
+}
+
+vk::raii::Fence
+Fence::takeHandle()
+{
+    return std::move(static_cast<vk::raii::Fence&>(*this));
 }
 
 vk::Result

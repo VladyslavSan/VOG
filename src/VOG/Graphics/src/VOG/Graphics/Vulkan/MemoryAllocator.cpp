@@ -32,16 +32,18 @@ operator VmaAllocationCreateInfo() const noexcept
     };
 }
 
-MemoryAllocator::Allocation::Allocation(MemoryAllocatorPtr         _allocator,
+MemoryAllocator::Allocation::Allocation(DevicePtr                  _device,
+                                        const VmaAllocator         _allocator,
                                         const VmaAllocation        _allocation,
                                         const VmaAllocationInfo    _info,
                                         const AllocationParameters _createInfo)
-    : allocator{std::move(_allocator)}
+    : device{std::move(_device)}
+    , allocator{_allocator}
     , allocation{_allocation}
     , info{_info}
     , createInfo{_createInfo}
     , isPersistentlyMapped{(_createInfo.flags & VMA_ALLOCATION_CREATE_MAPPED_BIT) != 0}
-    , memoryFlags{getMemoryFlags(*allocator, info.memoryType)}
+    , memoryFlags{getMemoryFlags(allocator, info.memoryType)}
 {
 }
 
@@ -49,12 +51,13 @@ MemoryAllocator::Allocation::~Allocation()
 {
     if (allocation != nullptr)
     {
-        vmaFreeMemory(*allocator, allocation);
+        vmaFreeMemory(allocator, allocation);
     }
 }
 
 MemoryAllocator::Allocation::Allocation(MemoryAllocator::Allocation&& other) noexcept
-    : allocator{std::move(other.allocator)}
+    : device{std::move(other.device)}
+    , allocator{other.allocator}
     , allocation{std::exchange(other.allocation, nullptr)}
     , info{other.info}
     , createInfo{other.createInfo}
@@ -136,9 +139,12 @@ MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
         throw std::runtime_error{"Buffer creation failed."};
     }
 
-    return std::unique_ptr<Buffer>(
-        new Buffer{Allocation{shared_from_this(), allocation, allocationInfo, allocationCreateInfo},
-                   vk::raii::Buffer{mDevice, buffer}});
+    return std::unique_ptr<Buffer>(new Buffer{Allocation{mDevice.shared_from_this(),
+                                                         mAllocator,
+                                                         allocation,
+                                                         allocationInfo,
+                                                         allocationCreateInfo},
+                                              vk::raii::Buffer{mDevice, buffer}});
 }
 
 MemoryAllocator::

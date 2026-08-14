@@ -12,9 +12,14 @@ VOG_DECLARE_PTR(Buffer);
 VOG_DECLARE_PTR(MemoryAllocator);
 VOG_DECLARE_PTR(Device);
 
-class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator>
+class MemoryAllocator
 {
     friend class Device;
+
+    /**
+     * @param device Owning device. The allocator is owned by the device, so a plain
+     *               reference is enough; resources handed out retain a DevicePtr instead.
+     */
     explicit MemoryAllocator(Device& device);
 
 public:
@@ -51,7 +56,8 @@ class MemoryAllocator::Allocation
 public:
     ~Allocation();
 
-    Allocation(MemoryAllocatorPtr   allocator,
+    Allocation(DevicePtr            device,
+               VmaAllocator         allocator,
                VmaAllocation        allocation,
                VmaAllocationInfo    info,
                AllocationParameters createInfo);
@@ -61,8 +67,14 @@ public:
     Allocation(const Allocation&) = delete;
 
 protected:
-    /** Allocator that created allocation */
-    MemoryAllocatorPtr allocator;
+    /**
+     * Device that owns the allocator. Held by shared_ptr so that a resource outliving every
+     * other DevicePtr still keeps the VkDevice (and with it the allocator) alive until freed.
+     */
+    DevicePtr device;
+
+    /** Allocator that created allocation; owned by @var device */
+    VmaAllocator allocator;
 
     /** Allocation struct */
     VmaAllocation allocation;

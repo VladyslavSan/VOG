@@ -68,12 +68,12 @@ inline Buffer::MemoryMapping<PtrType>::~MemoryMapping()
 {
     if (shouldFlush)
     {
-        vmaFlushAllocation(*buffer->allocator, buffer->allocation, 0, VK_WHOLE_SIZE);
+        vmaFlushAllocation(buffer->allocator, buffer->allocation, 0, VK_WHOLE_SIZE);
     }
 
     if (shouldUnmap)
     {
-        vmaUnmapMemory(*buffer->allocator, buffer->allocation);
+        vmaUnmapMemory(buffer->allocator, buffer->allocation);
     }
 }
 } // namespace VOG::Graphics::Vulkan

@@ -18,7 +18,7 @@ Buffer::mapForWrite()
     if (!isPersistentlyMapped)
     {
         void* data   = nullptr;
-        auto  result = vmaMapMemory(*allocator, allocation, &data);
+        auto  result = vmaMapMemory(allocator, allocation, &data);
         if (result != VK_SUCCESS) [[unlikely]]
         {
             throw std::runtime_error{"Buffer::map: vmaMapMemory failed."};
@@ -36,14 +36,14 @@ Buffer::mapForRead()
     if (!isPersistentlyMapped)
     {
         void* data   = nullptr;
-        auto  result = vmaMapMemory(*allocator, allocation, &data);
+        auto  result = vmaMapMemory(allocator, allocation, &data);
         if (result != VK_SUCCESS) [[unlikely]]
         {
             throw std::runtime_error{"Buffer::map: vmaMapMemory failed."};
         }
         pData = reinterpret_cast<std::byte*>(data);
 
-        vmaInvalidateAllocation(*allocator, allocation, 0, VK_WHOLE_SIZE);
+        vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
     }
 
     return {pData, info.size, this, !isPersistentlyMapped, false};

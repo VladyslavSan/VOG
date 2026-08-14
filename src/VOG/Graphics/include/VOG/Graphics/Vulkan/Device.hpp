@@ -220,8 +220,12 @@ public:
     const vk::raii::PipelineCache pipelineCache;
 
 private:
-    /** Owned services; they hold Device& backrefs (not DevicePtr) to avoid cycles. */
-    FencePoolPtr                     mFencePool;
-    std::shared_ptr<MemoryAllocator> mMemoryAllocator;
+    /**
+     * Services owned by the device. They keep a Device& backref rather than a DevicePtr, and
+     * must never cache anything that owns one, otherwise the device can never be destroyed.
+     * Resources handed out to callers retain a DevicePtr and so keep the VkDevice alive.
+     */
+    std::unique_ptr<FencePool>       mFencePool;
+    std::unique_ptr<MemoryAllocator> mMemoryAllocator;
 };
 } // namespace VOG::Graphics::Vulkan

@@ -13,17 +13,21 @@ VOG_DECLARE_PTR(Device);
 VOG_DECLARE_PTR(Fence);
 VOG_DECLARE_PTR(FencePool);
 
-class FencePool : public std::enable_shared_from_this<FencePool>
+class FencePool
 {
     friend class Device;
 
+    /**
+     * @param device Owning device. The pool is owned by the device, so a plain reference is
+     *               enough; handed out fences retain a DevicePtr instead.
+     */
     explicit FencePool(Device& device);
 
 public:
     class FenceHandle : protected Fence
     {
     public:
-        FenceHandle(FencePoolPtr fencePool, Fence fence);
+        explicit FenceHandle(Fence fence);
 
         ~FenceHandle();
 
@@ -32,9 +36,6 @@ public:
 
         using Fence::useFence;
         using Fence::wait;
-
-    private:
-        FencePoolPtr mFencePool;
     };
 
     FenceHandle get();
@@ -46,7 +47,14 @@ protected:
     void returnToPool(Fence fence);
 
 private:
-    Device&            mDevice;
-    std::vector<Fence> mFences;
+    Fence take();
+
+    Device& mDevice;
+
+    /**
+     * Idle fences, stored without their device reference: the pool is owned by the device, so
+     * retaining it here would keep the device alive forever.
+     */
+    std::vector<vk::raii::Fence> mFences;
 };
 } // namespace VOG::Graphics::Vulkan

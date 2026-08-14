@@ -186,11 +186,8 @@ Device::Device(InstancePtr _instance, vk::raii::PhysicalDevice physicalDevice)
 void
 Device::init()
 {
-    // Services hold Device& (not DevicePtr) so releasing the last Device shared_ptr
-    // can destroy the Vulkan device. MemoryAllocator stays shared so Buffer allocations
-    // can retain it; FencePool stays shared so FenceHandle can use shared_from_this.
-    mMemoryAllocator = std::shared_ptr<MemoryAllocator>(new MemoryAllocator{*this});
-    mFencePool       = std::shared_ptr<FencePool>(new FencePool{*this});
+    mMemoryAllocator = std::unique_ptr<MemoryAllocator>(new MemoryAllocator{*this});
+    mFencePool       = std::unique_ptr<FencePool>(new FencePool{*this});
 }
 
 Device::~Device() = default;
