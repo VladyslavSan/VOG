@@ -2,6 +2,7 @@
 
 #include <VOG/Common/Assert.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
+#include <VOG/Graphics/Vulkan/Attachment/AcquiredSwapchainImage.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 
@@ -220,12 +221,12 @@ Swapchain::acquireNextImage()
 
     if (result == vk::Result::eErrorOutOfDateKHR)
     {
-        return {.status = AcquireStatus::eOutOfDate, .imageAvailableSemaphore = nullptr};
+        return {.status = AcquireStatus::eOutOfDate, .acquired = nullptr};
     }
 
     if ((result == vk::Result::eTimeout) || (result == vk::Result::eNotReady))
     {
-        return {.status = AcquireStatus::eSkip, .imageAvailableSemaphore = nullptr};
+        return {.status = AcquireStatus::eSkip, .acquired = nullptr};
     }
 
     // eSuccess or eSuboptimalKHR: swap the spare with mImages[index].imageAvailableSemaphore.
@@ -237,8 +238,13 @@ Swapchain::acquireNextImage()
     std::swap(mSpareAcquireSemaphore, mImages[index].imageAvailableSemaphore);
     mCurrentSwapchainImageIndex.emplace(index);
 
-    return {.status                  = AcquireStatus::eReady,
-            .imageAvailableSemaphore = &mImages[index].imageAvailableSemaphore};
+    return {.status   = AcquireStatus::eReady,
+            .acquired = std::make_shared<AcquiredSwapchainImage>(
+                mImages[index].image,
+                mImages[index].imageView,
+                mSurfaceFormat.format,
+                mExtent,
+                &mImages[index].imageAvailableSemaphore)};
 }
 
 Swapchain::PresentStatus
