@@ -42,7 +42,7 @@ public:
      * Device; the caller retains it for the lifetime of any in-flight FenceHandle.
      */
     Submission
-    submit(FencePoolPtr                                                       fencePool,
+    submit(const FencePoolPtr&                                                fencePool,
            const Common::ContiguousSizedRangeOf<vk::Semaphore> auto&          waitSemaphores,
            const Common::ContiguousSizedRangeOf<vk::PipelineStageFlags> auto& waitDstStageMasks,
            Common::ContiguousSizedRangeOf<CommandBufferHandle> auto           commandBuffers,
