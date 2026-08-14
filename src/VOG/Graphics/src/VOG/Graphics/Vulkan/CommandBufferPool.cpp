@@ -32,12 +32,18 @@ vk::CommandBuffer
 CommandBufferHandle::consumeForSubmission(std::shared_ptr<FencePool::FenceHandle> fence)
 {
     VOG_ASSERT_MSG(fence, "Fence must be provided for command buffer submission.");
-    vk::CommandBuffer unmanagedHandle = *mCommandBuffer;
+    vk::CommandBuffer unmanagedHandle = mCommandBuffer.vkHandle();
 
     mPool->mSubmittedCommandBuffers.push_back(CommandBufferPool::SubmittedCommandBuffer{
         .commandBuffer = std::move(mCommandBuffer), .fence = std::move(fence)});
 
     return unmanagedHandle;
+}
+
+vk::CommandBuffer
+CommandBufferHandle::vkHandle() const
+{
+    return mCommandBuffer.vkHandle();
 }
 
 CommandBuffer*

@@ -52,6 +52,7 @@ after the fence of the frame that referenced the resource has signaled.
   issues — if a resource can die too early, it means an API failed to retain it.
 - Do not bypass the tracked wrappers by recording into the raw
   `vk::raii::CommandBuffer` base when a resource reference is involved.
+  `CommandBuffer` inherits that type privately; use `CommandBufferRecorder`.
 
 ## Known gaps (intentional, to be addressed where they arise)
 

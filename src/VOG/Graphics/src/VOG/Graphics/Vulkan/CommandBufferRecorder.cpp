@@ -1,4 +1,4 @@
-#include <VOG/Graphics/Vulkan/CommandBufferRecorder.hpp>
+#include "VOG/Graphics/Vulkan/CommandBufferRecorder.hpp"
 
 #include <VOG/Common/Assert.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
@@ -7,7 +7,7 @@
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/RenderPass.hpp>
 
-#include <stdexcept>
+#include <array>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -50,6 +50,50 @@ CommandBufferRecorder::bindPipeline(GraphicsPipelinePtr pipeline) noexcept
 {
     mCommandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, **pipeline);
     mCommandBuffer.addBoundResource(std::move(pipeline));
+}
+
+void
+CommandBufferRecorder::bindVertexBuffers(
+    std::uint32_t firstBinding,
+    StaticVectorStrict<CommandBuffer::BufferBinding, CommandBuffer::kMaxNumVertexBufferBind>
+        bindings) noexcept
+{
+    std::array<vk::Buffer, CommandBuffer::kMaxNumVertexBufferBind>     bufferHandles{};
+    std::array<vk::DeviceSize, CommandBuffer::kMaxNumVertexBufferBind> offsets{};
+    for (std::size_t i = 0; i < bindings.size(); ++i)
+    {
+        bufferHandles[i] = **bindings[i].buffer;
+        offsets[i]       = bindings[i].offset;
+        mCommandBuffer.mBoundVertexBuffers.insert(std::move(bindings[i].buffer));
+    }
+
+    mCommandBuffer.bindVertexBuffers(
+        firstBinding,
+        {static_cast<std::uint32_t>(bindings.size()), bufferHandles.data()},
+        {static_cast<std::uint32_t>(bindings.size()), offsets.data()});
+}
+
+void
+CommandBufferRecorder::setViewport(std::uint32_t                     firstViewport,
+                                   vk::ArrayProxy<const vk::Viewport> viewports)
+{
+    mCommandBuffer.setViewport(firstViewport, viewports);
+}
+
+void
+CommandBufferRecorder::setScissor(std::uint32_t                   firstScissor,
+                                  vk::ArrayProxy<const vk::Rect2D> scissors)
+{
+    mCommandBuffer.setScissor(firstScissor, scissors);
+}
+
+void
+CommandBufferRecorder::draw(std::uint32_t vertexCount,
+                            std::uint32_t instanceCount,
+                            std::uint32_t firstVertex,
+                            std::uint32_t firstInstance)
+{
+    mCommandBuffer.draw(vertexCount, instanceCount, firstVertex, firstInstance);
 }
 
 void

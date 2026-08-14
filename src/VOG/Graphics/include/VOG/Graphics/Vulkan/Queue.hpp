@@ -50,8 +50,7 @@ public:
         commandBuffersTmp.reserve(commandBuffers.size());
         for (CommandBufferHandle& handle : commandBuffers)
         {
-            // Peek handles only — do not park CBs until submit succeeds.
-            commandBuffersTmp.push_back(**handle);
+            commandBuffersTmp.push_back(handle.vkHandle());
         }
 
         vk::SubmitInfo submitInfo{

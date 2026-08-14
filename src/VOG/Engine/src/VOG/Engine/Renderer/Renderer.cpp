@@ -144,9 +144,9 @@ Renderer::render()
 
     auto commandBuffer = pool->get(vk::CommandBufferLevel::ePrimary);
     commandBuffer->begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-    commandBuffer->bindVertexBuffers(0u, {{.buffer = triangleBuffer, .offset = 0u}});
 
     Graphics::Vulkan::CommandBufferRecorder recorder{*mVulkanDevice, **commandBuffer};
+    recorder.bindVertexBuffers(0u, {{.buffer = triangleBuffer, .offset = 0u}});
 
     recorder.setImageBarrier(
         mSwapchain,
@@ -222,24 +222,24 @@ Renderer::render()
         recorder.bindPipeline(pipeline);
 
         const auto extent = mSwapchain->getExtent();
-        recorder->setViewport(0,
-                              {
-                                  {
-                                      .x        = 0.0f,
-                                      .y        = 0.0f,
-                                      .width    = static_cast<float>(extent.width),
-                                      .height   = static_cast<float>(extent.height),
-                                      .minDepth = 0.0,
-                                      .maxDepth = 1.0,
-                                  },
-                              });
-        recorder->setScissor(0,
+        recorder.setViewport(0,
                              {
                                  {
-                                     .offset = {.x = 0, .y = 0},
-                                     .extent = {.width = extent.width, .height = extent.height},
+                                     .x        = 0.0f,
+                                     .y        = 0.0f,
+                                     .width    = static_cast<float>(extent.width),
+                                     .height   = static_cast<float>(extent.height),
+                                     .minDepth = 0.0,
+                                     .maxDepth = 1.0,
                                  },
                              });
+        recorder.setScissor(0,
+                            {
+                                {
+                                    .offset = {.x = 0, .y = 0},
+                                    .extent = {.width = extent.width, .height = extent.height},
+                                },
+                            });
 
         const float timeFactor = static_cast<float>(std::sin(time / (2 * std::numbers::pi) / 100));
 
@@ -265,13 +265,13 @@ Renderer::render()
 
         const Matrix4x4f mvp = projection * viewMatrix * model;
 
-        recorder->pushConstants<std::byte>(
+        recorder.pushConstants<std::byte>(
             *program->pipelineLayout,
             vk::ShaderStageFlagBits::eVertex,
             0u,
             vk::ArrayProxy<const std::byte>{sizeof(mvp), reinterpret_cast<const std::byte*>(&mvp)});
 
-        recorder->draw(std::size(vertexData), 1, 0, 0);
+        recorder.draw(static_cast<std::uint32_t>(std::size(vertexData)), 1, 0, 0);
 
         recorder.endRenderPass();
     }

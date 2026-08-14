@@ -35,6 +35,11 @@ public:
     vk::CommandBuffer consumeForSubmission(std::shared_ptr<FencePool::FenceHandle> fence);
 
     /**
+     * Raw Vulkan handle for peeking before submit (does not transfer ownership).
+     */
+    vk::CommandBuffer vkHandle() const;
+
+    /**
      * Allows usage of the handle as if it's an instance of the CommandBuffer.
      * @return CommandBuffer handle.
      */
@@ -81,7 +86,7 @@ public:
      *
      * @param type Type of the command buffer to return - primary or secondary.
      *
-     * @returns CommandBufferRecorder instance.
+     * @returns A lease on a pooled CommandBuffer (record via CommandBufferRecorder).
      */
     CommandBufferHandle get(CommandBufferType type);
 
