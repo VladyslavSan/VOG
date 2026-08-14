@@ -22,6 +22,7 @@ Details: `docs/ResourceOwnership.md`.
 - Test: `ctest --test-dir build/build/Debug --output-on-failure` (23+ gtest
   units; Vulkan tests run headless via `VulkanFixture`)
 - Run example: `./build/build/Debug/src/VOG/Examples/ApplicationExample/ApplicationExample --shader-storage-path src/VOG/Graphics/resources/shaders`
+  (Windows / macOS / Linux with Wayland or X11; Linux WSI is selected from the SDL window backend)
 
 ## Conventions
 
