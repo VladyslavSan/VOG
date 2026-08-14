@@ -1,6 +1,5 @@
 #include "VOG/Application/Application.hpp"
 
-#include <VOG/Common/JSONContainer.hpp>
 #include <VOG/Application/SDL.hpp>
 #include <VOG/Engine/Renderer/Renderer.hpp>
 
@@ -8,6 +7,7 @@
 
 #include <filesystem>
 #include <format>
+#include <utility>
 
 namespace VOG::Application
 {
@@ -37,16 +37,30 @@ Application::Application(ApplicationConfig config)
 {
     validateConfig(config);
 
-    mRenderer = {std::make_shared<Engine::Renderer>(
-        mWindow->getSurfaceHandle(),
-        Common::JSONContainer{{"extensions", config.extensions},
-                              {"layers", config.layers},
-                              {"app_name", config.title},
-                              {"frames_in_flight", 2u},
-                              {"shader_source_path", config.shaderStoragePath}})};
+    mRenderer = std::make_shared<Engine::Renderer>(mWindow->getSurfaceHandle(),
+                                                   Engine::Renderer::Config{
+                                                       .appName          = config.title,
+                                                       .engineName       = "VOG",
+                                                       .layers           = config.layers,
+                                                       .extensions       = config.extensions,
+                                                       .framesInFlight   = config.framesInFlight,
+                                                       .shaderSourcePath = config.shaderStoragePath,
+                                                   });
 }
 
 Application::~Application() {}
+
+const std::shared_ptr<Engine::Renderer>&
+Application::renderer() const
+{
+    return mRenderer;
+}
+
+void
+Application::addRenderable(std::shared_ptr<Engine::Renderable> renderable)
+{
+    mRenderer->addRenderable(std::move(renderable));
+}
 
 bool
 Application::run()

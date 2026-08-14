@@ -3,9 +3,12 @@
 #include <boost/program_options.hpp>
 
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+
+#include "SpinningQuadsRenderable.hpp"
 
 namespace po = boost::program_options;
 
@@ -86,6 +89,8 @@ main(int argc, const char** argv)
             .height            = kWindowHeight,
             .shaderStoragePath = varMap["shader-storage-path"].as<std::string>(),
         });
+
+        app.addRenderable(std::make_shared<SpinningQuadsRenderable>());
 
         app.run();
     }

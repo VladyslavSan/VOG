@@ -1,13 +1,15 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace VOG::Engine
 {
+class Renderable;
 class Renderer;
-}
+} // namespace VOG::Engine
 
 namespace VOG::Application
 {
@@ -30,11 +32,18 @@ public:
         std::vector<std::string> layers;
 
         std::string shaderStoragePath;
+
+        std::uint8_t framesInFlight = 2u;
     };
 
     Application(ApplicationConfig config);
 
     ~Application();
+
+    const std::shared_ptr<Engine::Renderer>& renderer() const;
+
+    /** Registers @p renderable with the renderer; call before run(). */
+    void addRenderable(std::shared_ptr<Engine::Renderable> renderable);
 
     bool run();
 
