@@ -85,4 +85,18 @@ TEST(JSONContainer, lifetime_dictionary_complex)
     ASSERT_TRUE(container["array_of_string"].isArray());
     ASSERT_TRUE(container["object"].isObject());
 }
+
+TEST(JSONContainer, array_index_access)
+{
+    JSONContainer container{10, 20, 30};
+    ASSERT_TRUE(container.isArray());
+
+    ASSERT_EQ(container[0].getOr<JSONContainer::SignedInt>(-1), 10);
+    ASSERT_EQ(container[1].getOr<JSONContainer::SignedInt>(-1), 20);
+    ASSERT_EQ(container[2].getOr<JSONContainer::SignedInt>(-1), 30);
+
+    // Out of range returns the empty sentinel.
+    ASSERT_EQ(container[3].getOr<JSONContainer::SignedInt>(-1), -1);
+    ASSERT_EQ(container[100].getOr<JSONContainer::SignedInt>(-1), -1);
+}
 } // namespace VOG::Common::Test

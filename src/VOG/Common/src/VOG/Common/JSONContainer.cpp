@@ -2,6 +2,7 @@
 
 namespace VOG::Common
 {
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 const JSONContainer JSONContainer::kEmptyJSONContainer{};
 
 std::string
@@ -76,7 +77,7 @@ JSONContainer::operator[](std::size_t index) const
     }
 
     const ArrayType& objectRef = std::get<ArrayType>(mValueHolder);
-    if (objectRef.size() >= index)
+    if (index >= objectRef.size())
     {
         return kEmptyJSONContainer;
     }

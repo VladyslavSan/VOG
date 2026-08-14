@@ -61,9 +61,21 @@ Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle,
           .surface        = surfaceHandle,
       })}
     , mFrameObjectManager{std::make_shared<Graphics::Frame::FrameObjectManager>(
-          mVulkanDevice, mMaxFramesInFlight, 1u)}
+          mVulkanDevice,
+          std::min<std::size_t>(mMaxFramesInFlight, mSwapchain->getImageCount()),
+          1u)}
     , mScene{std::make_shared<Scene::Scene>()}
 {
+    const std::size_t imageCount = mSwapchain->getImageCount();
+    if (mMaxFramesInFlight > imageCount)
+    {
+        spdlog::warn(
+            "frames_in_flight ({}) exceeds swapchain image count ({}), clamping frame slots to {}",
+            mMaxFramesInFlight,
+            imageCount,
+            imageCount);
+        mMaxFramesInFlight = static_cast<std::uint8_t>(imageCount);
+    }
 }
 
 void
@@ -110,9 +122,6 @@ Renderer::render()
 
     constexpr std::chrono::milliseconds kZeroExtentBackoff{16};
 
-    auto frame = mFrameObjectManager->acquireNextFrame();
-    auto pool  = frame->getCommandBufferPoolForThread(threadId);
-
     const auto acquireResult = mSwapchain->acquireNextImage();
     if (acquireResult.status == Swapchain::AcquireStatus::eOutOfDate)
     {
@@ -127,6 +136,11 @@ Renderer::render()
     {
         return;
     }
+
+    // Advance the frame slot only when we will actually submit — skip/out-of-date must not
+    // burn a fence-keyed release slot.
+    auto frame = mFrameObjectManager->acquireNextFrame();
+    auto pool  = frame->getCommandBufferPoolForThread(threadId);
 
     auto commandBuffer = pool->get(vk::CommandBufferLevel::ePrimary);
     commandBuffer->begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});

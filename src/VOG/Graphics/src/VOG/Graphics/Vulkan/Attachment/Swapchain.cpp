@@ -79,33 +79,14 @@ Swapchain::Swapchain(DevicePtr device, const SwapchainParameters& parameters)
     }
 
     auto surfacePresentModes = mDevice->getSurfacePresentModesKHR(**mSurface);
-    mPresentMode             = vk::PresentModeKHR::eImmediate;
+    // eFifo is always supported; never leave an unverified eImmediate default.
+    mPresentMode = vk::PresentModeKHR::eFifo;
+    for (const vk::PresentModeKHR mode : parameters.preferredPresentationModes)
     {
-        bool foundPresentationMode = false;
-        if (!parameters.preferredPresentationModes.empty())
+        if (std::ranges::find(surfacePresentModes, mode) != surfacePresentModes.end())
         {
-            for (const vk::PresentModeKHR mode : parameters.preferredPresentationModes)
-            {
-                if (std::ranges::find(surfacePresentModes, mode) != surfacePresentModes.end())
-                {
-                    mPresentMode          = mode;
-                    foundPresentationMode = true;
-
-                    break;
-                }
-            }
-        }
-
-        if (!foundPresentationMode)
-        {
-            for (auto& spm : surfacePresentModes)
-            {
-                if (spm == vk::PresentModeKHR::eMailbox)
-                {
-                    mPresentMode = vk::PresentModeKHR::eMailbox;
-                    break;
-                }
-            }
+            mPresentMode = mode;
+            break;
         }
     }
 
@@ -217,6 +198,12 @@ Swapchain::getImageView() const
 
     // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
     return mImages[mCurrentSwapchainImageIndex.value()].imageView;
+}
+
+std::size_t
+Swapchain::getImageCount() const
+{
+    return mImages.size();
 }
 
 Swapchain::ImageAcquireResult
