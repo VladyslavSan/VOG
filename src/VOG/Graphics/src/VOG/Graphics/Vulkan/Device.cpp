@@ -167,16 +167,16 @@ makeDevice(const vk::raii::PhysicalDevice& physicalDevice, const PhysicalDevice:
 }
 } // namespace
 
-PhysicalDevice::PhysicalDevice(vk::raii::PhysicalDevice physicalDevice)
+PhysicalDevice::PhysicalDevice(InstancePtr _instance, vk::raii::PhysicalDevice physicalDevice)
     : vk::raii::PhysicalDevice{std::move(physicalDevice)}
+    , instance{std::move(_instance)}
     , queueInfos{findGraphicsTransferQueues(*this)}
 {
 }
 
 Device::Device(InstancePtr _instance, vk::raii::PhysicalDevice physicalDevice)
-    : PhysicalDevice{std::move(physicalDevice)}
+    : PhysicalDevice{std::move(_instance), std::move(physicalDevice)}
     , vk::raii::Device{makeDevice(*this, queueInfos)}
-    , instance{std::move(_instance)}
     , graphicsQueue{*this, queueInfos.graphics.familyIndex, queueInfos.graphics.familyProperties}
     , transferQueue{*this, queueInfos.transfer.familyIndex, queueInfos.transfer.familyProperties}
     , pipelineCache{*this, {}}

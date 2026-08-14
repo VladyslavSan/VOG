@@ -40,7 +40,13 @@ public:
         QueueFamilyInfo transfer;
     };
 
-    PhysicalDevice(vk::raii::PhysicalDevice physicalDevice);
+    PhysicalDevice(InstancePtr instance, vk::raii::PhysicalDevice physicalDevice);
+
+    /**
+     * Instance this physical device was queried from. Held here, in the first base of Device, so
+     * that it outlives the VkDevice and everything the device owns.
+     */
+    const InstancePtr instance;
 
     const QueueInfos queueInfos;
 };
@@ -214,7 +220,6 @@ public:
      */
     TimelineSemaphore createTimelineSemaphore();
 
-    const InstancePtr             instance;
     const Vulkan::Queue           graphicsQueue;
     const Vulkan::Queue           transferQueue;
     const vk::raii::PipelineCache pipelineCache;
