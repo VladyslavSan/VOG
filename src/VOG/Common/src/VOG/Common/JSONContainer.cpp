@@ -76,7 +76,7 @@ JSONContainer::operator[](std::size_t index) const
     }
 
     const ArrayType& objectRef = std::get<ArrayType>(mValueHolder);
-    if (objectRef.size() >= index)
+    if (index >= objectRef.size())
     {
         return kEmptyJSONContainer;
     }

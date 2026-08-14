@@ -9,8 +9,9 @@ the remaining gap that `VK_EXT_swapchain_maintenance1` would close.
 A Vulkan frame involves three independent indices that are easy to conflate:
 
 1. **Frame slot** (`FrameObjectManager::mRenderFrame % framesInFlight`) — CPU-side ring
-   for recycling command pools. Advanced by the renderer on every rendered frame. Gated
-   by the per-slot fence (waited in `CommandBufferPool::reset`).
+   for recycling command pools. Advanced by the renderer only when an image was acquired
+   and a submit will follow (skip / out-of-date paths do not advance). Gated by the
+   per-slot fence (waited in `CommandBufferPool::reset`).
 
 2. **Swapchain image index** — returned by `vkAcquireNextImageKHR`. The driver picks
    from images the presentation engine has released. Uncorrelated with the frame slot:
@@ -43,7 +44,9 @@ Signaled by the graphics submit when the frame is fully rendered. Waited by
 
 Reuse is gated by the per-slot fence (waited in `CommandBufferPool::reset`): the fence
 fires after the GPU finishes the submit, which means the signal op has completed. In
-practice with `framesInFlight ≤ imageCount` (guaranteed by `minImageCount` clamping),
+practice with `framesInFlight ≤ imageCount` — enforced in `Renderer` by constructing
+`FrameObjectManager` with `min(requestedFrames, swapchain.getImageCount())` after the
+swapchain is created (surface `maxImageCount` can force fewer images than requested) —
 the presentation engine has had sufficient time to consume the signal before the slot is
 recycled. Conceptually it belongs with the frame because it tracks a submission's
 render-completion state, not the image's identity.

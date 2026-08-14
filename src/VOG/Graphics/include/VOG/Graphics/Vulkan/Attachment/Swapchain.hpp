@@ -96,6 +96,9 @@ public:
      */
     bool recreate();
 
+    /** Number of images currently owned by the swapchain (after the last build). */
+    std::size_t getImageCount() const;
+
     const vk::Image&                            getImage() const override;
     const std::shared_ptr<vk::raii::ImageView>& getImageView() const override;
 
