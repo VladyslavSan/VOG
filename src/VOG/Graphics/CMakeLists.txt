@@ -33,6 +33,7 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Frame/FrameObjectManager.hpp
             include/VOG/Graphics/Frame/FrameObjects.hpp
             include/VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp
+            include/VOG/Graphics/Vulkan/Attachment/AcquiredSwapchainImage.hpp
             include/VOG/Graphics/Vulkan/Attachment/RenderBuffer.hpp
             include/VOG/Graphics/Vulkan/Attachment/Swapchain.hpp
             include/VOG/Graphics/Vulkan/Buffer.hpp
@@ -65,6 +66,7 @@ target_sources(VOG.Graphics
         src/VOG/Graphics/Vulkan/Attachment/Converters.hpp
         src/VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.hpp
         src/VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.cpp
+        src/VOG/Graphics/Vulkan/Attachment/AcquiredSwapchainImage.cpp
         src/VOG/Graphics/Vulkan/Attachment/RenderBuffer.cpp
         src/VOG/Graphics/Vulkan/Attachment/Swapchain.cpp
         src/VOG/Graphics/Vulkan/Buffer.cpp

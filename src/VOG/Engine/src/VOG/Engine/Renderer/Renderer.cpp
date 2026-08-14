@@ -1,10 +1,12 @@
 #include "VOG/Engine/Renderer/Renderer.hpp"
 
+#include <VOG/Common/Assert.hpp>
 #include <VOG/Common/JSONContainer.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Frame/FrameObjectManager.hpp>
 #include <VOG/Graphics/ShaderProgramCache.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
+#include <VOG/Graphics/Vulkan/Attachment/AcquiredSwapchainImage.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
@@ -137,6 +139,9 @@ Renderer::render()
         return;
     }
 
+    const auto& acquired = acquireResult.acquired;
+    VOG_ASSERT_MSG(acquired, "eReady acquire must provide AcquiredSwapchainImage.");
+
     // Advance the frame slot only when we will actually submit — skip/out-of-date must not
     // burn a fence-keyed release slot.
     auto frame = mFrameObjectManager->acquireNextFrame();
@@ -149,14 +154,14 @@ Renderer::render()
     recorder.bindVertexBuffers(0u, {{.buffer = triangleBuffer, .offset = 0u}});
 
     recorder.setImageBarrier(
-        mSwapchain,
+        acquired,
         {.srcStageMask        = vk::PipelineStageFlagBits2::eBottomOfPipe,
          .dstStageMask        = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
          .oldLayout           = vk::ImageLayout::eUndefined,
          .newLayout           = vk::ImageLayout::eColorAttachmentOptimal,
          .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
          .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-         .image               = mSwapchain->getImage(),
+         .image               = acquired->getImage(),
          .subresourceRange    = {
                 .aspectMask     = vk::ImageAspectFlagBits::eColor,
                 .baseMipLevel   = 0,
@@ -176,14 +181,14 @@ Renderer::render()
     const std::array clearColor = {red * 0.2f, 0.0f, blue * 0.2f, 1.0f};
 
     auto renderPass =
-        mVulkanDevice->createRenderPass({{.format        = mSwapchain->getFormat(),
+        mVulkanDevice->createRenderPass({{.format        = acquired->getFormat(),
                                           .loadOp        = vk::AttachmentLoadOp::eClear,
                                           .storeOp       = vk::AttachmentStoreOp::eStore,
                                           .initialLayout = vk::ImageLayout::eUndefined,
                                           .finalLayout = vk::ImageLayout::eColorAttachmentOptimal}},
                                         {});
 
-    auto framebuffer = mVulkanDevice->createFramebuffer(renderPass, {mSwapchain}, nullptr);
+    auto framebuffer = mVulkanDevice->createFramebuffer(renderPass, {acquired}, nullptr);
 
     {
         recorder.beginRenderPass(renderPass, framebuffer, {vk::ClearColorValue{clearColor}});
@@ -221,7 +226,7 @@ Renderer::render()
             .subpass        = 0u});
         recorder.bindPipeline(pipeline);
 
-        const auto extent = mSwapchain->getExtent();
+        const auto extent = acquired->getExtent();
         recorder.setViewport(0,
                              {
                                  {
@@ -277,14 +282,14 @@ Renderer::render()
     }
 
     recorder.setImageBarrier(
-        mSwapchain,
+        acquired,
         {.srcStageMask        = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
          .dstStageMask        = vk::PipelineStageFlagBits2::eTopOfPipe,
          .oldLayout           = vk::ImageLayout::eColorAttachmentOptimal,
          .newLayout           = vk::ImageLayout::ePresentSrcKHR,
          .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
          .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-         .image               = mSwapchain->getImage(),
+         .image               = acquired->getImage(),
          .subresourceRange    = {
                 .aspectMask     = vk::ImageAspectFlagBits::eColor,
                 .baseMipLevel   = 0,
@@ -296,7 +301,7 @@ Renderer::render()
     commandBuffer->end();
 
     mVulkanDevice->graphicsQueue.submit(
-        std::array{**acquireResult.imageAvailableSemaphore},
+        std::array{*acquired->getImageAvailableSemaphore()},
         std::array{vk::PipelineStageFlags{vk::PipelineStageFlagBits::eColorAttachmentOutput}},
         std::array{std::move(commandBuffer)},
         std::array{*frame->getRenderFinishedSemaphore()});
