@@ -148,22 +148,22 @@ Renderer::render()
 
     Graphics::Vulkan::CommandBufferRecorder recorder{*mVulkanDevice, **commandBuffer};
 
-    recorder.setBarriers({},
-                         {},
-                         {{.srcStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe,
-                           .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                           .oldLayout    = vk::ImageLayout::eUndefined,
-                           .newLayout    = vk::ImageLayout::eColorAttachmentOptimal,
-                           .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                           .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                           .image               = mSwapchain->getImage(),
-                           .subresourceRange    = {
-                               .aspectMask     = vk::ImageAspectFlagBits::eColor,
-                               .baseMipLevel   = 0,
-                               .levelCount     = VK_REMAINING_ARRAY_LAYERS,
-                               .baseArrayLayer = 0,
-                               .layerCount     = VK_REMAINING_ARRAY_LAYERS,
-                           }}});
+    recorder.setImageBarrier(
+        mSwapchain,
+        {.srcStageMask        = vk::PipelineStageFlagBits2::eBottomOfPipe,
+         .dstStageMask        = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+         .oldLayout           = vk::ImageLayout::eUndefined,
+         .newLayout           = vk::ImageLayout::eColorAttachmentOptimal,
+         .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+         .image               = mSwapchain->getImage(),
+         .subresourceRange    = {
+                .aspectMask     = vk::ImageAspectFlagBits::eColor,
+                .baseMipLevel   = 0,
+                .levelCount     = VK_REMAINING_ARRAY_LAYERS,
+                .baseArrayLayer = 0,
+                .layerCount     = VK_REMAINING_ARRAY_LAYERS,
+         }});
 
     const double time = static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                                 std::chrono::high_resolution_clock::now() -
@@ -276,22 +276,22 @@ Renderer::render()
         recorder.endRenderPass();
     }
 
-    recorder.setBarriers({},
-                         {},
-                         {{.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                           .dstStageMask = vk::PipelineStageFlagBits2::eTopOfPipe,
-                           .oldLayout    = vk::ImageLayout::eColorAttachmentOptimal,
-                           .newLayout    = vk::ImageLayout::ePresentSrcKHR,
-                           .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                           .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                           .image               = mSwapchain->getImage(),
-                           .subresourceRange    = {
-                               .aspectMask     = vk::ImageAspectFlagBits::eColor,
-                               .baseMipLevel   = 0,
-                               .levelCount     = VK_REMAINING_ARRAY_LAYERS,
-                               .baseArrayLayer = 0,
-                               .layerCount     = VK_REMAINING_ARRAY_LAYERS,
-                           }}});
+    recorder.setImageBarrier(
+        mSwapchain,
+        {.srcStageMask        = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+         .dstStageMask        = vk::PipelineStageFlagBits2::eTopOfPipe,
+         .oldLayout           = vk::ImageLayout::eColorAttachmentOptimal,
+         .newLayout           = vk::ImageLayout::ePresentSrcKHR,
+         .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+         .image               = mSwapchain->getImage(),
+         .subresourceRange    = {
+                .aspectMask     = vk::ImageAspectFlagBits::eColor,
+                .baseMipLevel   = 0,
+                .levelCount     = VK_REMAINING_ARRAY_LAYERS,
+                .baseArrayLayer = 0,
+                .layerCount     = VK_REMAINING_ARRAY_LAYERS,
+         }});
 
     commandBuffer->end();
 

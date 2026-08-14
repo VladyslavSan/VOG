@@ -1,6 +1,7 @@
-#include "VOG/Graphics/Vulkan/CommandBufferRecorder.hpp"
+#include <VOG/Graphics/Vulkan/CommandBufferRecorder.hpp>
 
 #include <VOG/Common/Assert.hpp>
+#include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/CommandBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
@@ -52,9 +53,27 @@ CommandBufferRecorder::bindPipeline(GraphicsPipelinePtr pipeline) noexcept
 }
 
 void
-CommandBufferRecorder::setBarriers(vk::ArrayProxy<vk::MemoryBarrier2>       memoryBarriers,
-                                   vk::ArrayProxy<vk::BufferMemoryBarrier2> bufferBarriers,
-                                   vk::ArrayProxy<vk::ImageMemoryBarrier2>  imageBarriers) noexcept
+CommandBufferRecorder::setImageBarrier(const std::shared_ptr<void>&   resource,
+                                       const vk::ImageMemoryBarrier2& barrier) noexcept
+{
+    mCommandBuffer.addBoundResource(resource);
+    unsafeSetBarriers({}, {}, {barrier});
+}
+
+void
+CommandBufferRecorder::setBufferBarrier(const std::shared_ptr<Buffer>& buffer,
+                                        vk::BufferMemoryBarrier2       barrier) noexcept
+{
+    barrier.buffer = **buffer;
+    mCommandBuffer.addBoundResource(buffer);
+    unsafeSetBarriers({}, {barrier}, {});
+}
+
+void
+CommandBufferRecorder::unsafeSetBarriers(
+    vk::ArrayProxy<vk::MemoryBarrier2>       memoryBarriers,
+    vk::ArrayProxy<vk::BufferMemoryBarrier2> bufferBarriers,
+    vk::ArrayProxy<vk::ImageMemoryBarrier2>  imageBarriers) noexcept
 {
     mCommandBuffer.pipelineBarrier2({.memoryBarrierCount       = memoryBarriers.size(),
                                      .pMemoryBarriers          = memoryBarriers.begin(),
@@ -62,5 +81,13 @@ CommandBufferRecorder::setBarriers(vk::ArrayProxy<vk::MemoryBarrier2>       memo
                                      .pBufferMemoryBarriers    = bufferBarriers.begin(),
                                      .imageMemoryBarrierCount  = imageBarriers.size(),
                                      .pImageMemoryBarriers     = imageBarriers.begin()});
+}
+
+void
+CommandBufferRecorder::setBarriers(vk::ArrayProxy<vk::MemoryBarrier2>       memoryBarriers,
+                                   vk::ArrayProxy<vk::BufferMemoryBarrier2> bufferBarriers,
+                                   vk::ArrayProxy<vk::ImageMemoryBarrier2>  imageBarriers) noexcept
+{
+    unsafeSetBarriers(memoryBarriers, bufferBarriers, imageBarriers);
 }
 } // namespace VOG::Graphics::Vulkan

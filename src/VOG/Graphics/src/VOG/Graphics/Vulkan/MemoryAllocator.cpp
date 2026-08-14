@@ -114,7 +114,7 @@ MemoryAllocator::MemoryAllocator(Device& device)
 
 MemoryAllocator::~MemoryAllocator() { vmaDestroyAllocator(mAllocator); }
 
-std::unique_ptr<Buffer>
+std::shared_ptr<Buffer>
 MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
                             const AllocationParameters& allocationCreateInfo)
 {
@@ -136,9 +136,9 @@ MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
         throw std::runtime_error{"Buffer creation failed."};
     }
 
-    return std::unique_ptr<Buffer>(
-        new Buffer{Allocation{shared_from_this(), allocation, allocationInfo, allocationCreateInfo},
-                   vk::raii::Buffer{mDevice, buffer}});
+    return std::shared_ptr<Buffer>(new Buffer{
+        Allocation{shared_from_this(), allocation, allocationInfo, allocationCreateInfo},
+        vk::raii::Buffer{mDevice, buffer}});
 }
 
 MemoryAllocator::
