@@ -31,7 +31,7 @@ protected:
     VmaAllocator mAllocator;
 
 private:
-    std::unique_ptr<Buffer> makeBuffer(const vk::BufferCreateInfo& createInfo,
+    std::shared_ptr<Buffer> makeBuffer(const vk::BufferCreateInfo& createInfo,
                                        const AllocationParameters& allocationCreateInfo);
 };
 

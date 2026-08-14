@@ -21,11 +21,16 @@ anything that flows through the tracked APIs.
    - `CommandBufferRecorder::beginRenderPass` registers the render pass and
      framebuffer, `bindPipeline` registers the pipeline — all via
      `CommandBuffer::addBoundResource` (`Graphics/Vulkan/CommandBufferRecorder.cpp`).
+   - `setImageBarrier` / `setBufferBarrier` retain the passed resource; prefer
+     these over `unsafeSetBarriers` (raw Vulkan barriers with no retention).
+   - `Device::createBuffer` returns `shared_ptr<Buffer>` so callers can record
+     without converting from `unique_ptr`.
 
-2. **Submission retains the command buffer.** `Queue::submit` pairs the
-   submitted `CommandBuffer` with a `FenceHandle` and parks it in the command
-   buffer pool's submitted list (`Graphics/Vulkan/Queue.hpp`,
-   `Graphics/Vulkan/CommandBufferPool.cpp`). The command buffer — and therefore
+2. **Submission retains the command buffer.** `Queue::submit` calls
+   `vkQueueSubmit` first, then parks each `CommandBuffer` with a `FenceHandle`
+   in the pool's submitted list (`Graphics/Vulkan/Queue.hpp`,
+   `Graphics/Vulkan/CommandBufferPool.cpp`). If submit throws, handles are not
+   parked against an unsignaled fence. The command buffer — and therefore
    everything it retains — stays alive while the GPU works.
 
 3. **Fence wait releases.** When a frame slot is re-acquired

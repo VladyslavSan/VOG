@@ -50,7 +50,8 @@ public:
         commandBuffersTmp.reserve(commandBuffers.size());
         for (CommandBufferHandle& handle : commandBuffers)
         {
-            commandBuffersTmp.push_back(handle.consumeForSubmission(fence));
+            // Peek handles only — do not park CBs until submit succeeds.
+            commandBuffersTmp.push_back(**handle);
         }
 
         vk::SubmitInfo submitInfo{
@@ -64,6 +65,11 @@ public:
         };
 
         vk::raii::Queue::submit(submitInfo, **fence->useFence());
+
+        for (CommandBufferHandle& handle : commandBuffers)
+        {
+            handle.consumeForSubmission(fence);
+        }
 
         return Submission{.fence = std::move(fence)};
     }

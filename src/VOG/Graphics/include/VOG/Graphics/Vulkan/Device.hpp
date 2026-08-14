@@ -192,11 +192,10 @@ public:
      * @param createInfo      Buffer size, usage flags, and sharing mode.
      * @param allocationInfo  VMA memory usage and required/preferred memory flags.
      *
-     * @return Allocated buffer.
+     * @return Allocated buffer (shared so recording can retain it).
      */
-    std::unique_ptr<Buffer>
-    createBuffer(const vk::BufferCreateInfo&                  createInfo,
-                 const MemoryAllocator::AllocationParameters& allocationInfo);
+    BufferPtr createBuffer(const vk::BufferCreateInfo&                  createInfo,
+                           const MemoryAllocator::AllocationParameters& allocationInfo);
 
     /**
      * Creates a binary fence for CPU/GPU synchronization.

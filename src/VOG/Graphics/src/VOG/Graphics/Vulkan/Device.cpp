@@ -303,7 +303,7 @@ Device::createDescriptorAllocator(const DescriptorAllocator::ConstructionParamet
         new DescriptorAllocator{shared_from_this(), params});
 }
 
-std::unique_ptr<Buffer>
+BufferPtr
 Device::createBuffer(const vk::BufferCreateInfo&                  createInfo,
                      const MemoryAllocator::AllocationParameters& allocationInfo)
 {
