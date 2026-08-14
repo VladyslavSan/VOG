@@ -2,19 +2,18 @@
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
+#include <VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp>
 #include <VOG/Graphics/Vulkan/CommandBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Containers.hpp>
-#include <VOG/Graphics/Vulkan/FrameBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Limits.hpp>
 
 #include <memory>
+#include <optional>
 #include <span>
 
 namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Device);
-VOG_DECLARE_PTR(Framebuffer);
-VOG_DECLARE_PTR(RenderPass);
 VOG_DECLARE_PTR(GraphicsPipeline);
 VOG_DECLARE_PTR(Buffer);
 
@@ -25,15 +24,40 @@ VOG_DECLARE_PTR(Buffer);
 class CommandBufferRecorder
 {
 public:
-    using ClearValues = StaticVector<vk::ClearValue, Limits::gMaxNumAttachments>;
+    /** One dynamic-rendering color target: what to load, what to keep, what to clear to. */
+    struct ColorAttachment
+    {
+        AttachmentInterfacePtr attachment;
+        vk::AttachmentLoadOp   loadOp     = vk::AttachmentLoadOp::eClear;
+        vk::AttachmentStoreOp  storeOp    = vk::AttachmentStoreOp::eStore;
+        vk::ClearColorValue    clearValue = {};
+        vk::ImageLayout        layout     = vk::ImageLayout::eColorAttachmentOptimal;
+    };
+
+    struct DepthAttachment
+    {
+        AttachmentInterfacePtr     attachment;
+        vk::AttachmentLoadOp       loadOp     = vk::AttachmentLoadOp::eClear;
+        vk::AttachmentStoreOp      storeOp    = vk::AttachmentStoreOp::eDontCare;
+        vk::ClearDepthStencilValue clearValue = {.depth = 1.0f, .stencil = 0u};
+        vk::ImageLayout            layout     = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+    };
+
+    using ColorAttachments = StaticVector<ColorAttachment, Limits::gMaxNumColorAttachments>;
 
     CommandBufferRecorder(const Device& device, Vulkan::CommandBuffer& commandBuffer);
 
-    void beginRenderPass(const RenderPassPtr&  renderPass,
-                         const FramebufferPtr& framebuffer,
-                         ClearValues           clearValues) noexcept;
+    /**
+     * Starts a dynamic-rendering scope covering the full extent of the attachments.
+     * All attachments must share their extent and are retained for the command buffer's lifetime.
+     *
+     * @param colorAttachments  Color targets with their load/store ops and clear values.
+     * @param depthAttachment   Optional depth target.
+     */
+    void beginRendering(const ColorAttachments&               colorAttachments,
+                        const std::optional<DepthAttachment>& depthAttachment = {}) noexcept;
 
-    void endRenderPass() noexcept;
+    void endRendering() noexcept;
 
     void bindPipeline(GraphicsPipelinePtr pipeline) noexcept;
 

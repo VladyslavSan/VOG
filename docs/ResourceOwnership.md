@@ -18,8 +18,8 @@ anything that flows through the tracked APIs.
    the command buffer:
    - `CommandBuffer::bindVertexBuffers` inserts the buffer into
      `mBoundVertexBuffers` (`Graphics/Vulkan/CommandBuffer.hpp`).
-   - `CommandBufferRecorder::beginRenderPass` registers the render pass and
-     framebuffer, `bindPipeline` registers the pipeline — all via
+   - `CommandBufferRecorder::beginRendering` registers every color and depth
+     attachment, `bindPipeline` registers the pipeline — all via
      `CommandBuffer::addBoundResource` (`Graphics/Vulkan/CommandBufferRecorder.cpp`).
    - `setImageBarrier` / `setBufferBarrier` retain the passed resource; prefer
      these over `unsafeSetBarriers` (raw Vulkan barriers with no retention).

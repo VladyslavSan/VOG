@@ -1,6 +1,5 @@
 #include <VOG/Graphics/Vulkan/GLSLCompiler.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
-#include <VOG/Graphics/Vulkan/RenderPass.hpp>
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 
@@ -53,31 +52,30 @@ layout(push_constant) uniform PC { vec4 transform; } pc;
 void main() { gl_Position = inPosition + pc.transform; }
 )";
 
-GraphicsPipeline::ParametersLegacy
-makeMinimalPipelineParameters(ShaderProgramPtr          program,
-                              const RenderPass&         renderPass,
-                              const vk::PipelineLayout& layout)
+GraphicsPipeline::Parameters
+makeMinimalPipelineParameters(ShaderProgramPtr program, const vk::PipelineLayout& layout)
 {
-    return GraphicsPipeline::ParametersLegacy{
-        .cache         = nullptr,
-        .shading       = program,
-        .vertexLayout  = {.bindingDescription   = {{.binding   = 0u,
-                                                    .stride    = 16u,
-                                                    .inputRate = vk::VertexInputRate::eVertex}},
-                          .attributeDescription = {{.location = 0u,
-                                                    .binding  = 0u,
-                                                    .format   = vk::Format::eR32G32B32A32Sfloat,
-                                                    .offset   = 0u}}},
-        .rasterizer    = {.cullMode = CullMode::eNone},
-        .viewportState = {.viewportCount = 1u, .scissorCount = 1u},
-        .depthStencil  = {},
-        .blending = {.attachments = {{.colorWriteMask = ColorComponent::eR | ColorComponent::eG |
-                                                        ColorComponent::eB | ColorComponent::eA}}},
-        .multisample    = {},
-        .dynamicStates  = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
-        .pipelineLayout = layout,
-        .renderPass     = renderPass,
-        .subpass        = 0u,
+    constexpr auto colorWriteMask =
+        ColorComponent::eR | ColorComponent::eG | ColorComponent::eB | ColorComponent::eA;
+
+    return GraphicsPipeline::Parameters{
+        .cache                 = nullptr,
+        .shading               = program,
+        .vertexLayout          = {.bindingDescription   = {{.binding   = 0u,
+                                                            .stride    = 16u,
+                                                            .inputRate = vk::VertexInputRate::eVertex}},
+                                  .attributeDescription = {{.location = 0u,
+                                                            .binding  = 0u,
+                                                            .format   = vk::Format::eR32G32B32A32Sfloat,
+                                                            .offset   = 0u}}},
+        .rasterizer            = {.cullMode = CullMode::eNone},
+        .viewportState         = {.viewportCount = 1u, .scissorCount = 1u},
+        .depthStencil          = {},
+        .blending              = {.attachments = {{.colorWriteMask = colorWriteMask}}},
+        .multisample           = {},
+        .dynamicStates         = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
+        .pipelineLayout        = layout,
+        .renderpassDescription = {.colorAttachmentFormats = {vk::Format::eR32G32B32A32Sfloat}},
     };
 }
 
@@ -241,16 +239,9 @@ TEST_F(VulkanValidationFixture, ShaderProgram_makePipelineLayout_gapFilledCorrec
     ASSERT_NO_THROW(shaderProgram = VulkanDevice->createShaderProgram(
                         {.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
 
-    auto renderPass =
-        VulkanDevice->createRenderPass({{.format      = vk::Format::eR32G32B32A32Sfloat,
-                                         .loadOp      = vk::AttachmentLoadOp::eClear,
-                                         .storeOp     = vk::AttachmentStoreOp::eStore,
-                                         .finalLayout = vk::ImageLayout::eColorAttachmentOptimal}},
-                                       {});
-
     ASSERT_NO_THROW({
-        auto pipeline = VulkanDevice->createGraphicsPipeline(makeMinimalPipelineParameters(
-            shaderProgram, *renderPass, *shaderProgram->pipelineLayout));
+        auto pipeline = VulkanDevice->createGraphicsPipeline(
+            makeMinimalPipelineParameters(shaderProgram, *shaderProgram->pipelineLayout));
     });
 
     EXPECT_TRUE(validationErrors.empty())

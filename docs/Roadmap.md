@@ -25,19 +25,17 @@ step builds on the previous. Completed work is kept for context.
   clamped against `surfaceCapabilities.min/maxImageCount` (maxImageCount==0 =
   unlimited, handled explicitly); `recreate()` updates `mExtent` from surface
   capabilities before rebuilding.
-
-## Phase 4: Vulkan 1.3 + dynamic rendering
-
-- Bump `VK_API_VERSION_1_2` → `1_3` (Instance.cpp). MoltenVK and Mesa
-  lavapipe both support 1.3.
-- Enable `vk::PhysicalDeviceVulkan13Features{ .synchronization2, .dynamicRendering }`;
-  drop the `VK_KHR_synchronization2` extension entry (core in 1.3).
-- Add `CommandBufferRecorder::beginRendering()/endRendering()` built from
-  `AttachmentInterface` (the non-legacy `GraphicsPipeline::Parameters` path
-  already emits `vk::PipelineRenderingCreateInfo`).
-- Delete the legacy path: `RenderPass`, `Framebuffer`,
+- **Vulkan 1.3 + dynamic rendering** (Phase 4): instance API version bumped to
+  1.3 and `vk::PhysicalDeviceVulkan13Features{ .synchronization2,
+  .dynamicRendering }` enabled, so the `VK_KHR_synchronization2` extension entry
+  is gone (core in 1.3). `CommandBufferRecorder::beginRendering()/endRendering()`
+  build `vk::RenderingInfo` from `AttachmentInterface` attachments carrying their
+  own load/store ops and clear values, retaining each one. The legacy path is
+  deleted: `RenderPass`, `Framebuffer`,
   `Device::createRenderPass/createFramebuffer`,
-  `GraphicsPipeline::ParametersLegacy`, `beginRenderPass/endRenderPass`.
+  `GraphicsPipeline::ParametersLegacy` and `beginRenderPass/endRenderPass` are
+  gone; `GraphicsPipeline::Parameters` with its `RenderpassDescription` is the
+  only pipeline path.
 
 ## Phase 5: typed config + RenderItem seam + demo extraction
 

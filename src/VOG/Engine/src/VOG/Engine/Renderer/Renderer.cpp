@@ -14,7 +14,6 @@
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
-#include <VOG/Graphics/Vulkan/RenderPass.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 #include <VOG/Math/Math.hpp>
 #include <VOG/Math/Projections.hpp>
@@ -180,22 +179,18 @@ Renderer::render()
 
     const std::array clearColor = {red * 0.2f, 0.0f, blue * 0.2f, 1.0f};
 
-    auto renderPass =
-        mVulkanDevice->createRenderPass({{.format        = acquired->getFormat(),
-                                          .loadOp        = vk::AttachmentLoadOp::eClear,
-                                          .storeOp       = vk::AttachmentStoreOp::eStore,
-                                          .initialLayout = vk::ImageLayout::eUndefined,
-                                          .finalLayout = vk::ImageLayout::eColorAttachmentOptimal}},
-                                        {});
-
-    auto framebuffer = mVulkanDevice->createFramebuffer(renderPass, {acquired}, nullptr);
+    constexpr auto colorWriteMask =
+        ColorComponent::eR | ColorComponent::eG | ColorComponent::eB | ColorComponent::eA;
 
     {
-        recorder.beginRenderPass(renderPass, framebuffer, {vk::ClearColorValue{clearColor}});
+        recorder.beginRendering({{.attachment = acquired,
+                                  .loadOp     = vk::AttachmentLoadOp::eClear,
+                                  .storeOp    = vk::AttachmentStoreOp::eStore,
+                                  .clearValue = vk::ClearColorValue{clearColor}}});
 
         auto program = mShaderProgramCache->get("WorldSpace");
 
-        auto pipeline = mVulkanDevice->createGraphicsPipeline(GraphicsPipeline::ParametersLegacy{
+        auto pipeline = mVulkanDevice->createGraphicsPipeline(GraphicsPipeline::Parameters{
             .cache          = nullptr,
             .shading        = program,
             .vertexLayout   = {.bindingDescription =
@@ -215,15 +210,12 @@ Renderer::render()
             .rasterizer     = {.cullMode = CullMode::eNone},
             .viewportState  = {.viewportCount = 1u, .scissorCount = 1u},
             .depthStencil   = {.depthTestEnable = 0u},
-            .blending       = {.attachments = {{.blendEnable = 0u,
-                                                .colorWriteMask =
-                                                    ColorComponent::eR | ColorComponent::eG |
-                                                    ColorComponent::eB | ColorComponent::eA}}},
+            .blending       = {.attachments = {{.blendEnable    = 0u,
+                                                .colorWriteMask = colorWriteMask}}},
             .multisample    = {},
             .dynamicStates  = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
             .pipelineLayout = *program->pipelineLayout,
-            .renderPass     = *renderPass,
-            .subpass        = 0u});
+            .renderpassDescription = {.colorAttachmentFormats = {acquired->getFormat()}}});
         recorder.bindPipeline(pipeline);
 
         const auto extent = acquired->getExtent();
@@ -278,7 +270,7 @@ Renderer::render()
 
         recorder.draw(static_cast<std::uint32_t>(std::size(vertexData)), 1, 0, 0);
 
-        recorder.endRenderPass();
+        recorder.endRendering();
     }
 
     recorder.setImageBarrier(
