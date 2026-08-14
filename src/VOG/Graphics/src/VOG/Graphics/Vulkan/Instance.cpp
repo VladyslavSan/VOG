@@ -29,6 +29,8 @@ getInstanceRequiredExtensions()
 #elif defined(PLATFORM_VIDEO_APPLE)
     requiredExtensions.push_back(VK_EXT_METAL_SURFACE_EXTENSION_NAME);
 #endif
+    // Linux WSI extensions are added opportunistically in makeInstance when present,
+    // so headless CI (lavapipe without WSI) can still create an instance.
 
     return requiredExtensions;
 }
@@ -86,6 +88,31 @@ makeInstance(const vk::raii::Context& context, const Instance::InstanceParameter
     {
         requiredExtensions.push_back(gPortabilityEnumerationExtension);
     }
+
+#ifdef PLATFORM_LINUX
+    {
+        auto addIfPresent = [&](const char* name)
+        {
+            if (std::ranges::find_if(availableInstanceExtensions,
+                                     [name](const vk::ExtensionProperties& prop)
+                                     {
+                                         return std::strcmp(prop.extensionName, name) == 0;
+                                     }) != availableInstanceExtensions.end())
+            {
+                requiredExtensions.push_back(name);
+            }
+        };
+    #ifdef PLATFORM_VIDEO_LINUX_WAYLAND
+        addIfPresent(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);
+    #endif
+    #ifdef PLATFORM_VIDEO_LINUX_XLIB
+        addIfPresent(VK_KHR_XLIB_SURFACE_EXTENSION_NAME);
+    #endif
+    #ifdef PLATFORM_VIDEO_LINUX_XCB
+        addIfPresent(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
+    #endif
+    }
+#endif
 
     const auto&              extensions = parameters.extensions;
     std::vector<const char*> extensionsAll(extensions.size());

@@ -39,6 +39,31 @@ SDLWindow::makeSurfaceHandles(const SDLWindow::Handle& window)
         .platform      = Common::SurfaceHandle::Platform::eApple,
         .surfaceHandle = std::bit_cast<std::uintptr_t>(windowHandle),
     };
+#elif defined(SDL_PLATFORM_LINUX)
+    // Prefer Wayland when SDL created a Wayland window; otherwise fall back to X11.
+    if (void* wlSurface = propertyGetter(SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
+        wlSurface != nullptr)
+    {
+        void* wlDisplay = propertyGetter(SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
+        return {
+            .platform         = Common::SurfaceHandle::Platform::eLinuxWayland,
+            .surfaceHandle    = std::bit_cast<std::uintptr_t>(wlSurface),
+            .additionalHandle = std::bit_cast<std::uintptr_t>(wlDisplay),
+        };
+    }
+
+    if (void* xDisplay = propertyGetter(SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr);
+        xDisplay != nullptr)
+    {
+        // SDL stores the X11 Window as a number property, not a pointer.
+        const Uint64 xWindow =
+            SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
+        return {
+            .platform         = Common::SurfaceHandle::Platform::eLinuxXlib,
+            .surfaceHandle    = static_cast<std::uintptr_t>(xWindow),
+            .additionalHandle = std::bit_cast<std::uintptr_t>(xDisplay),
+        };
+    }
 #endif
 
     return {};
