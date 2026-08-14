@@ -5,7 +5,6 @@
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp>
-#include <VOG/Graphics/Vulkan/Fence.hpp>
 
 #include <memory>
 #include <optional>
@@ -16,31 +15,9 @@ namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Device);
 
-class Swapchain : public AttachmentInterface
+class Swapchain final : public AttachmentInterface
 {
-    struct SwapchainImageSyncData
-    {
-        SwapchainImageSyncData(const DevicePtr& device);
-
-        vk::raii::Semaphore semaphore;
-        Fence               fence;
-    };
-
 public:
-    struct SwapchainParameters
-    {
-        /** Frames in flight, might be lower than requested. */
-        std::uint8_t framesInFlight = 1u;
-
-        /** Priority list of presentation modes from most preferred to least. */
-        std::vector<vk::PresentModeKHR> preferredPresentationModes = {
-            vk::PresentModeKHR::eMailbox,
-            vk::PresentModeKHR::eFifo,
-            vk::PresentModeKHR::eFifoRelaxed};
-
-        Common::SurfaceHandle surface;
-    };
-
     enum class AcquireStatus : std::uint8_t
     {
         /** An image was acquired and is ready to be rendered into. */
@@ -59,13 +36,39 @@ public:
         eOutOfDate
     };
 
-    struct ImageAcquireResult
+    struct SwapchainParameters
     {
-        AcquireStatus              status;
-        const vk::raii::Semaphore* semaphore; // Valid only when status == eReady.
+        /** Frames in flight, might be lower than requested. */
+        std::uint8_t framesInFlight = 1u;
+
+        /** Priority list of presentation modes from most preferred to least. */
+        std::vector<vk::PresentModeKHR> preferredPresentationModes = {
+            vk::PresentModeKHR::eMailbox,
+            vk::PresentModeKHR::eFifo,
+            vk::PresentModeKHR::eFifoRelaxed};
+
+        Common::SurfaceHandle surface;
     };
 
-    ~Swapchain();
+    /** All per-image resources share the same index: the value returned by vkAcquireNextImageKHR.
+     */
+    struct SwapchainImage
+    {
+        vk::Image                            image;
+        std::shared_ptr<vk::raii::ImageView> imageView;
+        /** PE signals this after finishing display of the image (PE→GPU "present done" signal).
+         *  Populated via the swap trick in acquireNextImage(). Submit waits this. */
+        vk::raii::Semaphore imageAvailableSemaphore;
+    };
+
+    struct ImageAcquireResult
+    {
+        AcquireStatus status;
+        // valid when eReady; submit waits this
+        const vk::raii::Semaphore* imageAvailableSemaphore;
+    };
+
+    ~Swapchain() override;
 
 private:
     friend class Device;
@@ -75,15 +78,14 @@ private:
     /**
      * (Re)creates the swapchain, image views and per-image sync data for the given extent.
      *
-     * @param extent        Target image extent (must be non-zero).
      * @param oldSwapchain  Previous swapchain handle for driver resource reuse (may be null).
      */
-    void build(vk::Extent2D extent, vk::SwapchainKHR oldSwapchain);
+    void build(vk::SwapchainKHR oldSwapchain);
 
 public:
     ImageAcquireResult acquireNextImage();
 
-    PresentStatus present(vk::ArrayProxy<const vk::Semaphore> waitSemaphores);
+    PresentStatus present(vk::Semaphore renderFinishedSemaphore);
 
     /**
      * Recreates the swapchain to match the current surface size. Waits for the device to be idle
@@ -111,17 +113,11 @@ protected:
     std::uint32_t      mMinImageCount = 1u;
     vk::PresentModeKHR mPresentMode   = vk::PresentModeKHR::eFifo;
 
-    vk::raii::SwapchainKHR mSwapchain;
-    std::vector<vk::Image> mSwapchainImages;
+    vk::raii::SwapchainKHR      mSwapchain;
+    std::vector<SwapchainImage> mImages;
 
-    std::vector<std::shared_ptr<vk::raii::ImageView>> mImageViews;
-
-    /** Index of the current swapchain image data */
-    std::uint32_t mSwapchainImageSyncIndex = 0u;
-
-    /** Array of sync elements for each image out of k frames in flight */
-    std::vector<SwapchainImageSyncData> mSwapchainImageSyncData;
-
+    /** Rotates through mImages slots via the swap trick in acquireNextImage(). */
+    vk::raii::Semaphore          mSpareAcquireSemaphore;
     std::optional<std::uint32_t> mCurrentSwapchainImageIndex;
 };
 } // namespace VOG::Graphics::Vulkan

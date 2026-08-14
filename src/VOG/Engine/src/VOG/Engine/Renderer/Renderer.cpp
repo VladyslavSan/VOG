@@ -110,6 +110,9 @@ Renderer::render()
 
     constexpr std::chrono::milliseconds kZeroExtentBackoff{16};
 
+    auto frame = mFrameObjectManager->acquireNextFrame();
+    auto pool  = frame->getCommandBufferPoolForThread(threadId);
+
     const auto acquireResult = mSwapchain->acquireNextImage();
     if (acquireResult.status == Swapchain::AcquireStatus::eOutOfDate)
     {
@@ -125,10 +128,7 @@ Renderer::render()
         return;
     }
 
-    auto& frame = mFrameObjectManager->acquireNextFrame();
-    auto& pool  = frame.getCommandBufferPoolForThread(threadId);
-
-    auto commandBuffer = pool.get(vk::CommandBufferLevel::ePrimary);
+    auto commandBuffer = pool->get(vk::CommandBufferLevel::ePrimary);
     commandBuffer->begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
     commandBuffer->bindVertexBuffers(0u, {{.buffer = triangleBuffer, .offset = 0u}});
 
@@ -282,12 +282,12 @@ Renderer::render()
     commandBuffer->end();
 
     mVulkanDevice->graphicsQueue.submit(
-        std::array{**acquireResult.semaphore},
+        std::array{**acquireResult.imageAvailableSemaphore},
         std::array{vk::PipelineStageFlags{vk::PipelineStageFlagBits::eColorAttachmentOutput}},
         std::array{std::move(commandBuffer)},
-        std::array{*frame.getFramePresentSemaphore()});
+        std::array{*frame->getRenderFinishedSemaphore()});
 
-    if (mSwapchain->present({*frame.getFramePresentSemaphore()}) ==
+    if (mSwapchain->present(*frame->getRenderFinishedSemaphore()) ==
         Swapchain::PresentStatus::eOutOfDate)
     {
         if (!mSwapchain->recreate())

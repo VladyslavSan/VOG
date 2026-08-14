@@ -14,24 +14,17 @@ step builds on the previous. Completed work is kept for context.
   status-based acquire/present via
   `VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS`, wait-idle teardown,
   zero-extent (minimize) back-off, resizable example window.
-
-## Next: swapchain semaphore correctness
-
-Two latent sync issues, independent of resize (work today by coincidence of
-FIFO + matched image/frame counts; unsafe under mailbox or when the driver
-returns more images than `minImageCount`):
-
-1. **Render-finished (present-wait) semaphore must be per swapchain image,
-   not per frame-in-flight.** Move it from `FrameObjects` into
-   `Swapchain::SwapchainImageSyncData`, indexed by the *acquired image
-   index*; let `Swapchain::present()` own the wait internally (drop the
-   `waitSemaphores` parameter). Reuse is safe once that image is re-acquired.
-2. **Acquire semaphores must not be reused while potentially pending.**
-   Either fence-gate reuse (the currently dead `SwapchainImageSyncData::fence`)
-   or size the acquire ring `imageCount + 1`.
-3. While in there: clamp `minImageCount` against
-   `surfaceCapabilities.minImageCount/maxImageCount` (currently passed
-   through unclamped — VUID violation on surfaces with a higher minimum).
+- **Swapchain semaphore correctness**: `imageAvailableSemaphore` is per swapchain
+  image (owned by `SwapchainImage`, keyed by the index returned from
+  `vkAcquireNextImageKHR`), while `renderFinishedSemaphore` is per
+  frame-in-flight slot (owned by `FrameObjects`, reuse gated by the slot fence).
+  The swap trick solves the chicken-and-egg for acquire semaphores: one spare is
+  passed to acquire, then swapped into `mImages[K]` after K is known — the
+  evicted semaphore is provably unsignaled because re-acquiring K proves the
+  prior full cycle completed (see `docs/SwapchainSync.md`). `minImageCount`
+  clamped against `surfaceCapabilities.min/maxImageCount` (maxImageCount==0 =
+  unlimited, handled explicitly); `recreate()` updates `mExtent` from surface
+  capabilities before rebuilding.
 
 ## Phase 4: Vulkan 1.3 + dynamic rendering
 

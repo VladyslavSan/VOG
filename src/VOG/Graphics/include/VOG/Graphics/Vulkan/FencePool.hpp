@@ -15,10 +15,9 @@ VOG_DECLARE_PTR(FencePool);
 
 class FencePool : public std::enable_shared_from_this<FencePool>
 {
-private:
     friend class Device;
 
-    FencePool(DevicePtr device);
+    explicit FencePool(DevicePtr device);
 
 public:
     class FenceHandle : protected Fence

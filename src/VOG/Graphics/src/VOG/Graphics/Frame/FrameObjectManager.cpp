@@ -22,23 +22,23 @@ FrameObjectManager::FrameObjectManager(const Vulkan::DevicePtr& device,
                     frameCount,
                     [this, threadCount]()
                     {
-                        return FrameObjects{mDevice, threadCount};
+                        return std::make_shared<FrameObjects>(mDevice, threadCount);
                     });
 }
 
-FrameObjects&
+FrameObjectsPtr
 FrameObjectManager::getCurrentFrame()
 {
     return mFrameObjects[getCurrentFrameIndex()];
 }
 
-FrameObjects&
+FrameObjectsPtr
 FrameObjectManager::acquireNextFrame()
 {
     ++mRenderFrame;
 
-    FrameObjects& frame = getCurrentFrame();
-    frame.onFrameStart();
+    auto frame = getCurrentFrame();
+    frame->onFrameStart();
 
     return frame;
 }

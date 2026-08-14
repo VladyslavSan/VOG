@@ -27,6 +27,8 @@ public:
                         vk::Extent3D    extent,
                         SampleCount     sampleCount);
 
+    virtual ~AttachmentInterface() = default;
+
     AttachmentUsage getUsage() const;
 
     vk::Format getFormat() const;

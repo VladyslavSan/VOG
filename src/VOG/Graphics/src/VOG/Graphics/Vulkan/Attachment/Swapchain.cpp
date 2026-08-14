@@ -7,6 +7,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace VOG::Graphics::Vulkan
@@ -40,12 +41,6 @@ findPresentQueueFamilyIndex(const Device& device, const vk::raii::SurfaceKHR& su
 }
 } // namespace
 
-Swapchain::SwapchainImageSyncData::SwapchainImageSyncData(const DevicePtr& device)
-    : semaphore{*device, vk::SemaphoreCreateInfo{}}
-    , fence{device->createFence()}
-{
-}
-
 Swapchain::~Swapchain() {}
 
 Swapchain::Swapchain(DevicePtr device, const SwapchainParameters& parameters)
@@ -57,27 +52,34 @@ Swapchain::Swapchain(DevicePtr device, const SwapchainParameters& parameters)
                                          mDevice->queueInfos.graphics.familyIndex}
     , mPresentQueue{*mDevice, mPresentQueueFamilyIndex, 0}
     , mSwapchain{nullptr}
+    , mSpareAcquireSemaphore{nullptr}
     , mSurfaceFormat{mDevice->getSurfaceFormatsKHR(**mSurface).at(0u)}
 {
     mFormat = mSurfaceFormat.format;
 
     auto surfaceCapabilities = mDevice->getSurfaceCapabilitiesKHR(**mSurface);
-    auto surfacePresentModes = mDevice->getSurfacePresentModesKHR(**mSurface);
-
-    vk::Extent2D surfaceSize;
     if (surfaceCapabilities.currentExtent.width != std::numeric_limits<uint32_t>::max() &&
         surfaceCapabilities.currentExtent.height != std::numeric_limits<uint32_t>::max())
     {
-        surfaceSize = surfaceCapabilities.currentExtent;
+        mExtent = vk::Extent3D{.width  = surfaceCapabilities.currentExtent.width,
+                               .height = surfaceCapabilities.currentExtent.height,
+                               .depth  = 1};
     }
     else
     {
         throw std::runtime_error("Surface creation failed. Surface extents are invalid.");
     }
 
-    mMinImageCount = parameters.framesInFlight;
+    mMinImageCount =
+        std::max<std::uint32_t>(parameters.framesInFlight, surfaceCapabilities.minImageCount);
+    // maxImageCount == 0 means no upper limit.
+    if (surfaceCapabilities.maxImageCount != 0u)
+    {
+        mMinImageCount = std::min(mMinImageCount, surfaceCapabilities.maxImageCount);
+    }
 
-    mPresentMode = vk::PresentModeKHR::eImmediate;
+    auto surfacePresentModes = mDevice->getSurfacePresentModesKHR(**mSurface);
+    mPresentMode             = vk::PresentModeKHR::eImmediate;
     {
         bool foundPresentationMode = false;
         if (!parameters.preferredPresentationModes.empty())
@@ -107,16 +109,12 @@ Swapchain::Swapchain(DevicePtr device, const SwapchainParameters& parameters)
         }
     }
 
-    build(surfaceSize, nullptr);
+    build(nullptr);
 }
 
 void
-Swapchain::build(vk::Extent2D extent, vk::SwapchainKHR oldSwapchain)
+Swapchain::build(vk::SwapchainKHR oldSwapchain)
 {
-    mExtent.width  = extent.width;
-    mExtent.height = extent.height;
-    mExtent.depth  = 1;
-
     {
         const std::array queueFamilyIndices = {mDevice->queueInfos.graphics.familyIndex,
                                                mPresentQueueFamilyIndex};
@@ -125,7 +123,7 @@ Swapchain::build(vk::Extent2D extent, vk::SwapchainKHR oldSwapchain)
             .minImageCount    = mMinImageCount,
             .imageFormat      = mFormat,
             .imageColorSpace  = mSurfaceFormat.colorSpace,
-            .imageExtent      = extent,
+            .imageExtent      = vk::Extent2D{.width = mExtent.width, .height = mExtent.height},
             .imageArrayLayers = 1u,
             .imageUsage       = vk::ImageUsageFlagBits::eColorAttachment,
             .imageSharingMode = mPresentQueueIsSameToGraphicsQueue ? vk::SharingMode::eExclusive
@@ -141,15 +139,12 @@ Swapchain::build(vk::Extent2D extent, vk::SwapchainKHR oldSwapchain)
         mSwapchain = vk::raii::SwapchainKHR{*mDevice, swapchainCreateInfo};
     }
 
-    mSwapchainImages.clear();
-    mImageViews.clear();
-    mSwapchainImageSyncData.clear();
-    mSwapchainImageSyncIndex = 0u;
+    mImages.clear();
 
     {
-        auto images = mSwapchain.getImages();
-        mImageViews.reserve(images.size());
-        for (auto& image : images)
+        auto rawImages = mSwapchain.getImages();
+        mImages.reserve(rawImages.size());
+        for (auto& image : rawImages)
         {
             const vk::ImageViewCreateInfo createInfo = {
                 .image            = image,
@@ -164,27 +159,27 @@ Swapchain::build(vk::Extent2D extent, vk::SwapchainKHR oldSwapchain)
                                      .levelCount     = 1u,
                                      .baseArrayLayer = 0u,
                                      .layerCount     = 1u}};
-            mImageViews.emplace_back(std::make_shared<vk::raii::ImageView>(*mDevice, createInfo));
-            mSwapchainImages.emplace_back(image);
+            mImages.push_back({
+                .image     = image,
+                .imageView = std::make_shared<vk::raii::ImageView>(*mDevice, createInfo),
+                .imageAvailableSemaphore = vk::raii::Semaphore{*mDevice, vk::SemaphoreCreateInfo{}},
+            });
         }
     }
 
-    {
-        mSwapchainImageSyncData.reserve(mImageViews.size());
-        for (std::size_t i = 0; i < mImageViews.size(); ++i)
-        {
-            mSwapchainImageSyncData.emplace_back(mDevice);
-        }
-    }
+    mSpareAcquireSemaphore = vk::raii::Semaphore{*mDevice, vk::SemaphoreCreateInfo{}};
 }
 
 bool
 Swapchain::recreate()
 {
-    const auto         surfaceCapabilities = mDevice->getSurfaceCapabilitiesKHR(**mSurface);
-    const vk::Extent2D extent              = surfaceCapabilities.currentExtent;
+    const auto surfaceCapabilities = mDevice->getSurfaceCapabilitiesKHR(**mSurface);
 
-    if (extent.width == 0u || extent.height == 0u)
+    mExtent = vk::Extent3D{.width  = surfaceCapabilities.currentExtent.width,
+                           .height = surfaceCapabilities.currentExtent.height,
+                           .depth  = 1};
+
+    if (mExtent.width == 0u || mExtent.height == 0u)
     {
         // Surface is currently zero-sized (e.g. minimized); nothing to build.
         return false;
@@ -197,7 +192,7 @@ Swapchain::recreate()
     mCurrentSwapchainImageIndex.reset();
 
     vk::raii::SwapchainKHR oldSwapchain = std::move(mSwapchain);
-    build(extent, *oldSwapchain);
+    build(*oldSwapchain);
 
     return true;
 }
@@ -210,7 +205,7 @@ Swapchain::getImage() const
         "Swapchain::acquireNextImage should have been called before calling this function.");
 
     // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
-    return mSwapchainImages[mCurrentSwapchainImageIndex.value()];
+    return mImages[mCurrentSwapchainImageIndex.value()].image;
 }
 
 const std::shared_ptr<vk::raii::ImageView>&
@@ -221,7 +216,7 @@ Swapchain::getImageView() const
         "Swapchain::acquireNextImage should have been called before calling this function.");
 
     // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
-    return mImageViews[mCurrentSwapchainImageIndex.value()];
+    return mImages[mCurrentSwapchainImageIndex.value()].imageView;
 }
 
 Swapchain::ImageAcquireResult
@@ -231,45 +226,49 @@ Swapchain::acquireNextImage()
         !mCurrentSwapchainImageIndex,
         "Previous swapchain image should have been drained before calling this function.");
 
-    mSwapchainImageSyncIndex = (mSwapchainImageSyncIndex + 1u) % mSwapchainImageSyncData.size();
-    auto& syncData           = mSwapchainImageSyncData[mSwapchainImageSyncIndex];
-
     // VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS makes eErrorOutOfDateKHR a returned result
     // instead of a thrown vk::OutOfDateKHRError.
-    auto [result, index] = mSwapchain.acquireNextImage(gAcquireTimeout, {*syncData.semaphore}, {});
+    auto [result, index] =
+        mSwapchain.acquireNextImage(gAcquireTimeout, {*mSpareAcquireSemaphore}, {});
 
     if (result == vk::Result::eErrorOutOfDateKHR)
     {
-        return {.status = AcquireStatus::eOutOfDate, .semaphore = nullptr};
+        return {.status = AcquireStatus::eOutOfDate, .imageAvailableSemaphore = nullptr};
     }
 
     if ((result == vk::Result::eTimeout) || (result == vk::Result::eNotReady))
     {
-        // No image became available within the timeout; the semaphore stays unsignaled.
-        return {.status = AcquireStatus::eSkip, .semaphore = nullptr};
+        return {.status = AcquireStatus::eSkip, .imageAvailableSemaphore = nullptr};
     }
 
-    // eSuccess or eSuboptimalKHR: the image is acquired and the semaphore is signaled. A
-    // suboptimal swapchain is still presentable; present() will trigger recreation afterwards.
+    // eSuccess or eSuboptimalKHR: swap the spare with mImages[index].imageAvailableSemaphore.
+    // After the swap:
+    //   mImages[index].imageAvailableSemaphore — freshly signaled by the PE; submit waits this.
+    //   mSpareAcquireSemaphore — the evicted slot semaphore, provably unsignaled: re-acquiring
+    //     image K proves the full prior cycle (acquire→submit wait→render→present→PE display)
+    //     completed, so the prior submit already consumed its wait on this semaphore.
+    std::swap(mSpareAcquireSemaphore, mImages[index].imageAvailableSemaphore);
     mCurrentSwapchainImageIndex.emplace(index);
 
-    return {.status = AcquireStatus::eReady, .semaphore = &syncData.semaphore};
+    return {.status                  = AcquireStatus::eReady,
+            .imageAvailableSemaphore = &mImages[index].imageAvailableSemaphore};
 }
 
 Swapchain::PresentStatus
-Swapchain::present(const vk::ArrayProxy<const vk::Semaphore> waitSemaphores)
+Swapchain::present(vk::Semaphore renderFinishedSemaphore)
 {
     VOG_ASSERT_MSG(
         mCurrentSwapchainImageIndex,
         "Swapchain::acquireNextImage should have been called before calling this function.");
 
-    vk::PresentInfoKHR presentInfoKHR{
-        .waitSemaphoreCount = waitSemaphores.size(),
-        .pWaitSemaphores    = waitSemaphores.data(),
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+    const std::uint32_t      imageIndex = mCurrentSwapchainImageIndex.value();
+    const vk::PresentInfoKHR presentInfoKHR{
+        .waitSemaphoreCount = 1u,
+        .pWaitSemaphores    = &renderFinishedSemaphore,
         .swapchainCount     = 1u,
         .pSwapchains        = &*mSwapchain,
-        .pImageIndices =
-            &mCurrentSwapchainImageIndex.value(), // NOLINT(bugprone-unchecked-optional-access)
+        .pImageIndices      = &imageIndex,
     };
 
     // eSuboptimalKHR and eErrorOutOfDateKHR (a valid result here, see
@@ -278,7 +277,6 @@ Swapchain::present(const vk::ArrayProxy<const vk::Semaphore> waitSemaphores)
     const PresentStatus status =
         (result == vk::Result::eSuccess) ? PresentStatus::eReady : PresentStatus::eOutOfDate;
 
-    // Reset the swapchain image index to mark it as lost
     mCurrentSwapchainImageIndex.reset();
 
     return status;
