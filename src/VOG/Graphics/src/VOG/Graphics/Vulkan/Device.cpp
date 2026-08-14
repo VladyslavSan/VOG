@@ -180,14 +180,9 @@ Device::Device(InstancePtr _instance, vk::raii::PhysicalDevice physicalDevice)
     , graphicsQueue{*this, queueInfos.graphics.familyIndex, queueInfos.graphics.familyProperties}
     , transferQueue{*this, queueInfos.transfer.familyIndex, queueInfos.transfer.familyProperties}
     , pipelineCache{*this, {}}
+    , mFencePool{new FencePool{*this}}
+    , mMemoryAllocator{new MemoryAllocator{*this}}
 {
-}
-
-void
-Device::init()
-{
-    mMemoryAllocator = std::unique_ptr<MemoryAllocator>(new MemoryAllocator{*this});
-    mFencePool       = std::unique_ptr<FencePool>(new FencePool{*this});
 }
 
 Device::~Device() = default;

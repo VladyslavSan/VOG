@@ -258,10 +258,6 @@ Instance::makeDevice()
 {
     vk::raii::PhysicalDevice physicalDevice = makePhysicalDevice(*this);
 
-    auto device =
-        std::shared_ptr<Device>{new Device{shared_from_this(), std::move(physicalDevice)}};
-    device->init();
-
-    return device;
+    return std::shared_ptr<Device>{new Device{shared_from_this(), std::move(physicalDevice)}};
 }
 } // namespace VOG::Graphics::Vulkan

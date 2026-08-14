@@ -59,7 +59,6 @@ class Device
     friend class Instance;
 
     Device(InstancePtr instance, vk::raii::PhysicalDevice physicalDevice);
-    void init();
 
 public:
     ~Device(); // NOLINT(bugprone-derived-method-shadowing-base-method)
