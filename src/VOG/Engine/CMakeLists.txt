@@ -23,18 +23,19 @@ target_sources(Engine
         BASE_DIRS
             include/
         FILES
-            include/VOG/Engine/Scene/Scene.hpp
+            include/VOG/Engine/Renderer/FrameContext.hpp
+            include/VOG/Engine/Renderer/RenderItem.hpp
+            include/VOG/Engine/Renderer/Renderable.hpp
             include/VOG/Engine/Renderer/Renderer.hpp
-            include/VOG/Engine/Scene/SceneObject.hpp
+            include/VOG/Engine/Renderer/ResourceContext.hpp
     PRIVATE
         src/VOG/Engine/Renderer/Renderer.cpp
-        src/VOG/Engine/Scene/Scene.cpp
 )
 
 target_link_libraries(Engine
     PUBLIC
         ${PROJECT_NAME}::Common
-        VOG.Math
+        ${PROJECT_NAME}::Math
         ${PROJECT_NAME}::Graphics
     PRIVATE
         spdlog::spdlog

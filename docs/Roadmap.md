@@ -36,20 +36,21 @@ step builds on the previous. Completed work is kept for context.
   `GraphicsPipeline::ParametersLegacy` and `beginRenderPass/endRenderPass` are
   gone; `GraphicsPipeline::Parameters` with its `RenderpassDescription` is the
   only pipeline path.
-
-## Phase 5: typed config + RenderItem seam + demo extraction
-
-- `Renderer::Config` struct instead of round-tripping through
-  `JSONContainer` (JSON stays at the file-loading edge only).
-- Minimal data-driven scene seam: `RenderItem` POD (pipeline, vertex buffer,
-  vertex count, push-constant blob); `Renderable` interface with
-  `prepare(ResourceContext&)` (once) and `collect(const FrameContext&, vector<RenderItem>&)`
-  (per frame). Scene aggregates items; only the Renderer records commands.
-- Move the triangle demo into `Examples/ApplicationExample` as a
-  `Renderable`; pipeline/buffer created once in `prepare()` — ends the
-  per-frame pipeline creation.
-- Cleanups: `VOG::Scene` namespace → `VOG::Engine`, `m_` → `m` member naming,
-  Engine links the `VOG::Math` alias.
+- **Typed config + RenderItem seam + demo extraction** (Phase 5): the renderer
+  takes a `Renderer::Config` struct (app/engine name, layers, extensions,
+  frames in flight, shader source path) instead of round-tripping through
+  `JSONContainer`, so JSON stays at the file-loading edge. Draws are described
+  as data: a `RenderItem` POD (pipeline, vertex buffer, vertex count,
+  push-constant blob) produced by `Renderable::prepare(ResourceContext&)`
+  (once, on the render thread) and `Renderable::collect(const FrameContext&,
+  vector<RenderItem>&)` (per frame) — the renderer is the only place that
+  records commands. The quad demo moved to
+  `Examples/ApplicationExample/SpinningQuadsRenderable`, which builds its
+  buffer and pipeline once in `prepare()`, ending the per-frame pipeline
+  creation; renderables are registered through `Application::addRenderable`.
+  The unused `VOG::Scene` API (`Scene`, `SceneObject`) is deleted — scene
+  representation is deferred until materials/meshes exist. Engine links the
+  `VOG::Math` alias.
 
 ## Later milestones (in rough order)
 

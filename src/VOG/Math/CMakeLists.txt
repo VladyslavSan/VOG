@@ -1,6 +1,8 @@
 find_package(glm REQUIRED)
 
 add_library(VOG.Math)
+add_library(${PROJECT_NAME}::Math ALIAS VOG.Math)
+
 set_target_properties(VOG.Math PROPERTIES
     FOLDER VOG
 )
