@@ -5,15 +5,14 @@
 #include <VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
 #include <VOG/Graphics/Vulkan/Containers.hpp>
-#include <VOG/Graphics/Vulkan/DescriptorAllocator.hpp>
 #include <VOG/Graphics/Vulkan/Fence.hpp>
+#include <VOG/Graphics/Vulkan/FencePool.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/Limits.hpp>
 #include <VOG/Graphics/Vulkan/MemoryAllocator.hpp>
 #include <VOG/Graphics/Vulkan/Queue.hpp>
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
-#include <VOG/Graphics/Vulkan/TimelineSemaphore.hpp>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -138,16 +137,6 @@ public:
                                                      vk::MemoryPropertyFlags memoryProperties);
 
     /**
-     * Creates a descriptor allocator pre-configured with the given pool sizes.
-     *
-     * @param params  Pool sizes and max set count.
-     *
-     * @return Descriptor allocator.
-     */
-    std::unique_ptr<DescriptorAllocator>
-    createDescriptorAllocator(const DescriptorAllocator::ConstructionParameters& params);
-
-    /**
      * Allocates a GPU buffer with the specified usage and memory properties.
      *
      * @param createInfo      Buffer size, usage flags, and sharing mode.
@@ -165,14 +154,6 @@ public:
      * @return Fence object.
      */
     Fence createFence();
-
-    /**
-     * Creates a timeline semaphore for ordered multi-stage GPU synchronization.
-     * The counter starts at zero and increments on each signal operation.
-     *
-     * @return Timeline semaphore.
-     */
-    TimelineSemaphore createTimelineSemaphore();
 
     const InstancePtr             instance;
     const Vulkan::Queue           graphicsQueue;

@@ -52,6 +52,16 @@ step builds on the previous. Completed work is kept for context.
   representation is deferred until materials/meshes exist. Engine links the
   `VOG::Math` alias.
 
+- **Ownership / sync hygiene**: Bugbot fixes (JSONContainer index bounds, FIFO
+  present-mode fallback, `framesInFlight` clamped to swapchain `imageCount`,
+  frame-slot advance only after successful acquire); Device no longer cycles
+  with FencePool/MemoryAllocator via `DevicePtr` backrefs; `createBuffer`
+  returns `shared_ptr`; `Queue::submit` parks CBs only after success; closed
+  `CommandBufferRecorder` (private `vk::raii::CommandBuffer` inheritance);
+  `AcquiredSwapchainImage` for stable attachment identity; Linux Wayland/X11
+  WSI; unfinished `DescriptorAllocator` / `TimelineSemaphore` removed from the
+  public Device/CMake surface.
+
 ## Later milestones (in rough order)
 
 1. **Render graph**: declared passes with reads/writes; derives barriers,

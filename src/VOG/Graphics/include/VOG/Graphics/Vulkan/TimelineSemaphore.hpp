@@ -1,5 +1,8 @@
 #pragma once
 
+// Quarantined: unused on the frame path. Not exported from VOG.Graphics until a
+// consumer needs GPU timeline sync beyond binary fences/semaphores.
+
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 
 namespace VOG::Graphics::Vulkan

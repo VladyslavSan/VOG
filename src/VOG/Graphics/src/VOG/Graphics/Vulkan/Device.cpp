@@ -4,7 +4,6 @@
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
-#include <VOG/Graphics/Vulkan/DescriptorAllocator.hpp>
 #include <VOG/Graphics/Vulkan/FencePool.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
 #include <VOG/Graphics/Vulkan/MemoryAllocator.hpp>
@@ -211,12 +210,6 @@ Device::createFence()
     return Fence{shared_from_this()};
 }
 
-TimelineSemaphore
-Device::createTimelineSemaphore()
-{
-    return TimelineSemaphore{shared_from_this()};
-}
-
 std::shared_ptr<CommandBufferPool>
 Device::createCommandBufferPool()
 {
@@ -264,13 +257,6 @@ Device::createRenderBuffer(AttachmentUsage         usage,
                                                           imageTiling,
                                                           initialLayout,
                                                           memoryProperties});
-}
-
-std::unique_ptr<DescriptorAllocator>
-Device::createDescriptorAllocator(const DescriptorAllocator::ConstructionParameters& params)
-{
-    return std::unique_ptr<DescriptorAllocator>(
-        new DescriptorAllocator{shared_from_this(), params});
 }
 
 BufferPtr

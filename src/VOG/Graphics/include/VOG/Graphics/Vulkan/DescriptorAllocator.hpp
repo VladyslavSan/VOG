@@ -1,5 +1,8 @@
 #pragma once
 
+// Quarantined: incomplete (no allocate/bind API). Not exported from VOG.Graphics until
+// the materials/descriptor milestone. Kept in-tree as a starting point.
+
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 
