@@ -11,7 +11,25 @@ CommandBuffer::CommandBuffer(vk::raii::CommandBuffer commandBuffer, CommandBuffe
 CommandBuffer::
 operator bool() const
 {
-    return static_cast<bool>(**this);
+    return static_cast<bool>(vkHandle());
+}
+
+void
+CommandBuffer::begin(const vk::CommandBufferBeginInfo& beginInfo)
+{
+    vk::raii::CommandBuffer::begin(beginInfo);
+}
+
+void
+CommandBuffer::end()
+{
+    vk::raii::CommandBuffer::end();
+}
+
+vk::CommandBuffer
+CommandBuffer::vkHandle() const
+{
+    return *static_cast<const vk::raii::CommandBuffer&>(*this);
 }
 
 void
