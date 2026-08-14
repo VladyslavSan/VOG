@@ -22,7 +22,6 @@ VOG_DECLARE_PTR(CommandBufferPool);
 VOG_DECLARE_PTR(Framebuffer);
 VOG_DECLARE_PTR(RenderBuffer);
 VOG_DECLARE_PTR(RenderPass);
-VOG_DECLARE_PTR(FencePool);
 VOG_DECLARE_PTR(Instance);
 
 class PhysicalDevice : public vk::raii::PhysicalDevice
@@ -65,11 +64,6 @@ public:
 
     using vk::raii::Device::operator*;
     using vk::raii::Device::getDispatcher;
-
-    /**
-     * @return The device's shared fence pool.
-     */
-    FencePool& getFencePool() const;
 
     /**
      * Compiles a single shader stage from a SPIR-V binary.
@@ -225,11 +219,9 @@ public:
 
 private:
     /**
-     * Services owned by the device. They keep a Device& backref rather than a DevicePtr, and
-     * must never cache anything that owns one, otherwise the device can never be destroyed.
-     * Resources handed out to callers retain a DevicePtr and so keep the VkDevice alive.
+     * Private VMA wrapper. Holds Device& only so it cannot pin the device. Buffers retain a
+     * DevicePtr and free through this allocator while the device lives.
      */
-    std::unique_ptr<FencePool>       mFencePool;
     std::unique_ptr<MemoryAllocator> mMemoryAllocator;
 };
 } // namespace VOG::Graphics::Vulkan

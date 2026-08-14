@@ -34,8 +34,8 @@ makeBuffer(Graphics::Vulkan::Device& device)
 } // namespace
 
 /**
- * Nothing the device owns may retain the device. Once the fence pool and the memory allocator
- * have been exercised, dropping the last DevicePtr must still destroy the device.
+ * Device must not own FencePool. After exercising an external pool and the private allocator,
+ * dropping the last DevicePtr (and pool) must destroy the device.
  */
 TEST(DeviceLifetime, releasingLastReferenceDestroysDevice)
 {
@@ -46,9 +46,11 @@ TEST(DeviceLifetime, releasingLastReferenceDestroysDevice)
         auto device   = instance->makeDevice();
         weakDevice    = device;
 
-        // Both fill a device owned cache: the fence goes back to the pool, the buffer's
-        // allocation goes through the allocator.
-        device->getFencePool().getShared();
+        auto fencePool = std::make_shared<Graphics::Vulkan::FencePool>(device);
+        // Drop the handle so the pool is idle; then drop the pool itself.
+        fencePool->getShared();
+        fencePool.reset();
+
         makeBuffer(*device);
     }
 
@@ -56,8 +58,8 @@ TEST(DeviceLifetime, releasingLastReferenceDestroysDevice)
 }
 
 /**
- * A resource may outlive every DevicePtr the caller holds. It keeps the device alive until it is
- * itself destroyed, so freeing its allocation never runs against a destroyed VkDevice.
+ * A buffer may outlive every DevicePtr the caller holds. It keeps the device (and private VMA)
+ * alive until freed.
  */
 TEST(DeviceLifetime, bufferKeepsDeviceAlive)
 {
@@ -74,6 +76,29 @@ TEST(DeviceLifetime, bufferKeepsDeviceAlive)
     EXPECT_FALSE(weakDevice.expired());
 
     buffer.reset();
+
+    EXPECT_TRUE(weakDevice.expired());
+}
+
+/**
+ * A live FenceHandle keeps the pool and therefore the device alive via FencePoolPtr → DevicePtr.
+ */
+TEST(DeviceLifetime, fenceHandleKeepsDeviceAlive)
+{
+    std::weak_ptr<Graphics::Vulkan::Device>                   weakDevice;
+    std::shared_ptr<Graphics::Vulkan::FencePool::FenceHandle> handle;
+
+    {
+        auto instance  = makeInstance();
+        auto device    = instance->makeDevice();
+        weakDevice     = device;
+        auto fencePool = std::make_shared<Graphics::Vulkan::FencePool>(device);
+        handle         = fencePool->getShared();
+    }
+
+    EXPECT_FALSE(weakDevice.expired());
+
+    handle.reset();
 
     EXPECT_TRUE(weakDevice.expired());
 }

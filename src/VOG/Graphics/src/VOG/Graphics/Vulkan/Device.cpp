@@ -5,7 +5,6 @@
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
 #include <VOG/Graphics/Vulkan/DescriptorAllocator.hpp>
-#include <VOG/Graphics/Vulkan/FencePool.hpp>
 #include <VOG/Graphics/Vulkan/FrameBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
 #include <VOG/Graphics/Vulkan/MemoryAllocator.hpp>
@@ -180,18 +179,11 @@ Device::Device(InstancePtr _instance, vk::raii::PhysicalDevice physicalDevice)
     , graphicsQueue{*this, queueInfos.graphics.familyIndex, queueInfos.graphics.familyProperties}
     , transferQueue{*this, queueInfos.transfer.familyIndex, queueInfos.transfer.familyProperties}
     , pipelineCache{*this, {}}
-    , mFencePool{new FencePool{*this}}
     , mMemoryAllocator{new MemoryAllocator{*this}}
 {
 }
 
 Device::~Device() = default;
-
-FencePool&
-Device::getFencePool() const
-{
-    return *mFencePool;
-}
 
 ShaderPtr
 Device::createShader(Shader::ShadingStage stage, std::span<const std::uint32_t> binary)

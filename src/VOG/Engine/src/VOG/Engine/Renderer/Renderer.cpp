@@ -10,6 +10,7 @@
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferRecorder.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
+#include <VOG/Graphics/Vulkan/FencePool.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
 #include <VOG/Graphics/Vulkan/RenderPass.hpp>
@@ -53,6 +54,7 @@ Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle,
           .extensions = parameters["extensions"].getArrayOfType<std::string>(),
       })}
     , mVulkanDevice{mVulkanInstance->makeDevice()}
+    , mFencePool{std::make_shared<Graphics::Vulkan::FencePool>(mVulkanDevice)}
     , mShaderProgramCache{std::make_shared<Graphics::ShaderProgramCache>(
           mVulkanDevice,
           std::filesystem::path{parameters["shader_source_path"].getOr<std::string>("")})}
@@ -296,6 +298,7 @@ Renderer::render()
     commandBuffer->end();
 
     mVulkanDevice->graphicsQueue.submit(
+        mFencePool,
         std::array{**acquireResult.imageAvailableSemaphore},
         std::array{vk::PipelineStageFlags{vk::PipelineStageFlagBits::eColorAttachmentOutput}},
         std::array{std::move(commandBuffer)},

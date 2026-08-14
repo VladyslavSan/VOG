@@ -10,33 +10,34 @@ namespace
 constexpr std::size_t gGrowthSize = 10u;
 }
 
-FencePool::FenceHandle::FenceHandle(Fence fence)
+FencePool::FenceHandle::FenceHandle(FencePoolPtr pool, Fence fence)
     : Fence{std::move(fence)}
+    , mPool{std::move(pool)}
 {
 }
 
 FencePool::FenceHandle::~FenceHandle()
 {
-    // Resolve the pool first; moving the fence out takes mDevice with it.
-    FencePool& pool = mDevice->getFencePool();
-    pool.returnToPool(std::move(*this));
+    // Hold the pool before moving the fence out (takeHandle strips DevicePtr).
+    const FencePoolPtr pool = mPool;
+    pool->returnToPool(std::move(*this));
 }
 
-FencePool::FencePool(Device& device)
-    : mDevice{device}
+FencePool::FencePool(DevicePtr device)
+    : mDevice{std::move(device)}
 {
 }
 
 FencePool::FenceHandle
 FencePool::get()
 {
-    return FenceHandle{take()};
+    return FenceHandle{shared_from_this(), take()};
 }
 
 std::shared_ptr<FencePool::FenceHandle>
 FencePool::getShared()
 {
-    return std::make_shared<FenceHandle>(take());
+    return std::make_shared<FenceHandle>(shared_from_this(), take());
 }
 
 void
@@ -53,13 +54,13 @@ FencePool::take()
     {
         for (std::size_t i = 0u; i < gGrowthSize; ++i)
         {
-            mFences.emplace_back(mDevice, vk::FenceCreateInfo{});
+            mFences.emplace_back(*mDevice, vk::FenceCreateInfo{});
         }
     }
 
     auto fence = std::move(mFences.back());
     mFences.pop_back();
 
-    return Fence{mDevice.shared_from_this(), std::move(fence)};
+    return Fence{mDevice, std::move(fence)};
 }
 } // namespace VOG::Graphics::Vulkan

@@ -28,6 +28,7 @@ namespace VOG::Graphics::Vulkan
 {
 class Instance;
 class Device;
+class FencePool;
 class Swapchain;
 class GraphicsPipeline;
 } // namespace VOG::Graphics::Vulkan
@@ -72,6 +73,7 @@ protected:
 
     std::shared_ptr<Graphics::Vulkan::Instance>          mVulkanInstance;
     std::shared_ptr<Graphics::Vulkan::Device>            mVulkanDevice;
+    std::shared_ptr<Graphics::Vulkan::FencePool>         mFencePool;
     std::shared_ptr<Graphics::ShaderProgramCache>        mShaderProgramCache;
     std::shared_ptr<Graphics::Vulkan::Swapchain>         mSwapchain;
     std::shared_ptr<Graphics::Frame::FrameObjectManager> mFrameObjectManager;
