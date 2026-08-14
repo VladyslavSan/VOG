@@ -1,6 +1,6 @@
-#include "VulkanFixture.hpp"
-
 #include <gtest/gtest.h>
+
+#include "VulkanFixture.hpp"
 
 namespace VOG::Tests
 {
@@ -18,7 +18,7 @@ TEST(DeviceLifetime, createDestroyRepeatedly)
             .layers     = {},
             .extensions = {},
         });
-        auto device = instance->makeDevice();
+        auto device   = instance->makeDevice();
         ASSERT_NE(device, nullptr);
         ASSERT_NE(device->getFencePool().getShared(), nullptr);
 
