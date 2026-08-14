@@ -23,9 +23,10 @@ A Vulkan frame involves three independent indices that are easy to conflate:
 The frame fence (slot gate) proves only that the **GPU** finished work for that slot.
 It says nothing about the **presentation engine's** own activity.
 
-## Semaphore ownership: both per swapchain image
+## Semaphore ownership: per image vs per frame slot
 
-Both semaphores live in `SwapchainImage`, keyed by image index.
+`imageAvailableSemaphore` lives in `SwapchainImage`, keyed by image index.
+`renderFinishedSemaphore` lives in `FrameObjects`, keyed by frame-in-flight slot.
 
 ### `imageAvailableSemaphore`
 
@@ -74,8 +75,8 @@ finished displaying image K and released it. That can only happen after:
 
 1. The prior `mImages[K].imageAvailableSemaphore` was signaled (when K was last acquired).
 2. The graphics submit waited it (consuming the signal → semaphore goes unsignaled).
-3. Rendering completed and `renderFinishedSemaphore[K]` was signaled.
-4. `vkQueuePresentKHR` waited `renderFinishedSemaphore[K]`.
+3. Rendering completed and the submitting slot's `renderFinishedSemaphore` was signaled.
+4. `vkQueuePresentKHR` waited that `renderFinishedSemaphore`.
 5. The PE displayed image K.
 6. The PE released image K (now re-acquirable).
 

@@ -14,16 +14,17 @@ step builds on the previous. Completed work is kept for context.
   status-based acquire/present via
   `VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS`, wait-idle teardown,
   zero-extent (minimize) back-off, resizable example window.
-- **Swapchain semaphore correctness**: both `imageAvailableSemaphore` and
-  `renderFinishedSemaphore` are per swapchain image (owned by `SwapchainImage`,
-  keyed by the index returned from `vkAcquireNextImageKHR`). The swap trick
-  solves the chicken-and-egg for acquire semaphores: one spare is passed to
-  acquire, then swapped into `mImages[K]` after K is known — the evicted
-  semaphore is provably unsignaled because re-acquiring K proves the prior full
-  cycle completed (see `docs/SwapchainSync.md`). `minImageCount` clamped
-  against `surfaceCapabilities.min/maxImageCount` (maxImageCount==0 = unlimited,
-  handled explicitly); `recreate()` updates `mExtent` from surface capabilities
-  before rebuilding; `FrameObjects` now holds only command pools.
+- **Swapchain semaphore correctness**: `imageAvailableSemaphore` is per swapchain
+  image (owned by `SwapchainImage`, keyed by the index returned from
+  `vkAcquireNextImageKHR`), while `renderFinishedSemaphore` is per
+  frame-in-flight slot (owned by `FrameObjects`, reuse gated by the slot fence).
+  The swap trick solves the chicken-and-egg for acquire semaphores: one spare is
+  passed to acquire, then swapped into `mImages[K]` after K is known — the
+  evicted semaphore is provably unsignaled because re-acquiring K proves the
+  prior full cycle completed (see `docs/SwapchainSync.md`). `minImageCount`
+  clamped against `surfaceCapabilities.min/maxImageCount` (maxImageCount==0 =
+  unlimited, handled explicitly); `recreate()` updates `mExtent` from surface
+  capabilities before rebuilding.
 
 ## Phase 4: Vulkan 1.3 + dynamic rendering
 

@@ -250,7 +250,8 @@ Swapchain::acquireNextImage()
     std::swap(mSpareAcquireSemaphore, mImages[index].imageAvailableSemaphore);
     mCurrentSwapchainImageIndex.emplace(index);
 
-    return {.status = AcquireStatus::eReady, .imageAvailableSemaphore = &mImages[index].imageAvailableSemaphore};
+    return {.status                  = AcquireStatus::eReady,
+            .imageAvailableSemaphore = &mImages[index].imageAvailableSemaphore};
 }
 
 Swapchain::PresentStatus

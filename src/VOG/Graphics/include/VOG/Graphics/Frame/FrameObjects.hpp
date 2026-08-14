@@ -51,7 +51,6 @@ protected:
      */
     void resetPools();
 
-protected:
     /** Vulkan device provider */
     Vulkan::DevicePtr mDevice;
 
