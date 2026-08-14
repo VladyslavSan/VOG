@@ -64,7 +64,7 @@ public:
     /**
      * @return The device's shared fence pool.
      */
-    const FencePoolPtr& getFencePool() const;
+    FencePool& getFencePool() const;
 
     /**
      * Compiles a single shader stage from a SPIR-V binary.
@@ -220,7 +220,8 @@ public:
     const vk::raii::PipelineCache pipelineCache;
 
 private:
-    FencePoolPtr       mFencePool;
-    MemoryAllocatorPtr mMemoryAllocator;
+    /** Owned services; they hold Device& backrefs (not DevicePtr) to avoid cycles. */
+    FencePoolPtr                     mFencePool;
+    std::shared_ptr<MemoryAllocator> mMemoryAllocator;
 };
 } // namespace VOG::Graphics::Vulkan

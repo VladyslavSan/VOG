@@ -18,8 +18,8 @@ FencePool::FenceHandle::FenceHandle(FencePoolPtr fencePool, Fence fence)
 
 FencePool::FenceHandle::~FenceHandle() { mFencePool->returnToPool(std::move(*this)); }
 
-FencePool::FencePool(DevicePtr device)
-    : mDevice{std::move(device)}
+FencePool::FencePool(Device& device)
+    : mDevice{device}
 {
 }
 
@@ -30,7 +30,7 @@ FencePool::get()
     {
         for (std::size_t i = 0u; i < gGrowthSize; ++i)
         {
-            mFences.push_back(mDevice->createFence());
+            mFences.push_back(mDevice.createFence());
         }
     }
 
@@ -47,7 +47,7 @@ FencePool::getShared()
     {
         for (std::size_t i = 0u; i < gGrowthSize; ++i)
         {
-            mFences.push_back(mDevice->createFence());
+            mFences.push_back(mDevice.createFence());
         }
     }
 

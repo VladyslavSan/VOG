@@ -63,12 +63,12 @@ MemoryAllocator::Allocation::Allocation(MemoryAllocator::Allocation&& other) noe
 {
 }
 
-MemoryAllocator::MemoryAllocator(const DevicePtr& device)
+MemoryAllocator::MemoryAllocator(Device& device)
     : mDevice{device}
     , mAllocator{nullptr}
 {
-    const auto* instanceD = mDevice->instance->getDispatcher();
-    const auto* deviceD   = mDevice->getDispatcher();
+    const auto* instanceD = mDevice.instance->getDispatcher();
+    const auto* deviceD   = mDevice.getDispatcher();
 
     VmaVulkanFunctions vulkanFunctions = {
         .vkGetPhysicalDeviceProperties           = instanceD->vkGetPhysicalDeviceProperties,
@@ -98,11 +98,11 @@ MemoryAllocator::MemoryAllocator(const DevicePtr& device)
     };
 
     VmaAllocatorCreateInfo allocatorInfo = {
-        .physicalDevice   = *static_cast<const PhysicalDevice&>(*mDevice),
-        .device           = **mDevice,
+        .physicalDevice   = *static_cast<const PhysicalDevice&>(mDevice),
+        .device           = *mDevice,
         .pVulkanFunctions = &vulkanFunctions,
-        .instance         = **mDevice->instance,
-        .vulkanApiVersion = mDevice->getProperties2().properties.apiVersion,
+        .instance         = **mDevice.instance,
+        .vulkanApiVersion = mDevice.getProperties2().properties.apiVersion,
     };
 
     auto result = vmaCreateAllocator(&allocatorInfo, &mAllocator);
@@ -110,7 +110,7 @@ MemoryAllocator::MemoryAllocator(const DevicePtr& device)
     {
         throw std::runtime_error("MemoryAllocator creation failed.");
     }
-} // namespace VOG::Graphics::Vulkan
+}
 
 MemoryAllocator::~MemoryAllocator() { vmaDestroyAllocator(mAllocator); }
 
@@ -138,7 +138,7 @@ MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
 
     return std::unique_ptr<Buffer>(
         new Buffer{Allocation{shared_from_this(), allocation, allocationInfo, allocationCreateInfo},
-                   vk::raii::Buffer{*mDevice, buffer}});
+                   vk::raii::Buffer{mDevice, buffer}});
 }
 
 MemoryAllocator::

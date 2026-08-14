@@ -16,6 +16,7 @@ target_sources(VOG.Graphics.Unit
         Vulkan/ShaderTest.cpp
         Vulkan/GraphicsPipelineTest.cpp
         Vulkan/ShaderProgramTest.cpp
+        Vulkan/DeviceLifetimeTest.cpp
         VulkanFixture.hpp
         TestShaderCompiler.hpp
 )
