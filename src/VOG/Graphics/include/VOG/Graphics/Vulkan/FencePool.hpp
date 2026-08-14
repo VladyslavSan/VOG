@@ -17,7 +17,7 @@ class FencePool : public std::enable_shared_from_this<FencePool>
 {
     friend class Device;
 
-    explicit FencePool(DevicePtr device);
+    explicit FencePool(Device& device);
 
 public:
     class FenceHandle : protected Fence
@@ -46,7 +46,7 @@ protected:
     void returnToPool(Fence fence);
 
 private:
-    DevicePtr          mDevice;
+    Device&            mDevice;
     std::vector<Fence> mFences;
 };
 } // namespace VOG::Graphics::Vulkan

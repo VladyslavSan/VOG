@@ -15,7 +15,7 @@ VOG_DECLARE_PTR(Device);
 class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator>
 {
     friend class Device;
-    MemoryAllocator(const DevicePtr& device);
+    explicit MemoryAllocator(Device& device);
 
 public:
     class Allocation;
@@ -25,7 +25,7 @@ public:
 
     operator VmaAllocator() const;
 
-    const DevicePtr mDevice;
+    Device& mDevice;
 
 protected:
     VmaAllocator mAllocator;
