@@ -2,7 +2,6 @@
 
 namespace VOG::Common
 {
-// NOLINTNEXTLINE(cert-err58-cpp)
 const JSONContainer JSONContainer::kEmptyJSONContainer{};
 
 std::string
