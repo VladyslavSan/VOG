@@ -5,7 +5,6 @@
 #include <VOG/Graphics/Vulkan/CommandBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
-#include <VOG/Graphics/Vulkan/RenderPass.hpp>
 
 #include <array>
 
@@ -19,30 +18,67 @@ CommandBufferRecorder::CommandBufferRecorder(const Device&          device,
 }
 
 void
-CommandBufferRecorder::beginRenderPass(const RenderPassPtr&  renderPass,
-                                       const FramebufferPtr& framebuffer,
-                                       ClearValues           clearValues) noexcept
+CommandBufferRecorder::beginRendering(
+    const ColorAttachments&               colorAttachments,
+    const std::optional<DepthAttachment>& depthAttachment) noexcept
 {
-    VOG_ASSERT_MSG(renderPass->getRenderpassDescription() ==
-                       framebuffer->getRenderpassDescription(),
-                   "Renderpass and Framebuffer are incompatible.");
+    VOG_ASSERT_MSG(!colorAttachments.empty() || depthAttachment.has_value(),
+                   "beginRendering needs at least one attachment.");
 
-    mCommandBuffer.beginRenderPass(
-        {.renderPass      = **renderPass,
-         .framebuffer     = **framebuffer,
-         .renderArea      = {.offset = {.x = 0u, .y = 0u}, .extent = framebuffer->extent()},
-         .clearValueCount = static_cast<std::uint32_t>(clearValues.size()),
-         .pClearValues    = clearValues.data()},
-        {});
+    StaticVector<vk::RenderingAttachmentInfo, Limits::gMaxNumColorAttachments> colorInfos;
+    vk::Extent2D                                                               extent{};
 
-    mCommandBuffer.addBoundResource(framebuffer);
-    mCommandBuffer.addBoundResource(renderPass);
+    for (const auto& color : colorAttachments)
+    {
+        VOG_ASSERT_MSG(color.attachment, "Color attachment must not be null.");
+        VOG_ASSERT_MSG(colorInfos.empty() || extent == color.attachment->getExtent2D(),
+                       "All attachments of a rendering scope must share their extent.");
+
+        extent = color.attachment->getExtent2D();
+        colorInfos.push_back({
+            .imageView   = **color.attachment->getImageView(),
+            .imageLayout = color.layout,
+            .loadOp      = color.loadOp,
+            .storeOp     = color.storeOp,
+            .clearValue  = vk::ClearValue{color.clearValue},
+        });
+
+        mCommandBuffer.addBoundResource(color.attachment);
+    }
+
+    vk::RenderingAttachmentInfo depthInfo{};
+    if (depthAttachment.has_value())
+    {
+        const auto& depth = *depthAttachment;
+        VOG_ASSERT_MSG(depth.attachment, "Depth attachment must not be null.");
+        VOG_ASSERT_MSG(colorInfos.empty() || extent == depth.attachment->getExtent2D(),
+                       "All attachments of a rendering scope must share their extent.");
+
+        extent    = depth.attachment->getExtent2D();
+        depthInfo = {
+            .imageView   = **depth.attachment->getImageView(),
+            .imageLayout = depth.layout,
+            .loadOp      = depth.loadOp,
+            .storeOp     = depth.storeOp,
+            .clearValue  = vk::ClearValue{depth.clearValue},
+        };
+
+        mCommandBuffer.addBoundResource(depth.attachment);
+    }
+
+    mCommandBuffer.beginRendering({
+        .renderArea           = {.offset = {.x = 0, .y = 0}, .extent = extent},
+        .layerCount           = 1u,
+        .colorAttachmentCount = static_cast<std::uint32_t>(colorInfos.size()),
+        .pColorAttachments    = colorInfos.data(),
+        .pDepthAttachment     = depthAttachment.has_value() ? &depthInfo : nullptr,
+    });
 }
 
 void
-CommandBufferRecorder::endRenderPass() noexcept
+CommandBufferRecorder::endRendering() noexcept
 {
-    mCommandBuffer.endRenderPass();
+    mCommandBuffer.endRendering();
 }
 
 void

@@ -59,7 +59,7 @@ makeInstance(const vk::raii::Context& context, const Instance::InstanceParameter
         .applicationVersion = 1u,
         .pEngineName        = parameters.engineName.c_str(),
         .engineVersion      = 1u,
-        .apiVersion         = VK_API_VERSION_1_2,
+        .apiVersion         = VK_API_VERSION_1_3,
     };
 
     const auto&              layers = parameters.layers;

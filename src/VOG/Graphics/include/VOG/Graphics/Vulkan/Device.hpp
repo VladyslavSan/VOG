@@ -19,9 +19,7 @@ namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Buffer);
 VOG_DECLARE_PTR(CommandBufferPool);
-VOG_DECLARE_PTR(Framebuffer);
 VOG_DECLARE_PTR(RenderBuffer);
-VOG_DECLARE_PTR(RenderPass);
 VOG_DECLARE_PTR(FencePool);
 VOG_DECLARE_PTR(Instance);
 
@@ -87,16 +85,6 @@ public:
     std::shared_ptr<ShaderProgram> createShaderProgram(ShaderProgram::ShadingStages stages);
 
     /**
-     * Creates a graphics pipeline using a legacy render-pass-based description.
-     *
-     * @param createInfo  Pipeline parameters including the render pass object.
-     *
-     * @return Compiled graphics pipeline.
-     */
-    std::shared_ptr<GraphicsPipeline>
-    createGraphicsPipeline(GraphicsPipeline::ParametersLegacy createInfo);
-
-    /**
      * Creates a graphics pipeline from a renderpass description.
      *
      * @param createInfo  Pipeline parameters with a renderpass description.
@@ -105,33 +93,6 @@ public:
      */
     std::shared_ptr<GraphicsPipeline>
     createGraphicsPipeline(GraphicsPipeline::Parameters createInfo);
-
-    /**
-     * Creates a render pass from attachment descriptions.
-     *
-     * @param colorAttachments  Descriptions of color attachments.
-     * @param depthStencil      Description of the depth/stencil attachment.
-     *
-     * @return Render pass object.
-     */
-    std::shared_ptr<RenderPass>
-    createRenderPass(const StaticVector<vk::AttachmentDescription, Limits::gMaxNumAttachments - 1u>&
-                                                      colorAttachments,
-                     const vk::AttachmentDescription& depthStencil);
-
-    /**
-     * Creates a framebuffer by binding attachments to a render pass.
-     *
-     * @param renderPass              Render pass the framebuffer is compatible with.
-     * @param colorAttachments        Color attachment views.
-     * @param depthStencilAttachment  Depth/stencil attachment view.
-     *
-     * @return Framebuffer object.
-     */
-    std::shared_ptr<Framebuffer> createFramebuffer(
-        std::shared_ptr<RenderPass>                                           renderPass,
-        StaticVector<AttachmentInterfacePtr, Limits::gMaxNumAttachments - 1u> colorAttachments,
-        AttachmentInterfacePtr depthStencilAttachment);
 
     /**
      * Creates a command buffer pool for recording GPU commands.
