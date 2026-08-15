@@ -17,12 +17,10 @@
 
 namespace VOG::Graphics::Vulkan
 {
-VOG_DECLARE_PTR(Buffer);
 VOG_DECLARE_PTR(CommandBufferPool);
 VOG_DECLARE_PTR(Framebuffer);
 VOG_DECLARE_PTR(RenderBuffer);
 VOG_DECLARE_PTR(RenderPass);
-VOG_DECLARE_PTR(FencePool);
 VOG_DECLARE_PTR(Instance);
 
 class PhysicalDevice : public vk::raii::PhysicalDevice
@@ -40,7 +38,13 @@ public:
         QueueFamilyInfo transfer;
     };
 
-    PhysicalDevice(vk::raii::PhysicalDevice physicalDevice);
+    PhysicalDevice(InstancePtr instance, vk::raii::PhysicalDevice physicalDevice);
+
+    /**
+     * Instance this physical device was queried from. Held here, in the first base of Device, so
+     * that it outlives the VkDevice and everything the device owns.
+     */
+    const InstancePtr instance;
 
     const QueueInfos queueInfos;
 };
@@ -52,19 +56,16 @@ class Device
 {
     friend class Instance;
 
+    /** Buffers free their memory through the private allocator when they are destroyed. */
+    friend class Buffer;
+
     Device(InstancePtr instance, vk::raii::PhysicalDevice physicalDevice);
-    void init();
 
 public:
     ~Device(); // NOLINT(bugprone-derived-method-shadowing-base-method)
 
     using vk::raii::Device::operator*;
     using vk::raii::Device::getDispatcher;
-
-    /**
-     * @return The device's shared fence pool.
-     */
-    const FencePoolPtr& getFencePool() const;
 
     /**
      * Compiles a single shader stage from a SPIR-V binary.
@@ -187,16 +188,15 @@ public:
     createDescriptorAllocator(const DescriptorAllocator::ConstructionParameters& params);
 
     /**
-     * Allocates a GPU buffer with the specified usage and memory properties.
+     * Allocates a GPU buffer with the specified usage and memory intent.
      *
-     * @param createInfo      Buffer size, usage flags, and sharing mode.
-     * @param allocationInfo  VMA memory usage and required/preferred memory flags.
+     * @param createInfo  Buffer size, usage flags, and sharing mode.
+     * @param parameters  VOG-owned allocation intent (memory preference, host access, mapping).
      *
      * @return Allocated buffer.
      */
-    std::unique_ptr<Buffer>
-    createBuffer(const vk::BufferCreateInfo&                  createInfo,
-                 const MemoryAllocator::AllocationParameters& allocationInfo);
+    std::unique_ptr<Buffer> createBuffer(const vk::BufferCreateInfo&                  createInfo,
+                                         const MemoryAllocator::AllocationParameters& parameters);
 
     /**
      * Creates a binary fence for CPU/GPU synchronization.
@@ -214,13 +214,15 @@ public:
      */
     TimelineSemaphore createTimelineSemaphore();
 
-    const InstancePtr             instance;
     const Vulkan::Queue           graphicsQueue;
     const Vulkan::Queue           transferQueue;
     const vk::raii::PipelineCache pipelineCache;
 
 private:
-    FencePoolPtr       mFencePool;
-    MemoryAllocatorPtr mMemoryAllocator;
+    /**
+     * Private VMA wrapper. Holds Device& only so it cannot pin the device. Buffers retain a
+     * DevicePtr and free through this allocator while the device lives.
+     */
+    std::unique_ptr<MemoryAllocator> mMemoryAllocator;
 };
 } // namespace VOG::Graphics::Vulkan

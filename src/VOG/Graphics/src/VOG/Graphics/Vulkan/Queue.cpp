@@ -40,10 +40,4 @@ Queue::Queue(const Device&             _device,
     , familyProperties{_familyProperties}
 {
 }
-
-std::shared_ptr<FencePool::FenceHandle>
-Queue::getFenceHandle(const Device& device)
-{
-    return device.getFencePool()->getShared();
-}
 } // namespace VOG::Graphics::Vulkan

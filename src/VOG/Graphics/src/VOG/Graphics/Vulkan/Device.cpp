@@ -5,7 +5,6 @@
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
 #include <VOG/Graphics/Vulkan/DescriptorAllocator.hpp>
-#include <VOG/Graphics/Vulkan/FencePool.hpp>
 #include <VOG/Graphics/Vulkan/FrameBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
 #include <VOG/Graphics/Vulkan/MemoryAllocator.hpp>
@@ -167,36 +166,24 @@ makeDevice(const vk::raii::PhysicalDevice& physicalDevice, const PhysicalDevice:
 }
 } // namespace
 
-PhysicalDevice::PhysicalDevice(vk::raii::PhysicalDevice physicalDevice)
+PhysicalDevice::PhysicalDevice(InstancePtr _instance, vk::raii::PhysicalDevice physicalDevice)
     : vk::raii::PhysicalDevice{std::move(physicalDevice)}
+    , instance{std::move(_instance)}
     , queueInfos{findGraphicsTransferQueues(*this)}
 {
 }
 
 Device::Device(InstancePtr _instance, vk::raii::PhysicalDevice physicalDevice)
-    : PhysicalDevice{std::move(physicalDevice)}
+    : PhysicalDevice{std::move(_instance), std::move(physicalDevice)}
     , vk::raii::Device{makeDevice(*this, queueInfos)}
-    , instance{std::move(_instance)}
     , graphicsQueue{*this, queueInfos.graphics.familyIndex, queueInfos.graphics.familyProperties}
     , transferQueue{*this, queueInfos.transfer.familyIndex, queueInfos.transfer.familyProperties}
     , pipelineCache{*this, {}}
+    , mMemoryAllocator{new MemoryAllocator{*this}}
 {
-}
-
-void
-Device::init()
-{
-    mMemoryAllocator = std::shared_ptr<MemoryAllocator>(new MemoryAllocator{shared_from_this()});
-    mFencePool       = std::shared_ptr<FencePool>{new FencePool{shared_from_this()}};
 }
 
 Device::~Device() = default;
-
-const FencePoolPtr&
-Device::getFencePool() const
-{
-    return mFencePool;
-}
 
 ShaderPtr
 Device::createShader(Shader::ShadingStage stage, std::span<const std::uint32_t> binary)
@@ -302,8 +289,8 @@ Device::createDescriptorAllocator(const DescriptorAllocator::ConstructionParamet
 
 std::unique_ptr<Buffer>
 Device::createBuffer(const vk::BufferCreateInfo&                  createInfo,
-                     const MemoryAllocator::AllocationParameters& allocationInfo)
+                     const MemoryAllocator::AllocationParameters& parameters)
 {
-    return mMemoryAllocator->makeBuffer(createInfo, allocationInfo);
+    return mMemoryAllocator->makeBuffer(createInfo, parameters);
 }
 } // namespace VOG::Graphics::Vulkan

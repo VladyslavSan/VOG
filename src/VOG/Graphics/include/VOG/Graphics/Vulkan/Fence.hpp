@@ -26,11 +26,27 @@ class Fence : protected vk::raii::Fence
 
 private:
     friend class Device;
+    friend class FencePool;
 
     /**
      * @param device Vulkan device to use for fence construction.
      */
     Fence(DevicePtr device);
+
+    /**
+     * Adopts an already created fence handle, e.g. an idle one taken from a FencePool.
+     *
+     * @param device Vulkan device that owns @p fence.
+     * @param fence  Fence handle in the unsignaled state.
+     */
+    Fence(DevicePtr device, vk::raii::Fence fence);
+
+    /**
+     * Relinquishes the fence handle so it can be stored without retaining the device.
+     *
+     * @return The fence handle; this fence is left empty.
+     */
+    vk::raii::Fence takeHandle();
 
 public:
     /*

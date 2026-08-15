@@ -3,6 +3,7 @@
 #include <VOG/Common/Concepts.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
+#include <VOG/Graphics/Vulkan/FencePool.hpp>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -16,8 +17,6 @@ protected:
     Queue(const Device&             device,
           std::uint32_t             familyIndex,
           vk::QueueFamilyProperties familyProperties);
-
-    static std::shared_ptr<FencePool::FenceHandle> getFenceHandle(const Device& device);
 
 public:
     struct WaitSemaphoreStage
@@ -38,13 +37,18 @@ public:
         std::shared_ptr<FencePool::FenceHandle> fence;
     };
 
+    /**
+     * Submits command buffers using a fence from @p fencePool. The pool is not owned by Queue or
+     * Device; the caller retains it for the lifetime of any in-flight FenceHandle.
+     */
     Submission
-    submit(const Common::ContiguousSizedRangeOf<vk::Semaphore> auto&          waitSemaphores,
+    submit(const FencePoolPtr&                                                fencePool,
+           const Common::ContiguousSizedRangeOf<vk::Semaphore> auto&          waitSemaphores,
            const Common::ContiguousSizedRangeOf<vk::PipelineStageFlags> auto& waitDstStageMasks,
            Common::ContiguousSizedRangeOf<CommandBufferHandle> auto           commandBuffers,
            const Common::ContiguousSizedRangeOf<vk::Semaphore> auto& signalSemaphores) const
     {
-        auto fence = getFenceHandle(device);
+        auto fence = fencePool->getShared();
 
         std::vector<vk::CommandBuffer> commandBuffersTmp;
         commandBuffersTmp.reserve(commandBuffers.size());

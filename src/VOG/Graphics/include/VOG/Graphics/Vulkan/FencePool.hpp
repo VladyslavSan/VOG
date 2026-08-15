@@ -13,17 +13,19 @@ VOG_DECLARE_PTR(Device);
 VOG_DECLARE_PTR(Fence);
 VOG_DECLARE_PTR(FencePool);
 
+/**
+ * Recycles binary fences for queue submissions. Owned by the composition root (e.g. Renderer),
+ * not by Device. Live handles retain FencePoolPtr → DevicePtr; idle entries store bare fences.
+ */
 class FencePool : public std::enable_shared_from_this<FencePool>
 {
-    friend class Device;
-
+public:
     explicit FencePool(DevicePtr device);
 
-public:
     class FenceHandle : protected Fence
     {
     public:
-        FenceHandle(FencePoolPtr fencePool, Fence fence);
+        FenceHandle(FencePoolPtr pool, Fence fence);
 
         ~FenceHandle();
 
@@ -34,19 +36,29 @@ public:
         using Fence::wait;
 
     private:
-        FencePoolPtr mFencePool;
+        FencePoolPtr mPool;
     };
 
     FenceHandle get();
 
     std::shared_ptr<FenceHandle> getShared();
 
+    const DevicePtr&
+    device() const
+    {
+        return mDevice;
+    }
+
 protected:
     friend class FenceHandle;
     void returnToPool(Fence fence);
 
 private:
-    DevicePtr          mDevice;
-    std::vector<Fence> mFences;
+    Fence take();
+
+    DevicePtr mDevice;
+
+    /** Idle fences without DevicePtr, so the pool does not pin the device while empty. */
+    std::vector<vk::raii::Fence> mFences;
 };
 } // namespace VOG::Graphics::Vulkan
