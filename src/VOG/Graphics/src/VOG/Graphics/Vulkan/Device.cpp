@@ -288,8 +288,8 @@ Device::createDescriptorAllocator(const DescriptorAllocator::ConstructionParamet
 }
 
 std::unique_ptr<Buffer>
-Device::createBuffer(const vk::BufferCreateInfo&       createInfo,
-                     const BufferAllocationParameters& parameters)
+Device::createBuffer(const vk::BufferCreateInfo&         createInfo,
+                     const Buffer::AllocationParameters& parameters)
 {
     return mMemoryAllocator->makeBuffer(createInfo, parameters);
 }

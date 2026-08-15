@@ -37,8 +37,8 @@ public:
     MemoryAllocator(MemoryAllocator&&)      = delete;
 
 private:
-    std::unique_ptr<Buffer> makeBuffer(const vk::BufferCreateInfo&       createInfo,
-                                       const BufferAllocationParameters& parameters);
+    std::unique_ptr<Buffer> makeBuffer(const vk::BufferCreateInfo&         createInfo,
+                                       const Buffer::AllocationParameters& parameters);
 
     Device&      mDevice;
     VmaAllocator mAllocator;

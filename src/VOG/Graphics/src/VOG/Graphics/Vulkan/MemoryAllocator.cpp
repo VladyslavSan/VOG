@@ -22,15 +22,15 @@ getMemoryFlags(VmaAllocator allocator, std::uint32_t memoryIndex)
 }
 
 VmaMemoryUsage
-toVmaMemoryUsage(MemoryPreference preference)
+toVmaMemoryUsage(Buffer::MemoryPreference preference)
 {
     switch (preference)
     {
-    case MemoryPreference::eDevice:
+    case Buffer::MemoryPreference::eDevice:
         return VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-    case MemoryPreference::eHost:
+    case Buffer::MemoryPreference::eHost:
         return VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
-    case MemoryPreference::eAuto:
+    case Buffer::MemoryPreference::eAuto:
         break;
     }
 
@@ -38,19 +38,19 @@ toVmaMemoryUsage(MemoryPreference preference)
 }
 
 VmaAllocationCreateFlags
-toVmaAllocationFlags(const BufferAllocationParameters& parameters)
+toVmaAllocationFlags(const Buffer::AllocationParameters& parameters)
 {
     VmaAllocationCreateFlags flags = 0;
 
     switch (parameters.hostAccess)
     {
-    case HostAccess::eSequentialWrite:
+    case Buffer::HostAccess::eSequentialWrite:
         flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
         break;
-    case HostAccess::eRandom:
+    case Buffer::HostAccess::eRandom:
         flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
         break;
-    case HostAccess::eNone:
+    case Buffer::HostAccess::eNone:
         break;
     }
 
@@ -154,8 +154,8 @@ MemoryAllocator::MemoryAllocator(Device& device)
 MemoryAllocator::~MemoryAllocator() { vmaDestroyAllocator(mAllocator); }
 
 std::unique_ptr<Buffer>
-MemoryAllocator::makeBuffer(const vk::BufferCreateInfo&       createInfo,
-                            const BufferAllocationParameters& parameters)
+MemoryAllocator::makeBuffer(const vk::BufferCreateInfo&         createInfo,
+                            const Buffer::AllocationParameters& parameters)
 {
     VmaAllocationCreateInfo vmaAllocationCreateInfo = {
         .flags     = toVmaAllocationFlags(parameters),

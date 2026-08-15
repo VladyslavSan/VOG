@@ -11,41 +11,6 @@ namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Buffer);
 
-/** Where the allocation should prefer to live. Maps to a VMA memory usage internally. */
-enum class MemoryPreference : std::uint8_t
-{
-    /** Let the allocator pick based on usage flags and host-access hints. */
-    eAuto,
-    /** Prefer device-local memory (fast GPU access, staging needed for host writes). */
-    eDevice,
-    /** Prefer host-visible memory (directly mappable, slower GPU access). */
-    eHost,
-};
-
-/** How the CPU intends to touch the mapping. Drives host-visible placement and coherency. */
-enum class HostAccess : std::uint8_t
-{
-    /** GPU-only; no host mapping expected. */
-    eNone,
-    /** CPU writes sequentially (e.g. upload). */
-    eSequentialWrite,
-    /** CPU reads and/or writes randomly. */
-    eRandom,
-};
-
-/**
- * VOG-owned allocation intent for buffers. Deliberately free of any VMA type so callers do not
- * transitively include the allocator headers; the translation of these fields into VMA structs
- * happens entirely inside the Graphics implementation.
- */
-struct BufferAllocationParameters
-{
-    MemoryPreference memory             = MemoryPreference::eAuto;
-    HostAccess       hostAccess         = HostAccess::eNone;
-    bool             persistentlyMapped = false;
-    const char*      tag                = nullptr;
-};
-
 /**
  * GPU buffer. The native handle is reachable via operator*; the buffer and its backing memory are
  * hidden behind a pImpl so this header stays VMA-free. The allocation retains a DevicePtr and both
@@ -56,6 +21,41 @@ class Buffer
     friend class MemoryAllocator;
 
 public:
+    /** Where the allocation should prefer to live. Maps to a VMA memory usage internally. */
+    enum class MemoryPreference : std::uint8_t
+    {
+        /** Let the allocator pick based on usage flags and host-access hints. */
+        eAuto,
+        /** Prefer device-local memory (fast GPU access, staging needed for host writes). */
+        eDevice,
+        /** Prefer host-visible memory (directly mappable, slower GPU access). */
+        eHost,
+    };
+
+    /** How the CPU intends to touch the mapping. Drives host-visible placement and coherency. */
+    enum class HostAccess : std::uint8_t
+    {
+        /** GPU-only; no host mapping expected. */
+        eNone,
+        /** CPU writes sequentially (e.g. upload). */
+        eSequentialWrite,
+        /** CPU reads and/or writes randomly. */
+        eRandom,
+    };
+
+    /**
+     * VOG-owned allocation intent. Deliberately free of any VMA type so callers do not
+     * transitively include the allocator headers; the translation of these fields into VMA
+     * structs happens entirely inside the Graphics implementation.
+     */
+    struct AllocationParameters
+    {
+        MemoryPreference memory             = MemoryPreference::eAuto;
+        HostAccess       hostAccess         = HostAccess::eNone;
+        bool             persistentlyMapped = false;
+        const char*      tag                = nullptr;
+    };
+
     template <class PtrType = std::byte*>
     struct MemoryMapping
     {

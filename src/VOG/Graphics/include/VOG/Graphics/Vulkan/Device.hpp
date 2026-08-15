@@ -193,8 +193,8 @@ public:
      *
      * @return Allocated buffer.
      */
-    std::unique_ptr<Buffer> createBuffer(const vk::BufferCreateInfo&       createInfo,
-                                         const BufferAllocationParameters& parameters);
+    std::unique_ptr<Buffer> createBuffer(const vk::BufferCreateInfo&         createInfo,
+                                         const Buffer::AllocationParameters& parameters);
 
     /**
      * Creates a binary fence for CPU/GPU synchronization.
