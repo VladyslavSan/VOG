@@ -1,62 +1,27 @@
 #pragma once
 
-#include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
+#include <VOG/Graphics/Vulkan/MemoryAllocator.hpp>
 
 #include <cstddef>
-#include <cstdint>
-#include <memory>
 
 namespace VOG::Graphics::Vulkan
 {
-VOG_DECLARE_PTR(Buffer);
-
 /**
- * GPU buffer. Publicly a vk::raii::Buffer so the native handle is reachable via operator*. The
- * backing memory is hidden behind a pImpl so this header stays VMA-free. The allocation retains a
- * DevicePtr; the destructor destroys the VkBuffer (vk::raii::Buffer::clear) and then frees the
- * memory, both while the device is still alive.
+ * GPU buffer. Publicly a vk::raii::Buffer so the native handle is reachable via operator*, and an
+ * allocation so it knows the memory backing it.
+ *
+ * The buffer owns its own teardown: it holds a DevicePtr for its entire lifetime, and the
+ * destructor destroys the VkBuffer and then returns the allocation to the device-owned allocator,
+ * both while the device is guaranteed alive.
  */
-class Buffer : public vk::raii::Buffer
+class Buffer
+    : protected MemoryAllocator::Allocation
+    , public vk::raii::Buffer
 {
     friend class MemoryAllocator;
 
 public:
-    /** Where the allocation should prefer to live. Maps to a VMA memory usage internally. */
-    enum class MemoryPreference : std::uint8_t
-    {
-        /** Let the allocator pick based on usage flags and host-access hints. */
-        eAuto,
-        /** Prefer device-local memory (fast GPU access, staging needed for host writes). */
-        eDevice,
-        /** Prefer host-visible memory (directly mappable, slower GPU access). */
-        eHost,
-    };
-
-    /** How the CPU intends to touch the mapping. Drives host-visible placement and coherency. */
-    enum class HostAccess : std::uint8_t
-    {
-        /** GPU-only; no host mapping expected. */
-        eNone,
-        /** CPU writes sequentially (e.g. upload). */
-        eSequentialWrite,
-        /** CPU reads and/or writes randomly. */
-        eRandom,
-    };
-
-    /**
-     * VOG-owned allocation intent. Deliberately free of any VMA type so callers do not
-     * transitively include the allocator headers; the translation of these fields into VMA
-     * structs happens entirely inside the Graphics implementation.
-     */
-    struct AllocationParameters
-    {
-        MemoryPreference memory             = MemoryPreference::eAuto;
-        HostAccess       hostAccess         = HostAccess::eNone;
-        bool             persistentlyMapped = false;
-        const char*      tag                = nullptr;
-    };
-
     template <class PtrType = std::byte*>
     struct MemoryMapping
     {
@@ -97,9 +62,10 @@ public:
     [[nodiscard]] MemoryMapping<const std::byte*> mapForRead();
 
 private:
-    class Allocation;
+    Buffer(DevicePtr device, MemoryAllocator::Allocation allocation, vk::raii::Buffer buffer);
 
-    Buffer(std::unique_ptr<Allocation> allocation, vk::raii::Buffer buffer);
+    /** Allocator owning this buffer's memory; reached through the retained device. */
+    [[nodiscard]] MemoryAllocator& allocator() const;
 
     /** Flush the whole allocation so host writes become visible to the GPU. */
     void flushMapping() const;
@@ -107,7 +73,8 @@ private:
     /** Unmap a non-persistent mapping. */
     void unmapMapping() const;
 
-    std::unique_ptr<Allocation> mAllocation;
+    /** Keeps the device — and with it the allocator — alive for this buffer's whole lifetime. */
+    DevicePtr mDevice;
 };
 
 template <class PtrType>

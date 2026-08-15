@@ -1,76 +1,70 @@
 #include "VOG/Graphics/Vulkan/Buffer.hpp"
 
-#include "VOG/Graphics/Vulkan/MemoryAllocator.hpp"
-#include <VOG/Graphics/Config/VmaConfig.hpp>
+#include <VOG/Graphics/Vulkan/Device.hpp>
 
-#include <stdexcept>
 #include <utility>
 
 namespace VOG::Graphics::Vulkan
 {
-Buffer::Buffer(std::unique_ptr<Allocation> allocation, vk::raii::Buffer buffer)
-    : vk::raii::Buffer{std::move(buffer)}
-    , mAllocation{std::move(allocation)}
+Buffer::Buffer(DevicePtr device, MemoryAllocator::Allocation allocation, vk::raii::Buffer buffer)
+    : MemoryAllocator::Allocation{std::move(allocation)}
+    , vk::raii::Buffer{std::move(buffer)}
+    , mDevice{std::move(device)}
 {
 }
 
 Buffer::~Buffer()
 {
-    // Destroy the VkBuffer while the allocation — and therefore the device — is still alive, then
-    // let mAllocation free the backing memory as it is destroyed.
+    // Sequence teardown explicitly while mDevice is still held: destroy the VkBuffer first, then
+    // hand the memory back to the allocator that produced it.
     vk::raii::Buffer::clear();
+
+    allocator().free(*this);
+    mHandle = {};
+}
+
+MemoryAllocator&
+Buffer::allocator() const
+{
+    return *mDevice->mMemoryAllocator;
 }
 
 void
 Buffer::flushMapping() const
 {
-    vmaFlushAllocation(mAllocation->allocator, mAllocation->allocation, 0, VK_WHOLE_SIZE);
+    allocator().flush(*this);
 }
 
 void
 Buffer::unmapMapping() const
 {
-    vmaUnmapMemory(mAllocation->allocator, mAllocation->allocation);
+    allocator().unmap(*this);
 }
 
 Buffer::MemoryMapping<std::byte*>
 Buffer::mapForWrite()
 {
-    std::byte* pData = mAllocation->mappedData;
+    const bool isPersistentlyMapped = mMappedData != nullptr;
     const bool isHostCoherent =
-        static_cast<bool>(mAllocation->memoryFlags & vk::MemoryPropertyFlagBits::eHostCoherent);
+        static_cast<bool>(mMemoryFlags & vk::MemoryPropertyFlagBits::eHostCoherent);
 
-    if (!mAllocation->isPersistentlyMapped)
-    {
-        void* data   = nullptr;
-        auto  result = vmaMapMemory(mAllocation->allocator, mAllocation->allocation, &data);
-        if (result != VK_SUCCESS) [[unlikely]]
-        {
-            throw std::runtime_error{"Buffer::map: vmaMapMemory failed."};
-        }
-        pData = reinterpret_cast<std::byte*>(data);
-    }
+    std::byte* pData = isPersistentlyMapped ? mMappedData : allocator().map(*this);
 
-    return {pData, mAllocation->size, this, !mAllocation->isPersistentlyMapped, !isHostCoherent};
+    return {pData, mSize, this, !isPersistentlyMapped, !isHostCoherent};
 }
 
 Buffer::MemoryMapping<const std::byte*>
 Buffer::mapForRead()
 {
-    std::byte* pData = mAllocation->mappedData;
-    if (!mAllocation->isPersistentlyMapped)
-    {
-        void* data   = nullptr;
-        auto  result = vmaMapMemory(mAllocation->allocator, mAllocation->allocation, &data);
-        if (result != VK_SUCCESS) [[unlikely]]
-        {
-            throw std::runtime_error{"Buffer::map: vmaMapMemory failed."};
-        }
-        pData = reinterpret_cast<std::byte*>(data);
+    const bool isPersistentlyMapped = mMappedData != nullptr;
 
-        vmaInvalidateAllocation(mAllocation->allocator, mAllocation->allocation, 0, VK_WHOLE_SIZE);
+    std::byte* pData = mMappedData;
+    if (!isPersistentlyMapped)
+    {
+        pData = allocator().map(*this);
+        allocator().invalidate(*this);
     }
 
-    return {pData, mAllocation->size, this, !mAllocation->isPersistentlyMapped, false};
+    return {pData, mSize, this, !isPersistentlyMapped, false};
 }
 } // namespace VOG::Graphics::Vulkan

@@ -48,6 +48,7 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Vulkan/GraphicsPipeline.hpp
             include/VOG/Graphics/Vulkan/Instance.hpp
             include/VOG/Graphics/Vulkan/Limits.hpp
+            include/VOG/Graphics/Vulkan/MemoryAllocator.hpp
             include/VOG/Graphics/Vulkan/Queue.hpp
             include/VOG/Graphics/Vulkan/RenderPass.hpp
             include/VOG/Graphics/Vulkan/GLSLCompiler.hpp
@@ -59,7 +60,6 @@ target_sources(VOG.Graphics
 
     PRIVATE
         src/VOG/Graphics/Config/VmaConfig.hpp
-        src/VOG/Graphics/Vulkan/MemoryAllocator.hpp
         src/VOG/Graphics/Frame/FrameObjectManager.cpp
         src/VOG/Graphics/Frame/FrameObjects.cpp
         src/VOG/Graphics/Vulkan/Attachment/Converters.hpp

@@ -1,6 +1,7 @@
 #include "VOG/Graphics/Vulkan/MemoryAllocator.hpp"
 
 #include <VOG/Graphics/Config/VmaConfig.hpp>
+#include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
 
@@ -12,25 +13,28 @@ namespace VOG::Graphics::Vulkan
 {
 namespace
 {
-vk::MemoryPropertyFlags
-getMemoryFlags(VmaAllocator allocator, std::uint32_t memoryIndex)
+VmaAllocation
+toVmaAllocation(MemoryAllocator::AllocationHandle handle)
 {
-    VkMemoryPropertyFlags flags{};
-    vmaGetMemoryTypeProperties(allocator, memoryIndex, &flags);
+    return reinterpret_cast<VmaAllocation>(handle.value);
+}
 
-    return vk::MemoryPropertyFlags{flags};
+MemoryAllocator::AllocationHandle
+toAllocationHandle(VmaAllocation allocation)
+{
+    return {reinterpret_cast<std::uintptr_t>(allocation)};
 }
 
 VmaMemoryUsage
-toVmaMemoryUsage(Buffer::MemoryPreference preference)
+toVmaMemoryUsage(MemoryAllocator::MemoryPreference preference)
 {
     switch (preference)
     {
-    case Buffer::MemoryPreference::eDevice:
+    case MemoryAllocator::MemoryPreference::eDevice:
         return VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-    case Buffer::MemoryPreference::eHost:
+    case MemoryAllocator::MemoryPreference::eHost:
         return VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
-    case Buffer::MemoryPreference::eAuto:
+    case MemoryAllocator::MemoryPreference::eAuto:
         break;
     }
 
@@ -38,19 +42,19 @@ toVmaMemoryUsage(Buffer::MemoryPreference preference)
 }
 
 VmaAllocationCreateFlags
-toVmaAllocationFlags(const Buffer::AllocationParameters& parameters)
+toVmaAllocationFlags(const MemoryAllocator::AllocationParameters& parameters)
 {
     VmaAllocationCreateFlags flags = 0;
 
     switch (parameters.hostAccess)
     {
-    case Buffer::HostAccess::eSequentialWrite:
+    case MemoryAllocator::HostAccess::eSequentialWrite:
         flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
         break;
-    case Buffer::HostAccess::eRandom:
+    case MemoryAllocator::HostAccess::eRandom:
         flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
         break;
-    case Buffer::HostAccess::eNone:
+    case MemoryAllocator::HostAccess::eNone:
         break;
     }
 
@@ -63,43 +67,24 @@ toVmaAllocationFlags(const Buffer::AllocationParameters& parameters)
 }
 } // namespace
 
-Buffer::Allocation::Allocation(DevicePtr                     _device,
-                               const VmaAllocator            _allocator,
-                               const VmaAllocation           _allocation,
-                               std::byte* const              _mappedData,
-                               const std::size_t             _size,
-                               const bool                    _persistentlyMapped,
-                               const vk::MemoryPropertyFlags _memoryFlags)
-    : device{std::move(_device)}
-    , allocator{_allocator}
-    , allocation{_allocation}
-    , mappedData{_mappedData}
-    , size{_size}
-    , isPersistentlyMapped{_persistentlyMapped}
-    , memoryFlags{_memoryFlags}
+/** Holds every allocator-backend type, so no backend header escapes this translation unit. */
+class MemoryAllocator::Implementation
 {
-}
+public:
+    explicit Implementation(Device& device);
 
-Buffer::Allocation::~Allocation()
-{
-    if (allocation != nullptr)
-    {
-        vmaFreeMemory(allocator, allocation);
-    }
-}
+    ~Implementation();
 
-Buffer::Allocation::Allocation(Buffer::Allocation&& other) noexcept
-    : device{std::move(other.device)}
-    , allocator{other.allocator}
-    , allocation{std::exchange(other.allocation, nullptr)}
-    , mappedData{other.mappedData}
-    , size{other.size}
-    , isPersistentlyMapped{other.isPersistentlyMapped}
-    , memoryFlags{other.memoryFlags}
-{
-}
+    Implementation(const Implementation&) = delete;
+    Implementation(Implementation&&)      = delete;
 
-MemoryAllocator::MemoryAllocator(Device& device)
+    [[nodiscard]] vk::MemoryPropertyFlags getMemoryFlags(std::uint32_t memoryIndex) const;
+
+    Device&      mDevice;
+    VmaAllocator mAllocator;
+};
+
+MemoryAllocator::Implementation::Implementation(Device& device)
     : mDevice{device}
     , mAllocator{nullptr}
 {
@@ -148,11 +133,81 @@ MemoryAllocator::MemoryAllocator(Device& device)
     }
 }
 
-MemoryAllocator::~MemoryAllocator() { vmaDestroyAllocator(mAllocator); }
+MemoryAllocator::Implementation::~Implementation() { vmaDestroyAllocator(mAllocator); }
+
+vk::MemoryPropertyFlags
+MemoryAllocator::Implementation::getMemoryFlags(const std::uint32_t memoryIndex) const
+{
+    VkMemoryPropertyFlags flags{};
+    vmaGetMemoryTypeProperties(mAllocator, memoryIndex, &flags);
+
+    return vk::MemoryPropertyFlags{flags};
+}
+
+MemoryAllocator::Allocation::Allocation(const AllocationHandle        handle,
+                                        const vk::DeviceSize          size,
+                                        std::byte* const              mappedData,
+                                        const vk::MemoryPropertyFlags memoryFlags)
+    : mHandle{handle}
+    , mSize{size}
+    , mMappedData{mappedData}
+    , mMemoryFlags{memoryFlags}
+{
+}
+
+MemoryAllocator::MemoryAllocator(Device& device)
+    : mImplementation{std::make_unique<Implementation>(device)}
+{
+}
+
+MemoryAllocator::~MemoryAllocator() = default;
+
+void
+MemoryAllocator::free(const Allocation& allocation) noexcept
+{
+    if (allocation.mHandle)
+    {
+        vmaFreeMemory(mImplementation->mAllocator, toVmaAllocation(allocation.mHandle));
+    }
+}
+
+std::byte*
+MemoryAllocator::map(const Allocation& allocation)
+{
+    void*      data = nullptr;
+    const auto result =
+        vmaMapMemory(mImplementation->mAllocator, toVmaAllocation(allocation.mHandle), &data);
+    if (result != VK_SUCCESS) [[unlikely]]
+    {
+        throw std::runtime_error{"MemoryAllocator::map: vmaMapMemory failed."};
+    }
+
+    return static_cast<std::byte*>(data);
+}
+
+void
+MemoryAllocator::unmap(const Allocation& allocation) noexcept
+{
+    vmaUnmapMemory(mImplementation->mAllocator, toVmaAllocation(allocation.mHandle));
+}
+
+void
+MemoryAllocator::flush(const Allocation& allocation) noexcept
+{
+    vmaFlushAllocation(
+        mImplementation->mAllocator, toVmaAllocation(allocation.mHandle), 0, VK_WHOLE_SIZE);
+}
+
+void
+MemoryAllocator::invalidate(const Allocation& allocation) noexcept
+{
+    vmaInvalidateAllocation(
+        mImplementation->mAllocator, toVmaAllocation(allocation.mHandle), 0, VK_WHOLE_SIZE);
+}
 
 std::unique_ptr<Buffer>
-MemoryAllocator::makeBuffer(const vk::BufferCreateInfo&         createInfo,
-                            const Buffer::AllocationParameters& parameters)
+MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
+                            const AllocationParameters& parameters)
 {
     VmaAllocationCreateInfo vmaAllocationCreateInfo = {
         .flags     = toVmaAllocationFlags(parameters),
@@ -164,8 +219,10 @@ MemoryAllocator::makeBuffer(const vk::BufferCreateInfo&         createInfo,
     VmaAllocation     allocation;
     VmaAllocationInfo allocationInfo;
 
+    Device& device = mImplementation->mDevice;
+
     vk::Result result =
-        static_cast<vk::Result>(vmaCreateBuffer(mAllocator,
+        static_cast<vk::Result>(vmaCreateBuffer(mImplementation->mAllocator,
                                                 &static_cast<const VkBufferCreateInfo&>(createInfo),
                                                 &vmaAllocationCreateInfo,
                                                 &buffer,
@@ -177,17 +234,12 @@ MemoryAllocator::makeBuffer(const vk::BufferCreateInfo&         createInfo,
         throw std::runtime_error{"Buffer creation failed."};
     }
 
-    const bool isPersistentlyMapped =
-        (vmaAllocationCreateInfo.flags & VMA_ALLOCATION_CREATE_MAPPED_BIT) != 0;
-
-    return std::unique_ptr<Buffer>(new Buffer{
-        std::make_unique<Buffer::Allocation>(mDevice.shared_from_this(),
-                                             mAllocator,
-                                             allocation,
-                                             static_cast<std::byte*>(allocationInfo.pMappedData),
-                                             allocationInfo.size,
-                                             isPersistentlyMapped,
-                                             getMemoryFlags(mAllocator, allocationInfo.memoryType)),
-        vk::raii::Buffer{mDevice, buffer}});
+    return std::unique_ptr<Buffer>(
+        new Buffer{device.shared_from_this(),
+                   Allocation{toAllocationHandle(allocation),
+                              allocationInfo.size,
+                              static_cast<std::byte*>(allocationInfo.pMappedData),
+                              mImplementation->getMemoryFlags(allocationInfo.memoryType)},
+                   vk::raii::Buffer{device, buffer}});
 }
 } // namespace VOG::Graphics::Vulkan

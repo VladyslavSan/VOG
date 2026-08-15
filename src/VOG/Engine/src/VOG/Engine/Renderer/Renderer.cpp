@@ -117,7 +117,7 @@ Renderer::render()
 
     triangleBuffer = mVulkanDevice->createBuffer(
         {.size = kVertexDataSize, .usage = vk::BufferUsageFlagBits::eVertexBuffer},
-        {.hostAccess = Graphics::Vulkan::Buffer::HostAccess::eSequentialWrite});
+        {.hostAccess = Graphics::Vulkan::MemoryAllocator::HostAccess::eSequentialWrite});
 
     auto mapping = triangleBuffer->mapForWrite();
     std::memcpy(mapping.data, vertexData, kVertexDataSize);
