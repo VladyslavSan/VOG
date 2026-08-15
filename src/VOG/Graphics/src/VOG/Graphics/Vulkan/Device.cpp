@@ -288,9 +288,9 @@ Device::createDescriptorAllocator(const DescriptorAllocator::ConstructionParamet
 }
 
 std::unique_ptr<Buffer>
-Device::createBuffer(const vk::BufferCreateInfo&                  createInfo,
-                     const MemoryAllocator::AllocationParameters& allocationInfo)
+Device::createBuffer(const vk::BufferCreateInfo&       createInfo,
+                     const BufferAllocationParameters& parameters)
 {
-    return mMemoryAllocator->makeBuffer(createInfo, allocationInfo);
+    return mMemoryAllocator->makeBuffer(createInfo, parameters);
 }
 } // namespace VOG::Graphics::Vulkan

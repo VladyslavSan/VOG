@@ -29,7 +29,7 @@ makeBuffer(Graphics::Vulkan::Device& device)
 {
     return device.createBuffer(
         {.size = gBufferSize, .usage = vk::BufferUsageFlagBits::eTransferSrc},
-        {.usage = VMA_MEMORY_USAGE_AUTO});
+        {.memory = Graphics::Vulkan::MemoryPreference::eAuto});
 }
 } // namespace
 

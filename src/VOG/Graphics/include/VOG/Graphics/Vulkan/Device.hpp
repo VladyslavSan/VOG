@@ -4,12 +4,12 @@
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
+#include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/Containers.hpp>
 #include <VOG/Graphics/Vulkan/DescriptorAllocator.hpp>
 #include <VOG/Graphics/Vulkan/Fence.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/Limits.hpp>
-#include <VOG/Graphics/Vulkan/MemoryAllocator.hpp>
 #include <VOG/Graphics/Vulkan/Queue.hpp>
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
@@ -17,9 +17,9 @@
 
 namespace VOG::Graphics::Vulkan
 {
-VOG_DECLARE_PTR(Buffer);
 VOG_DECLARE_PTR(CommandBufferPool);
 VOG_DECLARE_PTR(Framebuffer);
+VOG_DECLARE_PTR(MemoryAllocator);
 VOG_DECLARE_PTR(RenderBuffer);
 VOG_DECLARE_PTR(RenderPass);
 VOG_DECLARE_PTR(Instance);
@@ -186,16 +186,15 @@ public:
     createDescriptorAllocator(const DescriptorAllocator::ConstructionParameters& params);
 
     /**
-     * Allocates a GPU buffer with the specified usage and memory properties.
+     * Allocates a GPU buffer with the specified usage and memory intent.
      *
-     * @param createInfo      Buffer size, usage flags, and sharing mode.
-     * @param allocationInfo  VMA memory usage and required/preferred memory flags.
+     * @param createInfo  Buffer size, usage flags, and sharing mode.
+     * @param parameters  VOG-owned allocation intent (memory preference, host access, mapping).
      *
      * @return Allocated buffer.
      */
-    std::unique_ptr<Buffer>
-    createBuffer(const vk::BufferCreateInfo&                  createInfo,
-                 const MemoryAllocator::AllocationParameters& allocationInfo);
+    std::unique_ptr<Buffer> createBuffer(const vk::BufferCreateInfo&       createInfo,
+                                         const BufferAllocationParameters& parameters);
 
     /**
      * Creates a binary fence for CPU/GPU synchronization.

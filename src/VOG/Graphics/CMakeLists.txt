@@ -28,7 +28,6 @@ target_sources(VOG.Graphics
         BASE_DIRS
             include/
         FILES
-            include/VOG/Graphics/Config/VmaConfig.hpp
             include/VOG/Graphics/Config/VulkanConfig.hpp
             include/VOG/Graphics/Frame/FrameObjectManager.hpp
             include/VOG/Graphics/Frame/FrameObjects.hpp
@@ -49,7 +48,6 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Vulkan/GraphicsPipeline.hpp
             include/VOG/Graphics/Vulkan/Instance.hpp
             include/VOG/Graphics/Vulkan/Limits.hpp
-            include/VOG/Graphics/Vulkan/MemoryAllocator.hpp
             include/VOG/Graphics/Vulkan/Queue.hpp
             include/VOG/Graphics/Vulkan/RenderPass.hpp
             include/VOG/Graphics/Vulkan/GLSLCompiler.hpp
@@ -60,6 +58,8 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Typedefs.hpp
 
     PRIVATE
+        src/VOG/Graphics/Config/VmaConfig.hpp
+        src/VOG/Graphics/Vulkan/MemoryAllocator.hpp
         src/VOG/Graphics/Frame/FrameObjectManager.cpp
         src/VOG/Graphics/Frame/FrameObjects.cpp
         src/VOG/Graphics/Vulkan/Attachment/Converters.hpp
@@ -94,10 +94,10 @@ target_link_libraries(VOG.Graphics
     PUBLIC
         VOG.Common
         Vulkan::Headers
-        GPUOpen::VulkanMemoryAllocator
         Boost::container
     PRIVATE
-        nlohmann_json::nlohmann_json                                                                                
+        GPUOpen::VulkanMemoryAllocator
+        nlohmann_json::nlohmann_json
         spirv-cross::spirv-cross
         spdlog::spdlog
         glslang::glslang

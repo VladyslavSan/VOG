@@ -1,24 +1,49 @@
 #include "VOG/Graphics/Vulkan/Buffer.hpp"
 
+#include "VOG/Graphics/Vulkan/MemoryAllocator.hpp"
+#include <VOG/Graphics/Config/VmaConfig.hpp>
+
+#include <stdexcept>
+#include <utility>
+
 namespace VOG::Graphics::Vulkan
 {
-Buffer::Buffer(MemoryAllocator::Allocation allocation, vk::raii::Buffer buffer)
-    : MemoryAllocator::Allocation{std::move(allocation)}
-    , vk::raii::Buffer{std::move(buffer)}
+Buffer::Buffer(std::unique_ptr<Allocation> allocation)
+    : mAllocation{std::move(allocation)}
 {
+}
+
+Buffer::~Buffer() = default;
+
+vk::Buffer
+Buffer::operator*() const
+{
+    return mAllocation->buffer;
+}
+
+void
+Buffer::flushMapping() const
+{
+    vmaFlushAllocation(mAllocation->allocator, mAllocation->allocation, 0, VK_WHOLE_SIZE);
+}
+
+void
+Buffer::unmapMapping() const
+{
+    vmaUnmapMemory(mAllocation->allocator, mAllocation->allocation);
 }
 
 Buffer::MemoryMapping<std::byte*>
 Buffer::mapForWrite()
 {
-    std::byte* pData = reinterpret_cast<std::byte*>(info.pMappedData);
+    std::byte* pData = mAllocation->mappedData;
     const bool isHostCoherent =
-        static_cast<bool>(memoryFlags & vk::MemoryPropertyFlagBits::eHostCoherent);
+        static_cast<bool>(mAllocation->memoryFlags & vk::MemoryPropertyFlagBits::eHostCoherent);
 
-    if (!isPersistentlyMapped)
+    if (!mAllocation->isPersistentlyMapped)
     {
         void* data   = nullptr;
-        auto  result = vmaMapMemory(allocator, allocation, &data);
+        auto  result = vmaMapMemory(mAllocation->allocator, mAllocation->allocation, &data);
         if (result != VK_SUCCESS) [[unlikely]]
         {
             throw std::runtime_error{"Buffer::map: vmaMapMemory failed."};
@@ -26,26 +51,26 @@ Buffer::mapForWrite()
         pData = reinterpret_cast<std::byte*>(data);
     }
 
-    return {pData, info.size, this, !isPersistentlyMapped, !isHostCoherent};
+    return {pData, mAllocation->size, this, !mAllocation->isPersistentlyMapped, !isHostCoherent};
 }
 
 Buffer::MemoryMapping<const std::byte*>
 Buffer::mapForRead()
 {
-    std::byte* pData = reinterpret_cast<std::byte*>(info.pMappedData);
-    if (!isPersistentlyMapped)
+    std::byte* pData = mAllocation->mappedData;
+    if (!mAllocation->isPersistentlyMapped)
     {
         void* data   = nullptr;
-        auto  result = vmaMapMemory(allocator, allocation, &data);
+        auto  result = vmaMapMemory(mAllocation->allocator, mAllocation->allocation, &data);
         if (result != VK_SUCCESS) [[unlikely]]
         {
             throw std::runtime_error{"Buffer::map: vmaMapMemory failed."};
         }
         pData = reinterpret_cast<std::byte*>(data);
 
-        vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
+        vmaInvalidateAllocation(mAllocation->allocator, mAllocation->allocation, 0, VK_WHOLE_SIZE);
     }
 
-    return {pData, info.size, this, !isPersistentlyMapped, false};
+    return {pData, mAllocation->size, this, !mAllocation->isPersistentlyMapped, false};
 }
 } // namespace VOG::Graphics::Vulkan
