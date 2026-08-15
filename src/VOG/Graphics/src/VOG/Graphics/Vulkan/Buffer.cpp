@@ -8,17 +8,17 @@
 
 namespace VOG::Graphics::Vulkan
 {
-Buffer::Buffer(std::unique_ptr<Allocation> allocation)
-    : mAllocation{std::move(allocation)}
+Buffer::Buffer(std::unique_ptr<Allocation> allocation, vk::raii::Buffer buffer)
+    : vk::raii::Buffer{std::move(buffer)}
+    , mAllocation{std::move(allocation)}
 {
 }
 
-Buffer::~Buffer() = default;
-
-vk::Buffer
-Buffer::operator*() const
+Buffer::~Buffer()
 {
-    return mAllocation->buffer;
+    // Destroy the VkBuffer while the allocation — and therefore the device — is still alive, then
+    // let mAllocation free the backing memory as it is destroyed.
+    vk::raii::Buffer::clear();
 }
 
 void

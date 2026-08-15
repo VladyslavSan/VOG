@@ -45,16 +45,15 @@ private:
 };
 
 /**
- * The VkBuffer and its backing memory for a Buffer. Hidden as a pImpl so Buffer.hpp stays VMA-free.
- * Buffer and memory are created and destroyed together through VMA (vmaCreateBuffer /
- * vmaDestroyBuffer) so the native handle never outlives its allocation.
+ * Backing memory for a Buffer. Hidden as a pImpl so Buffer.hpp stays VMA-free. The VkBuffer itself
+ * is owned by the vk::raii::Buffer base of Buffer; this only owns the VMA allocation and frees it
+ * (vmaFreeMemory) after the handle has been destroyed.
  */
 class Buffer::Allocation
 {
 public:
     Allocation(DevicePtr               device,
                VmaAllocator            allocator,
-               vk::Buffer              buffer,
                VmaAllocation           allocation,
                std::byte*              mappedData,
                std::size_t             size,
@@ -75,9 +74,6 @@ public:
 
     /** Allocator that created the allocation; owned by @var device. */
     VmaAllocator allocator;
-
-    /** Native buffer handle, owned jointly with @var allocation. */
-    vk::Buffer buffer;
 
     /** Underlying VMA allocation. */
     VmaAllocation allocation;

@@ -12,11 +12,12 @@ namespace VOG::Graphics::Vulkan
 VOG_DECLARE_PTR(Buffer);
 
 /**
- * GPU buffer. The native handle is reachable via operator*; the buffer and its backing memory are
- * hidden behind a pImpl so this header stays VMA-free. The allocation retains a DevicePtr and both
- * the VkBuffer and its memory are released together (vmaDestroyBuffer) while the device is alive.
+ * GPU buffer. Publicly a vk::raii::Buffer so the native handle is reachable via operator*. The
+ * backing memory is hidden behind a pImpl so this header stays VMA-free. The allocation retains a
+ * DevicePtr; the destructor destroys the VkBuffer (vk::raii::Buffer::clear) and then frees the
+ * memory, both while the device is still alive.
  */
-class Buffer
+class Buffer : public vk::raii::Buffer
 {
     friend class MemoryAllocator;
 
@@ -91,9 +92,6 @@ public:
     Buffer(const Buffer&) = delete;
     Buffer(Buffer&&)      = delete;
 
-    /** Native buffer handle, for recording into command buffers. */
-    [[nodiscard]] vk::Buffer operator*() const;
-
     [[nodiscard]] MemoryMapping<std::byte*> mapForWrite();
 
     [[nodiscard]] MemoryMapping<const std::byte*> mapForRead();
@@ -101,7 +99,7 @@ public:
 private:
     class Allocation;
 
-    explicit Buffer(std::unique_ptr<Allocation> allocation);
+    Buffer(std::unique_ptr<Allocation> allocation, vk::raii::Buffer buffer);
 
     /** Flush the whole allocation so host writes become visible to the GPU. */
     void flushMapping() const;
