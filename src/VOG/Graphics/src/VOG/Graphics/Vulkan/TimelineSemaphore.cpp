@@ -11,16 +11,16 @@ inline constexpr vk::SemaphoreTypeCreateInfo gTypeCreateInfo{
 inline constexpr vk::SemaphoreCreateInfo gCreateInfo{.pNext = &gTypeCreateInfo};
 } // namespace
 
-TimelineSemaphore::TimelineSemaphore(std::shared_ptr<Device> device)
-    : Semaphore{*device, gCreateInfo}
-    , mDevice{std::move(device)}
+TimelineSemaphore::TimelineSemaphore(DevicePtr device)
+    : DeviceChild{std::move(device)}
+    , Semaphore{*DeviceChild::device(), gCreateInfo}
 {
 }
 
 vk::Result
 TimelineSemaphore::waitOnCPU(std::uint64_t value, const std::uint64_t timeout) const
 {
-    return mDevice->waitSemaphores(
+    return device()->waitSemaphores(
         {.semaphoreCount = 1, .pSemaphores = &(**this), .pValues = &value}, timeout);
 }
 

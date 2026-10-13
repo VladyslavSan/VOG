@@ -29,6 +29,9 @@ private:
     Instance(const InstanceParameters& parameters);
 
 public:
+    Instance(const Instance&) = delete;
+    Instance(Instance&&)      = delete;
+
     static std::shared_ptr<Instance>
     create(const InstanceParameters& parameters)
     {

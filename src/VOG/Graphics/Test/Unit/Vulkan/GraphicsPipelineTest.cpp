@@ -68,7 +68,7 @@ TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
         .multisample    = {},
         .dynamicStates  = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
         .pipelineLayout = *pipelineLayout,
-        .renderpassDescription = {.colorAttachmentFormats = {vk::Format::eR32G32B32A32Sfloat}}};
+        .renderingDescription = {.colorAttachmentFormats = {vk::Format::eR32G32B32A32Sfloat}}};
 
     {
         SCOPED_TRACE("correct pipeline compiles");

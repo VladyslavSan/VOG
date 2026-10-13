@@ -31,10 +31,6 @@
     #define VK_USE_PLATFORM_WAYLAND_KHR
 #endif
 
-#ifdef PLATFORM_VIDEO_LINUX_XCB
-    #define VK_USE_PLATFORM_XCB_KHR
-#endif
-
 #ifdef PLATFORM_VIDEO_LINUX_XLIB
     #define VK_USE_PLATFORM_XLIB_KHR
 #endif
@@ -62,3 +58,14 @@
         #undef Status
     #endif
 #endif
+
+#include <cstdint>
+
+namespace VOG::Graphics::Vulkan
+{
+/**
+ * Vulkan version the instance requests and the device must support: core synchronization2 and
+ * dynamic rendering. VMA is told the same version at runtime; see VmaConfig.hpp.
+ */
+inline constexpr std::uint32_t gRequiredApiVersion = VK_API_VERSION_1_3;
+} // namespace VOG::Graphics::Vulkan

@@ -25,7 +25,7 @@ struct VertexData
 };
 
 // clang-format off
-constexpr VertexData kVertexData[] = {
+constexpr VertexData gVertexData[] = {
   // Red bottom left square
   {{-1.0, -1.0}, {1.0, 0.0, 0.0, 1.0}},
   {{-1.0,  0.0}, {1.0, 0.0, 0.0, 1.0}},
@@ -43,34 +43,34 @@ constexpr VertexData kVertexData[] = {
 };
 // clang-format on
 
-constexpr std::size_t kVertexDataSize = std::size(kVertexData) * sizeof(VertexData);
+constexpr std::size_t gVertexDataSize = std::size(gVertexData) * sizeof(VertexData);
 
 /** Rate at which the quads swing back and forth, in radians per second. */
-constexpr float kRotationRate = 1.6f;
+constexpr float gRotationRate = 1.6f;
 
-constexpr float kQuadHalfSizePixels = 300.0f;
-constexpr float kQuadDistance       = 20.0f;
-constexpr float kNearPlane          = 1.0f;
-constexpr float kFarPlane           = 200.0f;
-constexpr float kMaxRotationDegrees = 90.0f;
+constexpr float gQuadHalfSizePixels = 300.0f;
+constexpr float gQuadDistance       = 20.0f;
+constexpr float gNearPlane          = 1.0f;
+constexpr float gFarPlane           = 200.0f;
+constexpr float gMaxRotationDegrees = 90.0f;
 } // namespace
 
 void
 SpinningQuadsRenderable::prepare(VOG::Engine::ResourceContext& resourceContext)
 {
-    const auto& device = resourceContext.getDevice();
+    const auto& device = resourceContext.device;
 
     mVertexBuffer = device->createBuffer(
-        {.size = kVertexDataSize, .usage = vk::BufferUsageFlagBits::eVertexBuffer},
+        {.size = gVertexDataSize, .usage = vk::BufferUsageFlagBits::eVertexBuffer},
         {.usage = VMA_MEMORY_USAGE_CPU_TO_GPU});
     {
         auto mapping = mVertexBuffer->mapForWrite();
-        std::memcpy(mapping.data, kVertexData, kVertexDataSize);
+        std::memcpy(mapping.data, gVertexData, gVertexDataSize);
     }
 
-    mVertexCount = static_cast<std::uint32_t>(std::size(kVertexData));
+    mVertexCount = static_cast<std::uint32_t>(std::size(gVertexData));
 
-    const auto program = resourceContext.getShaderProgramCache()->get("WorldSpace");
+    const auto program = resourceContext.shaderProgramCache->get("WorldSpace");
 
     constexpr auto colorWriteMask =
         ColorComponent::eR | ColorComponent::eG | ColorComponent::eB | ColorComponent::eA;
@@ -80,10 +80,10 @@ SpinningQuadsRenderable::prepare(VOG::Engine::ResourceContext& resourceContext)
         .shading        = program,
         .vertexLayout   = {.bindingDescription =
                                {
-                                 {.binding   = 0u,
+                                   {.binding   = 0u,
                                     .stride    = sizeof(VertexData),
                                     .inputRate = vk::VertexInputRate::eVertex},
-                             },
+                               },
                            .attributeDescription = {{.location = 0u,
                                                      .binding  = 0u,
                                                      .format   = vk::Format::eR32G32Sfloat,
@@ -99,22 +99,22 @@ SpinningQuadsRenderable::prepare(VOG::Engine::ResourceContext& resourceContext)
         .multisample    = {},
         .dynamicStates  = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
         .pipelineLayout = *program->pipelineLayout,
-        .renderpassDescription = {
-            .colorAttachmentFormats = {resourceContext.getColorAttachmentFormat()}}});
+        .renderingDescription = {
+            .colorAttachmentFormats = {resourceContext.colorAttachmentFormat}}});
 }
 
 void
 SpinningQuadsRenderable::collect(const VOG::Engine::FrameContext&      frameContext,
                                  std::vector<VOG::Engine::RenderItem>& renderItems)
 {
-    const float timeFactor = std::sin(static_cast<float>(frameContext.timeSeconds) * kRotationRate);
+    const float timeFactor = std::sin(static_cast<float>(frameContext.timeSeconds) * gRotationRate);
 
-    const Vector3f objectPosition = {0.0, 0.0, kQuadDistance};
+    const Vector3f objectPosition = {0.0, 0.0, gQuadDistance};
 
     const auto model =
         glm::translate(objectPosition) *
-        glm::scale(Vector3f{kQuadHalfSizePixels, kQuadHalfSizePixels, 1.0}) *
-        glm::rotate(glm::radians(timeFactor * kMaxRotationDegrees), Vector3f{0.0, 0.0, 1.0});
+        glm::scale(Vector3f{gQuadHalfSizePixels, gQuadHalfSizePixels, 1.0}) *
+        glm::rotate(glm::radians(timeFactor * gMaxRotationDegrees), Vector3f{0.0, 0.0, 1.0});
 
     const Vector3f cameraPosition  = {0.0, 0.0, 0.0};
     const Vector3f cameraDirection = glm::normalize(objectPosition - cameraPosition);
@@ -128,8 +128,8 @@ SpinningQuadsRenderable::collect(const VOG::Engine::FrameContext&      frameCont
         orthographicProjection({0.0, 0.0},
                                {static_cast<float>(frameContext.extent.width),
                                 static_cast<float>(frameContext.extent.height)},
-                               kNearPlane,
-                               kFarPlane);
+                               gNearPlane,
+                               gFarPlane);
 
     const Matrix4x4f mvp = projection * viewMatrix * model;
 

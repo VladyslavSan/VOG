@@ -56,8 +56,7 @@ SDLWindow::makeSurfaceHandles(const SDLWindow::Handle& window)
         xDisplay != nullptr)
     {
         // SDL stores the X11 Window as a number property, not a pointer.
-        const Uint64 xWindow =
-            SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
+        const Uint64 xWindow = SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
         return {
             .platform         = Common::SurfaceHandle::Platform::eLinuxXlib,
             .surfaceHandle    = static_cast<std::uintptr_t>(xWindow),

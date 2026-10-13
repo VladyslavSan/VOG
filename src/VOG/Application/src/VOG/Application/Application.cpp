@@ -50,12 +50,6 @@ Application::Application(ApplicationConfig config)
 
 Application::~Application() {}
 
-const std::shared_ptr<Engine::Renderer>&
-Application::renderer() const
-{
-    return mRenderer;
-}
-
 void
 Application::addRenderable(std::shared_ptr<Engine::Renderable> renderable)
 {

@@ -43,6 +43,7 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Vulkan/Common.hpp
             include/VOG/Graphics/Vulkan/Containers.hpp
             include/VOG/Graphics/Vulkan/Device.hpp
+            include/VOG/Graphics/Vulkan/DeviceChild.hpp
             include/VOG/Graphics/Vulkan/Fence.hpp
             include/VOG/Graphics/Vulkan/FencePool.hpp
             include/VOG/Graphics/Vulkan/GraphicsPipeline.hpp

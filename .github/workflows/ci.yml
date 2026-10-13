@@ -36,11 +36,11 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Install software Vulkan renderer (Linux)
+      - name: Install software Vulkan renderer and validation layer (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers vulkan-validationlayers
           echo "VK_ICD_FILENAMES=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' | head -1)" >> "$GITHUB_ENV"
 
       - name: Install MoltenVK (macOS)

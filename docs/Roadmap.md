@@ -40,7 +40,7 @@ step builds on the previous. Completed work is kept for context.
   takes a `Renderer::Config` struct (app/engine name, layers, extensions,
   frames in flight, shader source path) instead of round-tripping through
   `JSONContainer`, so JSON stays at the file-loading edge. Draws are described
-  as data: a `RenderItem` POD (pipeline, vertex buffer, vertex count,
+  as data: a `RenderItem` value type (pipeline, vertex buffer, vertex count,
   push-constant blob) produced by `Renderable::prepare(ResourceContext&)`
   (once, on the render thread) and `Renderable::collect(const FrameContext&,
   vector<RenderItem>&)` (per frame) — the renderer is the only place that
@@ -56,10 +56,15 @@ step builds on the previous. Completed work is kept for context.
   present-mode fallback, `framesInFlight` clamped to swapchain `imageCount`,
   frame-slot advance only after successful acquire); Device no longer cycles
   with FencePool/MemoryAllocator via `DevicePtr` backrefs; `Queue::submit` parks
-  CBs only after success; closed `CommandBufferRecorder` (private `vk::raii::CommandBuffer` inheritance);
-  `AcquiredSwapchainImage` for stable attachment identity; Linux Wayland/X11
-  WSI; unfinished `DescriptorAllocator` removed from the public Device/CMake
-  surface.
+  CBs only after success; `CommandBufferRecorder` is the only recording surface
+  (private `vk::raii::CommandBuffer` inheritance) and brackets the command
+  buffer and each rendering scope with guards; `AcquiredSwapchainImage` for
+  stable attachment identity; Linux Wayland/X11 WSI; the unfinished
+  `DescriptorAllocator` is deleted (descriptors move to bindless).
+- **Self-sufficient handles**: wrappers around Vulkan objects hold their device (see
+  `ResourceOwnership.md`, "Self-sufficient handles"); `DeviceChild` base for
+  `vk::raii` wrappers, leaf factories return `unique_ptr`, `Queue` is handed
+  out as an aliasing `shared_ptr`, lifetime tests per type.
 
 ## Later milestones (in rough order)
 

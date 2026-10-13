@@ -29,12 +29,6 @@
         #define PLATFORM_VIDEO_LINUX_ANY_SUPPORTED 1
     #endif
 
-    #if __has_include(<xcb/xcb.h>)
-        #define PLATFORM_VIDEO_LINUX_XCB
-        #undef PLATFORM_VIDEO_LINUX_ANY_SUPPORTED
-        #define PLATFORM_VIDEO_LINUX_ANY_SUPPORTED 1
-    #endif
-
     #if __has_include(<X11/Xlib.h>)
         #define PLATFORM_VIDEO_LINUX_XLIB
         #undef PLATFORM_VIDEO_LINUX_ANY_SUPPORTED

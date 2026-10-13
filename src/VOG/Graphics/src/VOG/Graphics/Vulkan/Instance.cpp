@@ -4,15 +4,17 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <atomic>
+#include <format>
 #include <ranges>
+#include <stdexcept>
 
 namespace VOG::Graphics::Vulkan
 {
 namespace
 {
 const char* gPortabilityEnumerationExtension = "VK_KHR_portability_enumeration";
-const char* gSynchronizationLayer2Name       = "VK_LAYER_KHRONOS_synchronization2";
 
 constexpr std::vector<const char*>
 getInstanceRequiredExtensions()
@@ -61,7 +63,7 @@ makeInstance(const vk::raii::Context& context, const Instance::InstanceParameter
         .applicationVersion = 1u,
         .pEngineName        = parameters.engineName.c_str(),
         .engineVersion      = 1u,
-        .apiVersion         = VK_API_VERSION_1_3,
+        .apiVersion         = gRequiredApiVersion,
     };
 
     const auto&              layers = parameters.layers;
@@ -73,10 +75,6 @@ makeInstance(const vk::raii::Context& context, const Instance::InstanceParameter
                    {
                        return extension.data();
                    });
-
-#ifdef PLATFORM_VIDEO_APPLE
-    layersAll.push_back(gSynchronizationLayer2Name);
-#endif
 
     auto requiredExtensions = getInstanceRequiredExtensions();
     if (std::ranges::find_if(availableInstanceExtensions,
@@ -107,9 +105,6 @@ makeInstance(const vk::raii::Context& context, const Instance::InstanceParameter
     #endif
     #ifdef PLATFORM_VIDEO_LINUX_XLIB
         addIfPresent(VK_KHR_XLIB_SURFACE_EXTENSION_NAME);
-    #endif
-    #ifdef PLATFORM_VIDEO_LINUX_XCB
-        addIfPresent(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
     #endif
     }
 #endif
@@ -241,12 +236,33 @@ makePhysicalDevice(const vk::raii::Instance& instance)
                        {
                            const auto& device     = physicalDevices[i];
                            const auto  properties = device.getProperties();
-                           spdlog::info(
-                               "[{}] {}", i, static_cast<std::string_view>(properties.deviceName));
+                           const auto  apiVersion = properties.apiVersion;
+                           spdlog::info("[{}] {} (Vulkan {}.{}.{})",
+                                        i,
+                                        static_cast<std::string_view>(properties.deviceName),
+                                        VK_API_VERSION_MAJOR(apiVersion),
+                                        VK_API_VERSION_MINOR(apiVersion),
+                                        VK_API_VERSION_PATCH(apiVersion));
                        }
                    });
 
-    vk::raii::PhysicalDevice physicalDevice = std::move(physicalDevices[0]);
+    const auto selected =
+        std::ranges::find_if(physicalDevices,
+                             [](const vk::raii::PhysicalDevice& device)
+                             {
+                                 return device.getProperties().apiVersion >= gRequiredApiVersion;
+                             });
+    if (selected == physicalDevices.end())
+    {
+        throw std::runtime_error{std::format(
+            "No physical device supports Vulkan {}.{}, which VOG requires (core synchronization2 "
+            "and dynamic rendering). Found {} device(s).",
+            VK_API_VERSION_MAJOR(gRequiredApiVersion),
+            VK_API_VERSION_MINOR(gRequiredApiVersion),
+            physicalDevices.size())};
+    }
+
+    vk::raii::PhysicalDevice physicalDevice = std::move(*selected);
 
     // Log device info.
     {

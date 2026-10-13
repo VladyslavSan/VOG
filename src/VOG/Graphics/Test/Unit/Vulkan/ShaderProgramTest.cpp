@@ -1,3 +1,6 @@
+#include <VOG/Graphics/Vulkan/Attachment/RenderBuffer.hpp>
+#include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
+#include <VOG/Graphics/Vulkan/CommandBufferRecorder.hpp>
 #include <VOG/Graphics/Vulkan/GLSLCompiler.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/Shader.hpp>
@@ -6,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include "VulkanFixture.hpp"
+#include "VulkanValidationFixture.hpp"
 
 using namespace VOG::Graphics::Vulkan;
 
@@ -59,103 +63,27 @@ makeMinimalPipelineParameters(ShaderProgramPtr program, const vk::PipelineLayout
         ColorComponent::eR | ColorComponent::eG | ColorComponent::eB | ColorComponent::eA;
 
     return GraphicsPipeline::Parameters{
-        .cache                 = nullptr,
-        .shading               = program,
-        .vertexLayout          = {.bindingDescription   = {{.binding   = 0u,
-                                                            .stride    = 16u,
-                                                            .inputRate = vk::VertexInputRate::eVertex}},
-                                  .attributeDescription = {{.location = 0u,
-                                                            .binding  = 0u,
-                                                            .format   = vk::Format::eR32G32B32A32Sfloat,
-                                                            .offset   = 0u}}},
-        .rasterizer            = {.cullMode = CullMode::eNone},
-        .viewportState         = {.viewportCount = 1u, .scissorCount = 1u},
-        .depthStencil          = {},
-        .blending              = {.attachments = {{.colorWriteMask = colorWriteMask}}},
-        .multisample           = {},
-        .dynamicStates         = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
-        .pipelineLayout        = layout,
-        .renderpassDescription = {.colorAttachmentFormats = {vk::Format::eR32G32B32A32Sfloat}},
+        .cache          = nullptr,
+        .shading        = program,
+        .vertexLayout   = {.bindingDescription   = {{.binding   = 0u,
+                                                     .stride    = 16u,
+                                                     .inputRate = vk::VertexInputRate::eVertex}},
+                           .attributeDescription = {{.location = 0u,
+                                                     .binding  = 0u,
+                                                     .format   = vk::Format::eR32G32B32A32Sfloat,
+                                                     .offset   = 0u}}},
+        .rasterizer     = {.cullMode = CullMode::eNone},
+        .viewportState  = {.viewportCount = 1u, .scissorCount = 1u},
+        .depthStencil   = {},
+        .blending       = {.attachments = {{.colorWriteMask = colorWriteMask}}},
+        .multisample    = {},
+        .dynamicStates  = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
+        .pipelineLayout = layout,
+        .renderingDescription = {.colorAttachmentFormats = {vk::Format::eR32G32B32A32Sfloat}},
     };
 }
 
 } // namespace
-
-// ============================================================
-// Validation fixture — enables VK_LAYER_KHRONOS_validation and
-// records ERROR-severity validation messages into validationErrors.
-// Tests skip if the layer or extension is not installed.
-// ============================================================
-
-class VulkanValidationFixture : public testing::Test
-{
-protected:
-    static vk::Bool32
-    onMessage(vk::DebugUtilsMessageSeverityFlagBitsEXT /*severity*/,
-              vk::DebugUtilsMessageTypeFlagsEXT /*types*/,
-              const vk::DebugUtilsMessengerCallbackDataEXT* pData,
-              void*                                         pUserData)
-    {
-        if (pData->pMessage)
-            static_cast<std::vector<std::string>*>(pUserData)->emplace_back(pData->pMessage);
-        return VK_FALSE;
-    }
-
-    static bool
-    prerequisitesAvailable()
-    {
-        vk::raii::Context ctx;
-        bool              hasLayer = false;
-        bool              hasExt   = false;
-        for (const auto& l : ctx.enumerateInstanceLayerProperties())
-            if (std::string_view{l.layerName} == "VK_LAYER_KHRONOS_validation")
-            {
-                hasLayer = true;
-                break;
-            }
-        for (const auto& e : ctx.enumerateInstanceExtensionProperties())
-            if (std::string_view{e.extensionName} == "VK_EXT_debug_utils")
-            {
-                hasExt = true;
-                break;
-            }
-        return hasLayer && hasExt;
-    }
-
-    VulkanValidationFixture()
-    {
-        if (!prerequisitesAvailable())
-            return;
-
-        VulkanInstance = Graphics::Vulkan::Instance::create({
-            .appName    = "VOG Validation Test",
-            .engineName = "",
-            .layers     = {"VK_LAYER_KHRONOS_validation"},
-            .extensions = {"VK_EXT_debug_utils"},
-        });
-
-        messenger =
-            VulkanInstance->createDebugUtilsMessengerEXT(vk::DebugUtilsMessengerCreateInfoEXT{
-                .messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
-                .messageType     = vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation,
-                .pfnUserCallback = VulkanValidationFixture::onMessage,
-                .pUserData       = &validationErrors,
-            });
-
-        VulkanDevice = VulkanInstance->makeDevice();
-    }
-
-    Graphics::Vulkan::ShaderPtr
-    createShader(Graphics::Vulkan::Shader::ShadingStage stage, const std::string& glslCode)
-    {
-        return VulkanDevice->createShader(stage, Graphics::Vulkan::compileGLSL(stage, glslCode));
-    }
-
-    Graphics::Vulkan::InstancePtr    VulkanInstance;
-    vk::raii::DebugUtilsMessengerEXT messenger{nullptr};
-    Graphics::Vulkan::DevicePtr      VulkanDevice;
-    std::vector<std::string>         validationErrors;
-};
 
 // ============================================================
 // Structural tests (VulkanFixture)
@@ -217,6 +145,72 @@ TEST_F(VulkanFixture, ShaderProgram_pushConstants_reflectedCorrectly)
 }
 
 // ============================================================
+// Lifetime tests (VulkanFixture)
+// ============================================================
+
+/**
+ * The program retains its shaders and the device. No Vulkan entry point is reachable through a
+ * bare program, so the call under test is its destruction (vkDestroyPipelineLayout).
+ */
+TEST_F(VulkanValidationFixture, ShaderProgram_keepsDeviceAlive)
+{
+    auto program = VulkanDevice->createShaderProgram(
+        {.vertex   = {.shader = createShader(Shader::ShadingStage::eVertex, gMinimalVertexShader)},
+         .fragment = {.shader =
+                          createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader)}});
+    const auto released = releaseDevice();
+
+    expectDependentHoldsDevice(released, program);
+}
+
+/**
+ * The pipeline retains the device through its DeviceChild base, which is destroyed after the
+ * pipeline handle. Its ShaderProgram member also holds the device, but is destroyed before the
+ * handle, so only the base keeps the device alive until vkDestroyPipeline: without it the layer
+ * reports the pipeline as still alive at vkDestroyDevice.
+ */
+TEST_F(VulkanValidationFixture, GraphicsPipeline_keepsDeviceAlive)
+{
+    ShaderProgramPtr program = VulkanDevice->createShaderProgram(
+        {.vertex   = {.shader = createShader(Shader::ShadingStage::eVertex, gMinimalVertexShader)},
+         .fragment = {.shader =
+                          createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader)}});
+    GraphicsPipelinePtr pipeline = VulkanDevice->createGraphicsPipeline(
+        makeMinimalPipelineParameters(program, *program->pipelineLayout));
+    program.reset();
+    const auto released = releaseDevice();
+
+    // Everything made inside is gone when the lambda returns, so the pipeline is the last holder.
+    expectDependentHoldsDevice(
+        released,
+        pipeline,
+        [&pipeline](GraphicsPipeline&)
+        {
+            const auto&                   device = pipeline->device();
+            auto                          pool   = device->createCommandBufferPool();
+            std::shared_ptr<RenderBuffer> target =
+                device->createRenderBuffer(AttachmentUsage::eColor,
+                                           vk::Format::eR32G32B32A32Sfloat,
+                                           {.width = 16u, .height = 16u},
+                                           SampleCount::e1,
+                                           1u,
+                                           1u,
+                                           vk::ImageTiling::eOptimal,
+                                           vk::ImageLayout::eUndefined,
+                                           vk::MemoryPropertyFlagBits::eDeviceLocal);
+            auto                  commandBuffer = pool->get(vk::CommandBufferLevel::ePrimary);
+            CommandBufferRecorder recorder{**commandBuffer};
+
+            recorder.setImageBarrier(target, toColorAttachmentBarrier(target->getImage()));
+            {
+                auto pass = recorder.beginRendering({{.attachment = target}});
+                pass.bindPipeline(pipeline);
+            }
+            recorder.finish();
+        });
+}
+
+// ============================================================
 // Gap-filling regression test (VulkanValidationFixture)
 //
 // Verifies that makePipelineLayout inserts an empty descriptor set layout
@@ -229,7 +223,7 @@ TEST_F(VulkanFixture, ShaderProgram_pushConstants_reflectedCorrectly)
 
 TEST_F(VulkanValidationFixture, ShaderProgram_makePipelineLayout_gapFilledCorrectly)
 {
-    if (!VulkanDevice)
+    if (!validationActive())
         GTEST_SKIP() << "VK_LAYER_KHRONOS_validation or VK_EXT_debug_utils not available";
 
     auto vert = createShader(Shader::ShadingStage::eVertex, gVertexShaderSets02Gap);

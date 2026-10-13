@@ -3,11 +3,11 @@
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Common.hpp>
+#include <VOG/Graphics/Vulkan/DeviceChild.hpp>
 #include <VOG/Graphics/Vulkan/Limits.hpp>
 
 namespace VOG::Graphics::Vulkan
 {
-VOG_DECLARE_PTR(Device);
 VOG_DECLARE_PTR(ShaderProgram);
 
 using ColorComponent = vk::ColorComponentFlagBits;
@@ -34,7 +34,9 @@ using MultisampleState  = vk::PipelineMultisampleStateCreateInfo;
 using ViewportState     = vk::PipelineViewportStateCreateInfo;
 using DynamicStates     = StaticVector<vk::DynamicState, Limits::gMaxNumDynamicStates>;
 
-class GraphicsPipeline : public vk::raii::Pipeline
+class GraphicsPipeline
+    : public DeviceChild
+    , public vk::raii::Pipeline
 {
 public:
     struct ColorBlendState
@@ -54,7 +56,7 @@ public:
         MultisampleState                            multisample;
         DynamicStates                               dynamicStates;
         const vk::PipelineLayout&                   pipelineLayout;
-        RenderpassDescription                       renderpassDescription;
+        RenderingDescription                        renderingDescription;
     };
 
 private:
@@ -63,8 +65,7 @@ private:
     explicit GraphicsPipeline(DevicePtr device, Parameters createInfo);
 
 public:
-    const RenderpassDescription renderpassDescription;
-    const DevicePtr             device;
-    const ShaderProgramPtr      program;
+    const RenderingDescription renderingDescription;
+    const ShaderProgramPtr     program;
 };
 } // namespace VOG::Graphics::Vulkan

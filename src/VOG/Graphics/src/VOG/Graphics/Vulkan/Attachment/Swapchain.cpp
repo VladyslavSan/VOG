@@ -45,8 +45,7 @@ findPresentQueueFamilyIndex(const Device& device, const vk::raii::SurfaceKHR& su
 Swapchain::~Swapchain() {}
 
 Swapchain::Swapchain(DevicePtr device, const SwapchainParameters& parameters)
-    : AttachmentInterface{AttachmentUsage::eColor, vk::Format::eUndefined, {}, SampleCount::e1}
-    , mDevice{std::move(device)}
+    : mDevice{std::move(device)}
     , mSurface{CreateRenderSurface(*mDevice->instance, parameters.surface, true)}
     , mPresentQueueFamilyIndex{findPresentQueueFamilyIndex(*mDevice, *mSurface)}
     , mPresentQueueIsSameToGraphicsQueue{mPresentQueueFamilyIndex ==
@@ -56,8 +55,6 @@ Swapchain::Swapchain(DevicePtr device, const SwapchainParameters& parameters)
     , mSpareAcquireSemaphore{nullptr}
     , mSurfaceFormat{mDevice->getSurfaceFormatsKHR(**mSurface).at(0u)}
 {
-    mFormat = mSurfaceFormat.format;
-
     auto surfaceCapabilities = mDevice->getSurfaceCapabilitiesKHR(**mSurface);
     if (surfaceCapabilities.currentExtent.width != std::numeric_limits<uint32_t>::max() &&
         surfaceCapabilities.currentExtent.height != std::numeric_limits<uint32_t>::max())
@@ -103,7 +100,7 @@ Swapchain::build(vk::SwapchainKHR oldSwapchain)
         const vk::SwapchainCreateInfoKHR swapchainCreateInfo = {
             .surface          = **mSurface,
             .minImageCount    = mMinImageCount,
-            .imageFormat      = mFormat,
+            .imageFormat      = mSurfaceFormat.format,
             .imageColorSpace  = mSurfaceFormat.colorSpace,
             .imageExtent      = vk::Extent2D{.width = mExtent.width, .height = mExtent.height},
             .imageArrayLayers = 1u,
@@ -179,32 +176,16 @@ Swapchain::recreate()
     return true;
 }
 
-const vk::Image&
-Swapchain::getImage() const
-{
-    VOG_ASSERT_MSG(
-        mCurrentSwapchainImageIndex,
-        "Swapchain::acquireNextImage should have been called before calling this function.");
-
-    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
-    return mImages[mCurrentSwapchainImageIndex.value()].image;
-}
-
-const std::shared_ptr<vk::raii::ImageView>&
-Swapchain::getImageView() const
-{
-    VOG_ASSERT_MSG(
-        mCurrentSwapchainImageIndex,
-        "Swapchain::acquireNextImage should have been called before calling this function.");
-
-    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
-    return mImages[mCurrentSwapchainImageIndex.value()].imageView;
-}
-
 std::size_t
 Swapchain::getImageCount() const
 {
     return mImages.size();
+}
+
+vk::Format
+Swapchain::getFormat() const
+{
+    return mSurfaceFormat.format;
 }
 
 Swapchain::ImageAcquireResult
@@ -221,12 +202,16 @@ Swapchain::acquireNextImage()
 
     if (result == vk::Result::eErrorOutOfDateKHR)
     {
-        return {.status = AcquireStatus::eOutOfDate, .acquired = nullptr};
+        return {.status                  = AcquireStatus::eOutOfDate,
+                .acquired                = nullptr,
+                .imageAvailableSemaphore = nullptr};
     }
 
     if ((result == vk::Result::eTimeout) || (result == vk::Result::eNotReady))
     {
-        return {.status = AcquireStatus::eSkip, .acquired = nullptr};
+        return {.status                  = AcquireStatus::eSkip,
+                .acquired                = nullptr,
+                .imageAvailableSemaphore = nullptr};
     }
 
     // eSuccess or eSuboptimalKHR: swap the spare with mImages[index].imageAvailableSemaphore.
@@ -240,11 +225,8 @@ Swapchain::acquireNextImage()
 
     return {.status   = AcquireStatus::eReady,
             .acquired = std::make_shared<AcquiredSwapchainImage>(
-                mImages[index].image,
-                mImages[index].imageView,
-                mSurfaceFormat.format,
-                mExtent,
-                &mImages[index].imageAvailableSemaphore)};
+                mImages[index].image, mImages[index].imageView, mSurfaceFormat.format, mExtent),
+            .imageAvailableSemaphore = &mImages[index].imageAvailableSemaphore};
 }
 
 Swapchain::PresentStatus

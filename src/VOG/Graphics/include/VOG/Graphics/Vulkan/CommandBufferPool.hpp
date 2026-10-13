@@ -22,19 +22,29 @@ class CommandBufferHandle
 {
     friend class CommandBufferPool;
 
-    CommandBufferHandle(CommandBufferPoolPtr pool, CommandBuffer commandBuffer) noexcept;
+    CommandBufferHandle(CommandBufferPoolPtr           pool,
+                        std::unique_ptr<CommandBuffer> commandBuffer) noexcept;
 
 public:
     CommandBufferHandle(CommandBufferHandle&&) = default;
 
+    /**
+     * Returns the command buffer to its pool unless it was submitted.
+     *
+     * @note Render thread only. The pool takes no lock.
+     */
     ~CommandBufferHandle() noexcept(false);
 
-    vk::CommandBuffer consumeForSubmission(std::shared_ptr<FencePool::FenceHandle> fence);
+    /**
+     * Parks the command buffer in the pool until @p fence signals. Called by Queue::submit after
+     * the submit succeeded.
+     */
+    void consumeForSubmission(std::shared_ptr<FencePool::FenceHandle> fence);
 
     /**
-     * Raw Vulkan handle for peeking before submit (does not transfer ownership).
+     * Raw Vulkan handle for submit. Recording through it bypasses resource retention.
      */
-    vk::CommandBuffer vkHandle() const;
+    vk::CommandBuffer unsafeVkHandle() const;
 
     /**
      * Allows usage of the handle as if it's an instance of the CommandBuffer.
@@ -49,8 +59,8 @@ public:
     CommandBuffer* operator->() noexcept;
 
 protected:
-    CommandBufferPoolPtr mPool;
-    CommandBuffer        mCommandBuffer;
+    CommandBufferPoolPtr           mPool;
+    std::unique_ptr<CommandBuffer> mCommandBuffer;
 };
 
 /**
@@ -69,13 +79,13 @@ class CommandBufferPool : public std::enable_shared_from_this<CommandBufferPool>
 
     struct SubmittedCommandBuffer
     {
-        CommandBuffer                           commandBuffer;
+        std::unique_ptr<CommandBuffer>          commandBuffer;
         std::shared_ptr<FencePool::FenceHandle> fence;
     };
 
 public:
     CommandBufferPool(const CommandBufferPool&) = delete;
-    CommandBufferPool(CommandBufferPool&&)      = default;
+    CommandBufferPool(CommandBufferPool&&)      = delete;
 
     /**
      * Retrieves clean command buffer from cache or allocates new if cache is exhausted.
@@ -97,13 +107,13 @@ protected:
      *
      * @param commandBuffer Command buffer to return to the pool.
      */
-    void returnCommandBufferToPool(CommandBuffer commandBuffer);
+    void returnCommandBufferToPool(std::unique_ptr<CommandBuffer> commandBuffer);
 
     DevicePtr             mDevice;
     vk::raii::CommandPool mVulkanPool;
 
-    std::vector<CommandBuffer> mPrimaryBuffers;
-    std::vector<CommandBuffer> mSecondaryBuffers;
+    std::vector<std::unique_ptr<CommandBuffer>> mPrimaryBuffers;
+    std::vector<std::unique_ptr<CommandBuffer>> mSecondaryBuffers;
 
     /** A list of used command buffer handles during frame recording */
     std::vector<SubmittedCommandBuffer> mSubmittedCommandBuffers;

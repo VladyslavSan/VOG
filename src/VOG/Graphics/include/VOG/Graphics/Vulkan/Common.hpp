@@ -14,7 +14,7 @@ struct VertexLayout
     StaticVector<vk::VertexInputAttributeDescription, kMaxNVertexAttrs> attributeDescription;
 };
 
-struct RenderpassDescription
+struct RenderingDescription
 {
     using ColorFormats = StaticVector<vk::Format, Limits::gMaxNumAttachments - 1>;
 
@@ -22,7 +22,7 @@ struct RenderpassDescription
     vk::Format   depthAttachmentFormat   = vk::Format::eUndefined;
     vk::Format   stencilAttachmentFormat = vk::Format::eUndefined;
 
-    auto operator<=>(const RenderpassDescription&) const = default;
+    auto operator<=>(const RenderingDescription&) const = default;
 };
 
 bool isDepthFormat(vk::Format format);

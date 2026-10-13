@@ -14,10 +14,16 @@ class Renderable
 public:
     virtual ~Renderable() = default;
 
-    /** Called once on the render thread before the first collect(); build GPU resources here. */
+    /**
+     * Called once on the render thread before the first collect(); build GPU resources here.
+     * Must not call Renderer::addRenderable(): the renderer holds its registration lock.
+     */
     virtual void prepare(ResourceContext& resourceContext) = 0;
 
-    /** Called every frame; append the draws for this frame to @p renderItems. */
+    /**
+     * Called every frame; append the draws for this frame to @p renderItems.
+     * Must not call Renderer::addRenderable(): the renderer holds its registration lock.
+     */
     virtual void collect(const FrameContext&      frameContext,
                          std::vector<RenderItem>& renderItems) = 0;
 };

@@ -11,8 +11,8 @@ namespace
 constexpr std::uint32_t gGrowSize = 10u;
 } // namespace
 
-CommandBufferHandle::CommandBufferHandle(CommandBufferPoolPtr pool,
-                                         CommandBuffer        commandBuffer) noexcept
+CommandBufferHandle::CommandBufferHandle(CommandBufferPoolPtr           pool,
+                                         std::unique_ptr<CommandBuffer> commandBuffer) noexcept
     : mPool{std::move(pool)}
     , mCommandBuffer{std::move(commandBuffer)}
 {
@@ -20,7 +20,7 @@ CommandBufferHandle::CommandBufferHandle(CommandBufferPoolPtr pool,
 
 CommandBufferHandle::~CommandBufferHandle() noexcept(false)
 {
-    if (!mPool || !*mCommandBuffer)
+    if (!mPool || !mCommandBuffer)
     {
         return;
     }
@@ -28,34 +28,31 @@ CommandBufferHandle::~CommandBufferHandle() noexcept(false)
     mPool->returnCommandBufferToPool(std::move(mCommandBuffer));
 }
 
-vk::CommandBuffer
+void
 CommandBufferHandle::consumeForSubmission(std::shared_ptr<FencePool::FenceHandle> fence)
 {
     VOG_ASSERT_MSG(fence, "Fence must be provided for command buffer submission.");
-    vk::CommandBuffer unmanagedHandle = mCommandBuffer.vkHandle();
 
     mPool->mSubmittedCommandBuffers.push_back(CommandBufferPool::SubmittedCommandBuffer{
         .commandBuffer = std::move(mCommandBuffer), .fence = std::move(fence)});
-
-    return unmanagedHandle;
 }
 
 vk::CommandBuffer
-CommandBufferHandle::vkHandle() const
+CommandBufferHandle::unsafeVkHandle() const
 {
-    return mCommandBuffer.vkHandle();
+    return mCommandBuffer->vkHandle();
 }
 
 CommandBuffer*
 CommandBufferHandle::operator*() noexcept
 {
-    return std::addressof(mCommandBuffer);
+    return mCommandBuffer.get();
 }
 
 CommandBuffer*
 CommandBufferHandle::operator->() noexcept
 {
-    return std::addressof(mCommandBuffer);
+    return mCommandBuffer.get();
 }
 
 CommandBufferPool::CommandBufferPool(const DevicePtr& device)
@@ -77,22 +74,23 @@ CommandBufferPool::get(vk::CommandBufferLevel type)
             {.commandPool = *mVulkanPool, .level = type, .commandBufferCount = gGrowSize}};
         for (auto& buffer : rawBuffers)
         {
-            pool.push_back(CommandBuffer{std::move(buffer), type});
+            pool.push_back(
+                std::unique_ptr<CommandBuffer>(new CommandBuffer{std::move(buffer), type}));
         }
     }
 
-    Vulkan::CommandBuffer result = std::move(pool.back());
+    std::unique_ptr<CommandBuffer> result = std::move(pool.back());
     pool.pop_back();
 
     return {shared_from_this(), std::move(result)};
 }
 
 void
-CommandBufferPool::returnCommandBufferToPool(Vulkan::CommandBuffer commandBuffer)
+CommandBufferPool::returnCommandBufferToPool(std::unique_ptr<CommandBuffer> commandBuffer)
 {
-    commandBuffer.reset();
-    auto& pool = commandBuffer.type == vk::CommandBufferLevel::ePrimary ? mPrimaryBuffers
-                                                                        : mSecondaryBuffers;
+    commandBuffer->clearBoundResources();
+    auto& pool = commandBuffer->type == vk::CommandBufferLevel::ePrimary ? mPrimaryBuffers
+                                                                         : mSecondaryBuffers;
 
     pool.push_back(std::move(commandBuffer));
 }

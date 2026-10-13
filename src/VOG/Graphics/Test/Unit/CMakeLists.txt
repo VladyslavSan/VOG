@@ -16,9 +16,16 @@ target_sources(VOG.Graphics.Unit
         Vulkan/ShaderTest.cpp
         Vulkan/GraphicsPipelineTest.cpp
         Vulkan/ShaderProgramTest.cpp
+        Vulkan/CommandBufferRecorderTest.cpp
         Vulkan/DeviceLifetimeTest.cpp
         VulkanFixture.hpp
+        VulkanValidationFixture.hpp
         TestShaderCompiler.hpp
+)
+
+target_compile_definitions(VOG.Graphics.Unit
+    PRIVATE
+        VOG_TEST_SHADER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../resources/shaders"
 )
 
 target_link_libraries(VOG.Graphics.Unit

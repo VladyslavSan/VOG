@@ -156,6 +156,7 @@ makeDevice(const vk::raii::PhysicalDevice& physicalDevice, const PhysicalDevice:
         vk::PhysicalDeviceVulkan13Features{
             .synchronization2 = 1u,
             .dynamicRendering = 1u,
+            .maintenance4     = 1u,
         },
     };
 
@@ -173,8 +174,8 @@ PhysicalDevice::PhysicalDevice(InstancePtr _instance, vk::raii::PhysicalDevice p
 Device::Device(InstancePtr _instance, vk::raii::PhysicalDevice physicalDevice)
     : PhysicalDevice{std::move(_instance), std::move(physicalDevice)}
     , vk::raii::Device{makeDevice(*this, queueInfos)}
-    , graphicsQueue{*this, queueInfos.graphics.familyIndex, queueInfos.graphics.familyProperties}
-    , transferQueue{*this, queueInfos.transfer.familyIndex, queueInfos.transfer.familyProperties}
+    , mGraphicsQueue{*this, queueInfos.graphics.familyIndex, queueInfos.graphics.familyProperties}
+    , mTransferQueue{*this, queueInfos.transfer.familyIndex, queueInfos.transfer.familyProperties}
     , pipelineCache{*this, {}}
     , mMemoryAllocator{new MemoryAllocator{*this}}
 {
@@ -182,10 +183,10 @@ Device::Device(InstancePtr _instance, vk::raii::PhysicalDevice physicalDevice)
 
 Device::~Device() = default;
 
-ShaderPtr
+std::unique_ptr<Shader>
 Device::createShader(Shader::ShadingStage stage, std::span<const std::uint32_t> binary)
 {
-    return std::shared_ptr<Shader>(new Shader{shared_from_this(), stage, binary});
+    return std::unique_ptr<Shader>(new Shader{shared_from_this(), stage, binary});
 }
 
 Fence
@@ -200,33 +201,45 @@ Device::createTimelineSemaphore()
     return TimelineSemaphore{shared_from_this()};
 }
 
+std::shared_ptr<const Queue>
+Device::getGraphicsQueue()
+{
+    return {shared_from_this(), &mGraphicsQueue};
+}
+
+std::shared_ptr<const Queue>
+Device::getTransferQueue()
+{
+    return {shared_from_this(), &mTransferQueue};
+}
+
 std::shared_ptr<CommandBufferPool>
 Device::createCommandBufferPool()
 {
     return std::shared_ptr<CommandBufferPool>(new CommandBufferPool{shared_from_this()});
 }
 
-std::shared_ptr<ShaderProgram>
+std::unique_ptr<ShaderProgram>
 Device::createShaderProgram(ShaderProgram::ShadingStages stages)
 {
-    return std::shared_ptr<ShaderProgram>(new ShaderProgram{
+    return std::unique_ptr<ShaderProgram>(new ShaderProgram{
         shared_from_this(), ShaderProgram::ShadingStagesChecked{std::move(stages)}});
 }
 
-std::shared_ptr<GraphicsPipeline>
+std::unique_ptr<GraphicsPipeline>
 Device::createGraphicsPipeline(GraphicsPipeline::Parameters createInfo)
 {
-    return std::shared_ptr<GraphicsPipeline>(
+    return std::unique_ptr<GraphicsPipeline>(
         new GraphicsPipeline{shared_from_this(), std::move(createInfo)});
 }
 
-std::shared_ptr<Swapchain>
+std::unique_ptr<Swapchain>
 Device::createSwapchain(const Swapchain::SwapchainParameters& parameters)
 {
-    return std::shared_ptr<Swapchain>(new Swapchain{shared_from_this(), parameters});
+    return std::unique_ptr<Swapchain>(new Swapchain{shared_from_this(), parameters});
 }
 
-std::shared_ptr<RenderBuffer>
+std::unique_ptr<RenderBuffer>
 Device::createRenderBuffer(AttachmentUsage         usage,
                            vk::Format              desiredFormat,
                            vk::Extent2D            extent,
@@ -237,7 +250,7 @@ Device::createRenderBuffer(AttachmentUsage         usage,
                            vk::ImageLayout         initialLayout,
                            vk::MemoryPropertyFlags memoryProperties)
 {
-    return std::shared_ptr<RenderBuffer>(new RenderBuffer{shared_from_this(),
+    return std::unique_ptr<RenderBuffer>(new RenderBuffer{shared_from_this(),
                                                           usage,
                                                           desiredFormat,
                                                           extent,

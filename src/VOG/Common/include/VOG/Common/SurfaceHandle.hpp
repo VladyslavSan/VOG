@@ -12,7 +12,6 @@ struct SurfaceHandle
         eWindows,
         eApple,
         eLinuxWayland,
-        eLinuxXcb,
         eLinuxXlib,
         eNone,
     };
@@ -25,8 +24,7 @@ struct SurfaceHandle
      * 1. Windows - HWND handle
      * 2. macOS - NSWindow or NSView
      * 3. Wayland - wl_surface*
-     * 4. XCB - xcb_window_t (as uintptr)
-     * 5. Xlib - Window (as uintptr)
+     * 4. Xlib - Window (as uintptr)
      */
     std::uintptr_t surfaceHandle = 0u;
 
@@ -35,8 +33,7 @@ struct SurfaceHandle
      * 1. Windows - HINSTANCE handle.
      * 2. macOS - not used, will be 0.
      * 3. Wayland - wl_display*
-     * 4. XCB - xcb_connection_t*
-     * 5. Xlib - Display*
+     * 4. Xlib - Display*
      */
     std::uintptr_t additionalHandle = 0u;
 };

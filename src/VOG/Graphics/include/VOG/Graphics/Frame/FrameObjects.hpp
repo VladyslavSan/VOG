@@ -27,6 +27,8 @@ public:
 
     ~FrameObjects();
 
+    const vk::raii::Semaphore& getRenderFinishedSemaphore() const;
+
     /**
      * Get the command buffer pool by thread id.
      *
@@ -36,8 +38,6 @@ public:
      * @note Access is not guarded. Engine currently uses threadCount = 1
      * (threadId 0 only); multi-threaded recording is reserved.
      */
-    const vk::raii::Semaphore& getRenderFinishedSemaphore() const;
-
     Vulkan::CommandBufferPoolPtr getCommandBufferPoolForThread(std::size_t threadId);
 
 protected:

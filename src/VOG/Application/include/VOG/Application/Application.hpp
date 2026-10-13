@@ -40,8 +40,6 @@ public:
 
     ~Application();
 
-    const std::shared_ptr<Engine::Renderer>& renderer() const;
-
     /** Registers @p renderable with the renderer; call before run(). */
     void addRenderable(std::shared_ptr<Engine::Renderable> renderable);
 

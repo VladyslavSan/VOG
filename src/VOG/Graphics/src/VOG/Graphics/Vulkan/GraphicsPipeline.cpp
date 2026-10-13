@@ -37,10 +37,10 @@ validateVertexAttributes(const ShaderProgram& shaderProgram, const VertexLayout&
     return true;
 }
 
-GraphicsPipeline::GraphicsPipeline(DevicePtr _device, Parameters createInfo)
-    : vk::raii::Pipeline{nullptr}
-    , renderpassDescription{createInfo.renderpassDescription}
-    , device{std::move(_device)}
+GraphicsPipeline::GraphicsPipeline(DevicePtr device, Parameters createInfo)
+    : DeviceChild{std::move(device)}
+    , vk::raii::Pipeline{nullptr}
+    , renderingDescription{createInfo.renderingDescription}
     , program{std::move(createInfo.shading)}
 {
     using ShadingStateInfo = vk::PipelineShaderStageCreateInfo;
@@ -105,16 +105,16 @@ GraphicsPipeline::GraphicsPipeline(DevicePtr _device, Parameters createInfo)
         },
         vk::PipelineRenderingCreateInfo{
             .colorAttachmentCount = static_cast<std::uint32_t>(
-                createInfo.renderpassDescription.colorAttachmentFormats.size()),
+                createInfo.renderingDescription.colorAttachmentFormats.size()),
             .pColorAttachmentFormats =
-                createInfo.renderpassDescription.colorAttachmentFormats.data(),
-            .depthAttachmentFormat   = createInfo.renderpassDescription.depthAttachmentFormat,
-            .stencilAttachmentFormat = createInfo.renderpassDescription.stencilAttachmentFormat,
+                createInfo.renderingDescription.colorAttachmentFormats.data(),
+            .depthAttachmentFormat   = createInfo.renderingDescription.depthAttachmentFormat,
+            .stencilAttachmentFormat = createInfo.renderingDescription.stencilAttachmentFormat,
         }};
 
     try
     {
-        vk::raii::Pipeline pipeline{*device, createInfo.cache, info.get()};
+        vk::raii::Pipeline pipeline{*this->device(), createInfo.cache, info.get()};
         static_cast<vk::raii::Pipeline&>(*this) = std::move(pipeline);
     }
     catch (const vk::SystemError& error)

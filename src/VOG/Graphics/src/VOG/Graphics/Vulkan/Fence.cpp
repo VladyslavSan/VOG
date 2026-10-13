@@ -8,23 +8,10 @@
 namespace VOG::Graphics::Vulkan
 {
 Fence::Fence(DevicePtr device)
-    : vk::raii::Fence{*device, vk::FenceCreateInfo{}}
-    , mDevice{std::move(device)}
+    : DeviceChild{std::move(device)}
+    , vk::raii::Fence{*DeviceChild::device(), vk::FenceCreateInfo{}}
     , mState{State::eNotUsed}
 {
-}
-
-Fence::Fence(DevicePtr device, vk::raii::Fence fence)
-    : vk::raii::Fence{std::move(fence)}
-    , mDevice{std::move(device)}
-    , mState{State::eNotUsed}
-{
-}
-
-vk::raii::Fence
-Fence::takeHandle()
-{
-    return std::move(static_cast<vk::raii::Fence&>(*this));
 }
 
 vk::Result
@@ -35,7 +22,7 @@ Fence::wait(std::uint64_t timeout)
         return vk::Result::eSuccess;
     }
 
-    const vk::Result result = mDevice->waitForFences({**this}, 1u, timeout);
+    const vk::Result result = device()->waitForFences({**this}, 1u, timeout);
     mState = result == vk::Result::eSuccess ? State::eUsedAndWaited : State::eUsedAndWaitTimeout;
 
     return result;
@@ -49,7 +36,7 @@ Fence::reset()
         return;
     }
 
-    mDevice->resetFences({**this});
+    device()->resetFences({**this});
     mState = State::eNotUsed;
 }
 

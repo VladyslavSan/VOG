@@ -13,13 +13,16 @@
 
 namespace VOG::Graphics::Vulkan
 {
-VOG_DECLARE_PTR(Device);
 VOG_DECLARE_PTR(GraphicsPipeline);
 VOG_DECLARE_PTR(Buffer);
 
 /**
  * Only supported recording surface. All resource-referencing commands retain via
  * CommandBuffer::addBoundResource / mBoundVertexBuffers.
+ *
+ * The recorder brackets the recording state: the constructor begins the command buffer and
+ * finish() ends it. beginRendering() hands out a RenderingPass that brackets a dynamic-rendering
+ * scope, and the draw commands exist only on that pass.
  */
 class CommandBufferRecorder
 {
@@ -34,6 +37,7 @@ public:
         vk::ImageLayout        layout     = vk::ImageLayout::eColorAttachmentOptimal;
     };
 
+    /** Depth-only target; formats with a stencil aspect are not supported. */
     struct DepthAttachment
     {
         AttachmentInterfacePtr     attachment;
@@ -45,73 +49,107 @@ public:
 
     using ColorAttachments = StaticVector<ColorAttachment, Limits::gMaxNumColorAttachments>;
 
-    CommandBufferRecorder(const Device& device, Vulkan::CommandBuffer& commandBuffer);
+    /**
+     * A dynamic-rendering scope: the constructor records vkCmdBeginRendering and the destructor
+     * records vkCmdEndRendering. Must not outlive the recorder that created it.
+     */
+    class RenderingPass
+    {
+        friend class CommandBufferRecorder;
+
+        RenderingPass(CommandBufferRecorder&                recorder,
+                      const ColorAttachments&               colorAttachments,
+                      const std::optional<DepthAttachment>& depthAttachment);
+
+    public:
+        ~RenderingPass();
+
+        RenderingPass(const RenderingPass&)            = delete;
+        RenderingPass(RenderingPass&&)                 = delete;
+        RenderingPass& operator=(const RenderingPass&) = delete;
+        RenderingPass& operator=(RenderingPass&&)      = delete;
+
+        void bindPipeline(GraphicsPipelinePtr pipeline);
+
+        void bindVertexBuffers(std::uint32_t firstBinding,
+                               StaticVectorStrict<CommandBuffer::BufferBinding,
+                                                  CommandBuffer::kMaxNumVertexBufferBind> bindings);
+
+        void setViewport(std::uint32_t firstViewport, vk::ArrayProxy<const vk::Viewport> viewports);
+
+        void setScissor(std::uint32_t firstScissor, vk::ArrayProxy<const vk::Rect2D> scissors);
+
+        template <typename T>
+        void
+        pushConstants(vk::PipelineLayout      layout,
+                      vk::ShaderStageFlags    stageFlags,
+                      std::uint32_t           offset,
+                      vk::ArrayProxy<const T> values)
+        {
+            mRecorder.mCommandBuffer.pushConstants(layout, stageFlags, offset, values);
+        }
+
+        void draw(std::uint32_t vertexCount,
+                  std::uint32_t instanceCount,
+                  std::uint32_t firstVertex,
+                  std::uint32_t firstInstance);
+
+    private:
+        CommandBufferRecorder& mRecorder;
+    };
+
+    /**
+     * Begins @p commandBuffer for a single submit. The recorder borrows it, so it must stay alive
+     * until finish().
+     */
+    explicit CommandBufferRecorder(Vulkan::CommandBuffer& commandBuffer);
+
+    /** finish() must have been called, unless the recorder is destroyed while unwinding. */
+    ~CommandBufferRecorder();
+
+    CommandBufferRecorder(const CommandBufferRecorder&)            = delete;
+    CommandBufferRecorder(CommandBufferRecorder&&)                 = delete;
+    CommandBufferRecorder& operator=(const CommandBufferRecorder&) = delete;
+    CommandBufferRecorder& operator=(CommandBufferRecorder&&)      = delete;
+
+    /** Ends the command buffer. No rendering pass may be alive. */
+    void finish();
 
     /**
      * Starts a dynamic-rendering scope covering the full extent of the attachments.
      * All attachments must share their extent and are retained for the command buffer's lifetime.
      *
      * @param colorAttachments  Color targets with their load/store ops and clear values.
-     * @param depthAttachment   Optional depth target.
+     * @param depthAttachment   Optional depth-only target.
+     *
+     * @return The scope; destroy it to end rendering.
      */
-    void beginRendering(const ColorAttachments&               colorAttachments,
-                        const std::optional<DepthAttachment>& depthAttachment = {}) noexcept;
-
-    void endRendering() noexcept;
-
-    void bindPipeline(GraphicsPipelinePtr pipeline) noexcept;
-
-    void bindVertexBuffers(
-        std::uint32_t firstBinding,
-        StaticVectorStrict<CommandBuffer::BufferBinding, CommandBuffer::kMaxNumVertexBufferBind>
-            bindings) noexcept;
-
-    void setViewport(std::uint32_t firstViewport, vk::ArrayProxy<const vk::Viewport> viewports);
-
-    void setScissor(std::uint32_t firstScissor, vk::ArrayProxy<const vk::Rect2D> scissors);
-
-    template <typename T>
-    void pushConstants(vk::PipelineLayout      layout,
-                       vk::ShaderStageFlags    stageFlags,
-                       std::uint32_t           offset,
-                       vk::ArrayProxy<const T> values)
-    {
-        mCommandBuffer.pushConstants(layout, stageFlags, offset, values);
-    }
-
-    void draw(std::uint32_t vertexCount,
-              std::uint32_t instanceCount,
-              std::uint32_t firstVertex,
-              std::uint32_t firstInstance);
+    [[nodiscard]] RenderingPass
+    beginRendering(const ColorAttachments&               colorAttachments,
+                   const std::optional<DepthAttachment>& depthAttachment = {});
 
     /**
      * Image barrier that retains @p resource until the command buffer's fence fires.
      * @p barrier.image must already reference the underlying VkImage.
      */
     void setImageBarrier(const std::shared_ptr<void>&   resource,
-                         const vk::ImageMemoryBarrier2& barrier) noexcept;
+                         const vk::ImageMemoryBarrier2& barrier);
 
     /**
      * Buffer barrier that retains @p buffer until the command buffer's fence fires.
      * Fills barrier.buffer from @p buffer.
      */
-    void setBufferBarrier(const std::shared_ptr<Buffer>& buffer,
-                          vk::BufferMemoryBarrier2       barrier) noexcept;
+    void setBufferBarrier(const std::shared_ptr<Buffer>& buffer, vk::BufferMemoryBarrier2 barrier);
 
     /** Raw barriers with no retention — prefer setImageBarrier / setBufferBarrier. */
     void unsafeSetBarriers(vk::ArrayProxy<vk::MemoryBarrier2>       memoryBarriers,
                            vk::ArrayProxy<vk::BufferMemoryBarrier2> bufferBarriers,
-                           vk::ArrayProxy<vk::ImageMemoryBarrier2>  imageBarriers) noexcept;
+                           vk::ArrayProxy<vk::ImageMemoryBarrier2>  imageBarriers);
 
-    [[deprecated("Use unsafeSetBarriers or setImageBarrier/setBufferBarrier")]]
-    void setBarriers(vk::ArrayProxy<vk::MemoryBarrier2>       memoryBarriers,
-                     vk::ArrayProxy<vk::BufferMemoryBarrier2> bufferBarriers,
-                     vk::ArrayProxy<vk::ImageMemoryBarrier2>  imageBarriers) noexcept;
-
-protected:
-    const Device&  mDevice;
+private:
     CommandBuffer& mCommandBuffer;
+    bool           mFinished        = false;
+    bool           mRenderingActive = false;
+    int            mUncaughtAtStart = 0;
 };
-
-VOG_DECLARE_PTR(CommandBufferRecorder);
 } // namespace VOG::Graphics::Vulkan

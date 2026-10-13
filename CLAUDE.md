@@ -12,9 +12,8 @@ Common
                  └─ Examples
 ```
 
-`CLAUDE.md` previously implied Graphics depended on Math/CVarSystem; the CMake graph
-does not. CVarSystem is built but not part of the product path until something
-above Common consumes it.
+CVarSystem is built but not part of the product path until something above Common
+consumes it.
 
 ## Critical: automatic resource ownership (Metal-like)
 

@@ -8,12 +8,6 @@ CommandBuffer::CommandBuffer(vk::raii::CommandBuffer commandBuffer, CommandBuffe
 {
 }
 
-CommandBuffer::
-operator bool() const
-{
-    return static_cast<bool>(vkHandle());
-}
-
 void
 CommandBuffer::begin(const vk::CommandBufferBeginInfo& beginInfo)
 {
@@ -39,7 +33,7 @@ CommandBuffer::addBoundResource(const std::shared_ptr<void>& resource)
 }
 
 void
-CommandBuffer::reset()
+CommandBuffer::clearBoundResources()
 {
     mBoundResources.clear();
     mBoundVertexBuffers.clear();

@@ -57,6 +57,9 @@ class Device
     Device(InstancePtr instance, vk::raii::PhysicalDevice physicalDevice);
 
 public:
+    Device(const Device&) = delete;
+    Device(Device&&)      = delete;
+
     ~Device(); // NOLINT(bugprone-derived-method-shadowing-base-method)
 
     using vk::raii::Device::operator*;
@@ -70,7 +73,8 @@ public:
      *
      * @return Compiled shader object.
      */
-    ShaderPtr createShader(Shader::ShadingStage stage, std::span<const std::uint32_t> binary);
+    std::unique_ptr<Shader> createShader(Shader::ShadingStage           stage,
+                                         std::span<const std::uint32_t> binary);
 
     /**
      * Links vertex and fragment shaders into a shader program.
@@ -80,7 +84,7 @@ public:
      *
      * @return Linked shader program with a reflected pipeline layout.
      */
-    std::shared_ptr<ShaderProgram> createShaderProgram(ShaderProgram::ShadingStages stages);
+    std::unique_ptr<ShaderProgram> createShaderProgram(ShaderProgram::ShadingStages stages);
 
     /**
      * Creates a graphics pipeline from a renderpass description.
@@ -89,7 +93,7 @@ public:
      *
      * @return Compiled graphics pipeline.
      */
-    std::shared_ptr<GraphicsPipeline>
+    std::unique_ptr<GraphicsPipeline>
     createGraphicsPipeline(GraphicsPipeline::Parameters createInfo);
 
     /**
@@ -108,7 +112,7 @@ public:
      *
      * @return Swapchain object.
      */
-    std::shared_ptr<Swapchain> createSwapchain(const Swapchain::SwapchainParameters& parameters);
+    std::unique_ptr<Swapchain> createSwapchain(const Swapchain::SwapchainParameters& parameters);
 
     /**
      * Creates an image-backed render attachment (color or depth/stencil).
@@ -125,7 +129,7 @@ public:
      *
      * @return Render buffer object.
      */
-    std::shared_ptr<RenderBuffer> createRenderBuffer(AttachmentUsage         usage,
+    std::unique_ptr<RenderBuffer> createRenderBuffer(AttachmentUsage         usage,
                                                      vk::Format              desiredFormat,
                                                      vk::Extent2D            extent,
                                                      SampleCount             sampleCount,
@@ -163,8 +167,28 @@ public:
      */
     TimelineSemaphore createTimelineSemaphore();
 
-    const Vulkan::Queue           graphicsQueue;
-    const Vulkan::Queue           transferQueue;
+    /**
+     * Hands out the graphics queue. The returned pointer shares ownership of this Device, so the
+     * queue stays valid for as long as it is held.
+     *
+     * @return Graphics queue.
+     */
+    std::shared_ptr<const Queue> getGraphicsQueue();
+
+    /**
+     * Hands out the transfer queue. The returned pointer shares ownership of this Device, like
+     * getGraphicsQueue().
+     *
+     * @return Transfer queue.
+     */
+    std::shared_ptr<const Queue> getTransferQueue();
+
+private:
+    /** Handed out through getGraphicsQueue() / getTransferQueue(). */
+    const Vulkan::Queue mGraphicsQueue;
+    const Vulkan::Queue mTransferQueue;
+
+public:
     const vk::raii::PipelineCache pipelineCache;
 
 private:

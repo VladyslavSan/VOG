@@ -16,10 +16,11 @@ anything that flows through the tracked APIs.
 
 1. **Recording retains.** Recording APIs accept `shared_ptr`s and store them on
    the command buffer:
-   - `CommandBuffer::bindVertexBuffers` inserts the buffer into
-     `mBoundVertexBuffers` (`Graphics/Vulkan/CommandBuffer.hpp`).
+   - `CommandBufferRecorder::RenderingPass::bindVertexBuffers` inserts the
+     buffer into `CommandBuffer::mBoundVertexBuffers`
+     (`Graphics/Vulkan/CommandBuffer.hpp`).
    - `CommandBufferRecorder::beginRendering` registers every color and depth
-     attachment, `bindPipeline` registers the pipeline — all via
+     attachment, `RenderingPass::bindPipeline` registers the pipeline — all via
      `CommandBuffer::addBoundResource` (`Graphics/Vulkan/CommandBufferRecorder.cpp`).
    - `setImageBarrier` / `setBufferBarrier` retain the passed resource; prefer
      these over `unsafeSetBarriers` (raw Vulkan barriers with no retention).
@@ -34,11 +35,101 @@ anything that flows through the tracked APIs.
 3. **Fence wait releases.** When a frame slot is re-acquired
    (`FrameObjectManager::acquireNextFrame` → `FrameObjects::onFrameStart` →
    `CommandBufferPool::reset`), the pool **waits on the fences first**, then
-   calls `CommandBuffer::reset`, which clears the bound-resource sets. Only at
+   calls `CommandBuffer::clearBoundResources`, which clears the bound-resource sets. Only at
    that point do retained resources drop their reference and (possibly) die.
 
 The release point is therefore exactly the earliest provably-safe moment:
 after the fence of the frame that referenced the resource has signaled.
+
+## Self-sufficient handles
+
+The model, generalised from Metal: **any object you hold keeps alive everything
+it depends on** — the object that created it, the object it wraps, and the
+objects it references. Holding one handle is always enough; user code never
+keeps a parent around "for" a child and never sequences teardown.
+Examples, not the whole list: a `Buffer` keeps its `Device` alive; a
+`CommandBufferHandle` keeps its pool (and through it the device) alive; a
+`Device` keeps its `Instance` alive. Scope guards (`Buffer::MemoryMapping`,
+`CommandBufferRecorder` and its `RenderingPass`) are the one deliberate
+exception — see requirement 2.
+
+*Recording retains* (above) is the same rule applied to the GPU: a command
+buffer depends on what was recorded into it, so it retains it until its fence
+has signalled.
+
+Requirements — every VOG type that owns, wraps or references a Vulkan object:
+
+1. **Retain every dependency.** Creator, wrapped object and referenced objects
+   are held by strong reference (`shared_ptr`), transitively up to the
+   `Instance`. Dropping every user reference to a dependency never invalidates
+   the dependent; it stays fully usable.
+2. **No borrowed references stored.** `T&`, `T*`, raw `vk::` handles and
+   pointers into another object's storage may be used inside a call, never kept
+   in a member — the member is the owning `shared_ptr` instead.
+   *Exception — lifetime strictly nested in the referent's:* borrowing is
+   allowed when the borrower provably cannot outlive what it borrows, and the
+   type is non-copyable and non-movable so that stays true:
+   - a scope guard, like `std::lock_guard` (`Buffer::MemoryMapping`,
+     `CommandBufferRecorder`, `CommandBufferRecorder::RenderingPass`);
+   - a sub-object exclusively owned by its referent and never handed out
+     (`MemoryAllocator` inside `Device` holding `Device&`).
+
+   A sub-object that is handed out is shared through an aliasing `shared_ptr`
+   that owns the referent: `Device::getGraphicsQueue()` returns
+   `shared_ptr<const Queue>` pointing into the `Device`, and `Queue` is
+   non-copyable and stores no back-reference.
+3. **Leaves are `unique_ptr`, parents are `shared_ptr`.** Factories return
+   `std::unique_ptr` by default (`Shader`, `ShaderProgram`, `GraphicsPipeline`,
+   `Swapchain`, `RenderBuffer`, `Buffer`) — callers convert to `shared_ptr`
+   when they need to share or record the object. A type that hands out
+   dependents (calls `shared_from_this()`: `Instance`, `Device`,
+   `CommandBufferPool`, `FencePool`) must be created as `shared_ptr`, since
+   `shared_from_this()` on a `unique_ptr`-owned object throws
+   `std::bad_weak_ptr` at runtime. Enforced, not documented: those types have
+   private constructors, deleted copy and move constructors, and are created only
+   through a factory returning `shared_ptr` (`Instance::create`, `Instance::makeDevice`,
+   `Device::createCommandBufferPool`, `FencePool::create`).
+4. **No cycles.** A dependency never strongly references its dependents, so
+   dropping the last reference destroys the object.
+5. **Own handle first, dependencies last — by declaration order.** C++ destroys
+   members in reverse declaration order, then bases in reverse order, so the
+   dependency reference must be declared *before* the handle within the same
+   kind: an earlier member, or an earlier base (`Buffer : Allocation,
+   vk::raii::Buffer` with `Allocation` holding the `DevicePtr`). Never a
+   dependency *member* next to a handle *base* — bases outlive members, which
+   is what forced the hand-written `~Buffer` at 16af4c1. `DeviceChild` is that
+   earlier base for types that derive from a `vk::raii` handle and need the
+   device (`Fence`, `GraphicsPipeline`, `TimelineSemaphore`). Creation-only
+   inputs, like the pipeline layout a `GraphicsPipeline` was built with, rely on
+   `maintenance4` (enabled in `Device.cpp`), not on declaration order.
+6. **RAII wrappers bracket state.** A wrapper that puts its object into a state
+   (recording, mapped, rendering) enters it in the constructor and leaves it in
+   the destructor: `CommandBufferRecorder` begins the command buffer in its
+   constructor and ends it in `finish()` (its destructor asserts that
+   `finish()` ran); `beginRendering()` returns a `RenderingPass` whose
+   constructor records `vkCmdBeginRendering` and whose destructor records
+   `vkCmdEndRendering`. Draw and bind commands exist only on the pass.
+7. **Destruction respects external synchronization.** The last reference can
+   drop where the owner drops it, so destructors must respect Vulkan's
+   external-synchronization rules (e.g. command buffers vs. their pool). These
+   are **render-thread only**, because they take no lock and the last
+   reference returns the object to a pool or touches an externally synchronized
+   queue: `FencePool` and `FenceHandle`, `CommandBufferHandle` (its destructor
+   returns the command buffer to its pool), `Queue::submit` and
+   `Swapchain::present`.
+8. **Every type is tested.** Drop the dependency, make a real Vulkan call
+   through the dependent, drop it, assert the dependency expired and that the
+   validation layer raised no error while the dependent was destroyed — a child
+   object that outlives its device is reported at `vkDestroyDevice`
+   (`DeviceLifetimeTest.cpp`, `VulkanFixture::expectDependentHoldsDevice`).
+   Covered: `Buffer`, `Fence`, `FenceHandle`, `FencePool`, `CommandBufferPool`,
+   `CommandBufferHandle`, `TimelineSemaphore`, `Queue`, `RenderBuffer`,
+   `Shader`, `ShaderProgram`, `GraphicsPipeline`, `FrameObjects`,
+   `FrameObjectManager`, `ShaderProgramCache`. Not covered yet: `Swapchain` and
+   `AcquiredSwapchainImage`, which need a window surface. `Shader`,
+   `ShaderProgram` and `RenderBuffer` expose no Vulkan call, so their
+   destruction is the call under test; for `ShaderProgramCache` it is the
+   lookup.
 
 ## Rules when extending the API
 
@@ -57,7 +148,10 @@ after the fence of the frame that referenced the resource has signaled.
 - **Objects never recorded into a command buffer.** Example: on swapchain
   recreation (window resize), the old `vk::SwapchainKHR` and its image views are
   referenced by the presentation engine, not by any command buffer. These need
-  explicit frame-keyed retirement at the recreation site.
+  explicit frame-keyed retirement at the recreation site; today
+  `Swapchain::recreate` waits for the device to be idle instead. A recorded
+  `AcquiredSwapchainImage` retains only its image view: the `VkImage` belongs
+  to the swapchain, which is not an attachment itself and is never recorded.
 - **Descriptor-set-referenced resources** (future textures/UBOs): tracking must
   be extended to descriptor set binding when those appear.
 

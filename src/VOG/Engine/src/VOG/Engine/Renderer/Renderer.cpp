@@ -28,8 +28,8 @@ namespace VOG::Engine
 {
 namespace
 {
-constexpr std::chrono::milliseconds kZeroExtentBackoff{16};
-constexpr std::array                kClearColor = {0.0f, 0.0f, 0.0f, 1.0f};
+constexpr std::chrono::milliseconds gZeroExtentBackoff{16};
+constexpr std::array                gClearColor = {0.0f, 0.0f, 0.0f, 1.0f};
 } // namespace
 
 Renderer::~Renderer()
@@ -53,7 +53,8 @@ Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& con
           .extensions = config.extensions,
       })}
     , mVulkanDevice{mVulkanInstance->makeDevice()}
-    , mFencePool{std::make_shared<Graphics::Vulkan::FencePool>(mVulkanDevice)}
+    , mGraphicsQueue{mVulkanDevice->getGraphicsQueue()}
+    , mFencePool{Graphics::Vulkan::FencePool::create(mVulkanDevice)}
     , mShaderProgramCache{std::make_shared<Graphics::ShaderProgramCache>(mVulkanDevice,
                                                                          config.shaderSourcePath)}
     , mSwapchain{mVulkanDevice->createSwapchain(Graphics::Vulkan::Swapchain::SwapchainParameters{
@@ -91,13 +92,6 @@ Renderer::addRenderable(std::shared_ptr<Renderable> renderable)
 }
 
 void
-Renderer::clearRenderables()
-{
-    const std::scoped_lock lock{mRenderablesMutex};
-    mRenderables.clear();
-}
-
-void
 Renderer::prepareRenderables()
 {
     const std::scoped_lock lock{mRenderablesMutex};
@@ -122,6 +116,12 @@ Renderer::collectRenderItems(const FrameContext& frameContext)
     const std::scoped_lock lock{mRenderablesMutex};
     for (const RenderableEntry& entry : mRenderables)
     {
+        // addRenderable() from another thread can land between prepareRenderables() and here.
+        if (!entry.prepared)
+        {
+            continue;
+        }
+
         entry.renderable->collect(frameContext, mRenderItems);
     }
 }
@@ -140,7 +140,7 @@ Renderer::render()
         if (!mSwapchain->recreate())
         {
             // Surface is zero-sized (minimized); back off instead of spinning.
-            std::this_thread::sleep_for(kZeroExtentBackoff);
+            std::this_thread::sleep_for(gZeroExtentBackoff);
         }
         return;
     }
@@ -152,13 +152,12 @@ Renderer::render()
     const auto& acquired = acquireResult.acquired;
     VOG_ASSERT_MSG(acquired, "eReady acquire must provide AcquiredSwapchainImage.");
 
-    const auto extent = acquired->getExtent();
+    const auto extent = acquired->getExtent2D();
 
     collectRenderItems({
         .timeSeconds =
             std::chrono::duration<double>{std::chrono::steady_clock::now() - mStartTime}.count(),
-        .extent     = acquired->getExtent2D(),
-        .frameIndex = mFrameIndex,
+        .extent = extent,
     });
 
     // Advance the frame slot only when we will actually submit — skip/out-of-date must not
@@ -167,33 +166,35 @@ Renderer::render()
     auto pool  = frame->getCommandBufferPoolForThread(threadId);
 
     auto commandBuffer = pool->get(vk::CommandBufferLevel::ePrimary);
-    commandBuffer->begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-
-    Graphics::Vulkan::CommandBufferRecorder recorder{*mVulkanDevice, **commandBuffer};
-
-    recorder.setImageBarrier(acquired,
-                             {.srcStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe,
-                              .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                              .oldLayout    = vk::ImageLayout::eUndefined,
-                              .newLayout    = vk::ImageLayout::eColorAttachmentOptimal,
-                              .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                              .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                              .image               = acquired->getImage(),
-                              .subresourceRange    = {
-                                     .aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                     .baseMipLevel   = 0,
-                                     .levelCount     = VK_REMAINING_ARRAY_LAYERS,
-                                     .baseArrayLayer = 0,
-                                     .layerCount     = VK_REMAINING_ARRAY_LAYERS,
-                              }});
 
     {
-        recorder.beginRendering({{.attachment = acquired,
-                                  .loadOp     = vk::AttachmentLoadOp::eClear,
-                                  .storeOp    = vk::AttachmentStoreOp::eStore,
-                                  .clearValue = vk::ClearColorValue{kClearColor}}});
+        CommandBufferRecorder recorder{**commandBuffer};
 
-        recorder.setViewport(0,
+        recorder.setImageBarrier(
+            acquired,
+            {.srcStageMask        = vk::PipelineStageFlagBits2::eBottomOfPipe,
+             .dstStageMask        = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+             .dstAccessMask       = vk::AccessFlagBits2::eColorAttachmentWrite,
+             .oldLayout           = vk::ImageLayout::eUndefined,
+             .newLayout           = vk::ImageLayout::eColorAttachmentOptimal,
+             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+             .image               = acquired->getImage(),
+             .subresourceRange    = {
+                 .aspectMask     = vk::ImageAspectFlagBits::eColor,
+                 .baseMipLevel   = 0,
+                 .levelCount     = VK_REMAINING_MIP_LEVELS,
+                 .baseArrayLayer = 0,
+                 .layerCount     = VK_REMAINING_ARRAY_LAYERS,
+             }});
+
+        {
+            auto pass = recorder.beginRendering({{.attachment = acquired,
+                                                  .loadOp     = vk::AttachmentLoadOp::eClear,
+                                                  .storeOp    = vk::AttachmentStoreOp::eStore,
+                                                  .clearValue = vk::ClearColorValue{gClearColor}}});
+
+            pass.setViewport(0,
                              {
                                  {
                                      .x        = 0.0f,
@@ -204,7 +205,7 @@ Renderer::render()
                                      .maxDepth = 1.0,
                                  },
                              });
-        recorder.setScissor(0,
+            pass.setScissor(0,
                             {
                                 {
                                     .offset = {.x = 0, .y = 0},
@@ -212,66 +213,65 @@ Renderer::render()
                                 },
                             });
 
-        for (const RenderItem& item : mRenderItems)
-        {
-            if (!item.pipeline || !item.vertexBuffer || item.vertexCount == 0u)
+            for (const RenderItem& item : mRenderItems)
             {
-                continue;
+                if (!item.pipeline || !item.vertexBuffer || item.vertexCount == 0u)
+                {
+                    continue;
+                }
+
+                pass.bindPipeline(item.pipeline);
+                pass.bindVertexBuffers(0u, {{.buffer = item.vertexBuffer, .offset = 0u}});
+
+                if (!item.pushConstants.empty())
+                {
+                    pass.pushConstants<std::byte>(
+                        *item.pipeline->program->pipelineLayout,
+                        item.pushConstantsStages,
+                        0u,
+                        vk::ArrayProxy<const std::byte>{
+                            static_cast<std::uint32_t>(item.pushConstants.size()),
+                            item.pushConstants.data()});
+                }
+
+                pass.draw(item.vertexCount, 1, 0, 0);
             }
-
-            recorder.bindPipeline(item.pipeline);
-            recorder.bindVertexBuffers(0u, {{.buffer = item.vertexBuffer, .offset = 0u}});
-
-            if (!item.pushConstants.empty())
-            {
-                recorder.pushConstants<std::byte>(
-                    *item.pipeline->program->pipelineLayout,
-                    item.pushConstantsStages,
-                    0u,
-                    vk::ArrayProxy<const std::byte>{
-                        static_cast<std::uint32_t>(item.pushConstants.size()),
-                        item.pushConstants.data()});
-            }
-
-            recorder.draw(item.vertexCount, 1, 0, 0);
         }
 
-        recorder.endRendering();
+        recorder.setImageBarrier(
+            acquired,
+            {.srcStageMask        = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+             .srcAccessMask       = vk::AccessFlagBits2::eColorAttachmentWrite,
+             .dstStageMask        = vk::PipelineStageFlagBits2::eTopOfPipe,
+             .oldLayout           = vk::ImageLayout::eColorAttachmentOptimal,
+             .newLayout           = vk::ImageLayout::ePresentSrcKHR,
+             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+             .image               = acquired->getImage(),
+             .subresourceRange    = {
+                 .aspectMask     = vk::ImageAspectFlagBits::eColor,
+                 .baseMipLevel   = 0,
+                 .levelCount     = VK_REMAINING_MIP_LEVELS,
+                 .baseArrayLayer = 0,
+                 .layerCount     = VK_REMAINING_ARRAY_LAYERS,
+             }});
+
+        recorder.finish();
     }
 
-    recorder.setImageBarrier(acquired,
-                             {.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                              .dstStageMask = vk::PipelineStageFlagBits2::eTopOfPipe,
-                              .oldLayout    = vk::ImageLayout::eColorAttachmentOptimal,
-                              .newLayout    = vk::ImageLayout::ePresentSrcKHR,
-                              .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                              .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                              .image               = acquired->getImage(),
-                              .subresourceRange    = {
-                                     .aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                     .baseMipLevel   = 0,
-                                     .levelCount     = VK_REMAINING_ARRAY_LAYERS,
-                                     .baseArrayLayer = 0,
-                                     .layerCount     = VK_REMAINING_ARRAY_LAYERS,
-                              }});
-
-    commandBuffer->end();
-
-    mVulkanDevice->graphicsQueue.submit(
+    mGraphicsQueue->submit(
         mFencePool,
-        std::array{*acquired->getImageAvailableSemaphore()},
+        std::array{**acquireResult.imageAvailableSemaphore},
         std::array{vk::PipelineStageFlags{vk::PipelineStageFlagBits::eColorAttachmentOutput}},
         std::array{std::move(commandBuffer)},
         std::array{*frame->getRenderFinishedSemaphore()});
-
-    ++mFrameIndex;
 
     if (mSwapchain->present(*frame->getRenderFinishedSemaphore()) ==
         Swapchain::PresentStatus::eOutOfDate)
     {
         if (!mSwapchain->recreate())
         {
-            std::this_thread::sleep_for(kZeroExtentBackoff);
+            std::this_thread::sleep_for(gZeroExtentBackoff);
         }
     }
 }

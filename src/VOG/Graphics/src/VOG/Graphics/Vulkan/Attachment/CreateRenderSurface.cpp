@@ -30,9 +30,7 @@
     #include <X11/Xlib.h>
 #endif
 
-#ifdef PLATFORM_VIDEO_LINUX_XCB
-    #include <xcb/xcb.h>
-#endif
+#include <spdlog/spdlog.h>
 
 #include <bit>
 #include <stdexcept>
@@ -103,6 +101,12 @@ CreateRenderSurface(const Instance&              instance,
 #ifdef PLATFORM_VIDEO_LINUX_WAYLAND
     case Common::SurfaceHandle::Platform::eLinuxWayland:
     {
+        if (instance.getDispatcher()->vkCreateWaylandSurfaceKHR == nullptr)
+        {
+            spdlog::error("VK_KHR_wayland_surface is not enabled on the Vulkan instance.");
+            break;
+        }
+
         auto* display = std::bit_cast<wl_display*>(surface.additionalHandle);
         auto* wlSurf  = std::bit_cast<wl_surface*>(surface.surfaceHandle);
         VOG_ASSERT(display != nullptr);
@@ -120,27 +124,18 @@ CreateRenderSurface(const Instance&              instance,
 #ifdef PLATFORM_VIDEO_LINUX_XLIB
     case Common::SurfaceHandle::Platform::eLinuxXlib:
     {
+        if (instance.getDispatcher()->vkCreateXlibSurfaceKHR == nullptr)
+        {
+            spdlog::error("VK_KHR_xlib_surface is not enabled on the Vulkan instance.");
+            break;
+        }
+
         auto* display = std::bit_cast<Display*>(surface.additionalHandle);
         VOG_ASSERT(display != nullptr);
 
         vk::XlibSurfaceCreateInfoKHR createInfo{
             .dpy    = display,
             .window = static_cast<::Window>(surface.surfaceHandle),
-        };
-        surfaceHandle = std::make_shared<vk::raii::SurfaceKHR>(instance, createInfo);
-        break;
-    }
-#endif
-
-#ifdef PLATFORM_VIDEO_LINUX_XCB
-    case Common::SurfaceHandle::Platform::eLinuxXcb:
-    {
-        auto* connection = std::bit_cast<xcb_connection_t*>(surface.additionalHandle);
-        VOG_ASSERT(connection != nullptr);
-
-        vk::XcbSurfaceCreateInfoKHR createInfo{
-            .connection = connection,
-            .window     = static_cast<xcb_window_t>(surface.surfaceHandle),
         };
         surfaceHandle = std::make_shared<vk::raii::SurfaceKHR>(instance, createInfo);
         break;

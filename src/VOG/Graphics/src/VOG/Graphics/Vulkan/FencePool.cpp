@@ -16,22 +16,15 @@ FencePool::FenceHandle::FenceHandle(FencePoolPtr pool, Fence fence)
 {
 }
 
-FencePool::FenceHandle::~FenceHandle()
+// returnToPool can only throw on allocation failure; terminating is the right answer there.
+FencePool::FenceHandle::~FenceHandle() // NOLINT(bugprone-exception-escape)
 {
-    // Hold the pool before moving the fence out (takeHandle strips DevicePtr).
-    const FencePoolPtr pool = mPool;
-    pool->returnToPool(std::move(*this));
+    mPool->returnToPool(std::move(*this));
 }
 
 FencePool::FencePool(DevicePtr device)
     : mDevice{std::move(device)}
 {
-}
-
-FencePool::FenceHandle
-FencePool::get()
-{
-    return FenceHandle{shared_from_this(), take()};
 }
 
 std::shared_ptr<FencePool::FenceHandle>
@@ -44,7 +37,7 @@ void
 FencePool::returnToPool(Fence fence)
 {
     fence.reset();
-    mFences.push_back(fence.takeHandle());
+    mFences.push_back(std::move(fence));
 }
 
 Fence
@@ -54,13 +47,13 @@ FencePool::take()
     {
         for (std::size_t i = 0u; i < gGrowthSize; ++i)
         {
-            mFences.emplace_back(*mDevice, vk::FenceCreateInfo{});
+            mFences.push_back(mDevice->createFence());
         }
     }
 
     auto fence = std::move(mFences.back());
     mFences.pop_back();
 
-    return Fence{mDevice, std::move(fence)};
+    return fence;
 }
 } // namespace VOG::Graphics::Vulkan

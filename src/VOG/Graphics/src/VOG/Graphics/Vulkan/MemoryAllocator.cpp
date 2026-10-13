@@ -10,6 +10,16 @@ namespace VOG::Graphics::Vulkan
 {
 namespace
 {
+// VMA_VULKAN_VERSION encodes major * 1000000 + minor * 1000 + patch.
+constexpr std::uint32_t gVmaMajorScale = 1000000u;
+constexpr std::uint32_t gVmaMinorScale = 1000u;
+
+static_assert(VK_API_VERSION_MAJOR(gRequiredApiVersion) * gVmaMajorScale +
+                      VK_API_VERSION_MINOR(gRequiredApiVersion) * gVmaMinorScale <=
+                  VMA_VULKAN_VERSION,
+              "VMA is compiled for an older Vulkan than the instance requests; raise "
+              "VMA_VULKAN_VERSION in VmaConfig.hpp.");
+
 vk::MemoryPropertyFlags
 getMemoryFlags(VmaAllocator allocator, std::uint32_t memoryIndex)
 {
@@ -105,7 +115,7 @@ MemoryAllocator::MemoryAllocator(Device& device)
         .device           = *mDevice,
         .pVulkanFunctions = &vulkanFunctions,
         .instance         = **mDevice.instance,
-        .vulkanApiVersion = mDevice.getProperties2().properties.apiVersion,
+        .vulkanApiVersion = gRequiredApiVersion,
     };
 
     auto result = vmaCreateAllocator(&allocatorInfo, &mAllocator);

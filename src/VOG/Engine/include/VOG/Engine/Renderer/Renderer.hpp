@@ -29,6 +29,7 @@ namespace VOG::Graphics::Vulkan
 class Instance;
 class Device;
 class FencePool;
+class Queue;
 class Swapchain;
 } // namespace VOG::Graphics::Vulkan
 
@@ -70,10 +71,13 @@ public:
 
     void render();
 
-    /** Registers @p renderable; its prepare() runs on the render thread before its first draw. */
+    /**
+     * Registers @p renderable; its prepare() runs on the render thread before its first draw.
+     *
+     * @note Do not call from inside Renderable::prepare() or Renderable::collect(): the renderer
+     * holds the registration lock while it runs them, so the call deadlocks.
+     */
     void addRenderable(std::shared_ptr<Renderable> renderable);
-
-    void clearRenderables();
 
     RenderJobState getRenderJobState() const;
 
@@ -101,9 +105,10 @@ protected:
 
     std::shared_ptr<Graphics::Vulkan::Instance>          mVulkanInstance;
     std::shared_ptr<Graphics::Vulkan::Device>            mVulkanDevice;
+    std::shared_ptr<const Graphics::Vulkan::Queue>       mGraphicsQueue;
     std::shared_ptr<Graphics::Vulkan::FencePool>         mFencePool;
     std::shared_ptr<Graphics::ShaderProgramCache>        mShaderProgramCache;
-    std::shared_ptr<Graphics::Vulkan::Swapchain>         mSwapchain;
+    std::unique_ptr<Graphics::Vulkan::Swapchain>         mSwapchain;
     std::shared_ptr<Graphics::Frame::FrameObjectManager> mFrameObjectManager;
 
     /** Guards mRenderables against registration from other threads. */
@@ -114,6 +119,5 @@ protected:
     std::vector<RenderItem> mRenderItems;
 
     std::chrono::steady_clock::time_point mStartTime;
-    std::uint64_t                         mFrameIndex = 0u;
 };
 } // namespace VOG::Engine

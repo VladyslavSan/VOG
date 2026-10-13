@@ -16,7 +16,9 @@ using CommandBufferType = vk::CommandBufferLevel;
 
 /**
  * Tracked Vulkan command buffer. Inherits vk::raii::CommandBuffer privately so recording
- * that needs retention goes through CommandBufferRecorder (or the few public begin/end APIs).
+ * that needs retention goes through CommandBufferRecorder (or the few public APIs below).
+ *
+ * Never copied or moved: the pool and its handles pass it around as unique_ptr<CommandBuffer>.
  */
 class CommandBuffer : private vk::raii::CommandBuffer
 {
@@ -36,23 +38,22 @@ public:
     };
 
     CommandBuffer(const CommandBuffer&) = delete;
-    CommandBuffer(CommandBuffer&&)      = default;
+    CommandBuffer(CommandBuffer&&)      = delete;
 
-    explicit operator bool() const;
+    void addBoundResource(const std::shared_ptr<void>& resource);
 
+    const CommandBufferType type;
+
+private:
     void begin(const vk::CommandBufferBeginInfo& beginInfo);
     void end();
 
     /** Raw Vulkan handle for submit; does not bypass retention on recording paths. */
     vk::CommandBuffer vkHandle() const;
 
-    void addBoundResource(const std::shared_ptr<void>& resource);
+    /** Drops everything recording retained; call once the fence of the last submit signaled. */
+    void clearBoundResources();
 
-    void reset();
-
-    const CommandBufferType type;
-
-protected:
     std::vector<std::shared_ptr<void>>          mBoundResources;
     std::unordered_set<std::shared_ptr<Buffer>> mBoundVertexBuffers;
 };
