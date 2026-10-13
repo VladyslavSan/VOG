@@ -11,7 +11,7 @@
 #include <limits>
 #include <memory>
 
-#include "VulkanHeadlessFixture.hpp"
+#include "VulkanFixture.hpp"
 
 using namespace VOG::Graphics::Vulkan;
 
@@ -130,17 +130,44 @@ struct Rig
 };
 } // namespace
 
-class SwapchainTest : public VulkanHeadlessFixture
+/** Swapchains on a headless surface, under the validation layer when it is installed. */
+class SwapchainTest : public VulkanFixture
 {
+public:
+    SwapchainTest()
+        : VulkanFixture{Options{.validation = true, .headlessSurface = true}}
+    {
+    }
+
 protected:
+    static constexpr std::uint8_t kFramesInFlight = 2u;
+
+    void
+    SetUp() override
+    {
+        if (!headlessSurfaceActive())
+        {
+            GTEST_SKIP() << "VK_EXT_headless_surface not available";
+        }
+    }
+
+    /** Parameters of a swapchain on a headless surface. */
+    static Swapchain::SwapchainParameters
+    headlessSwapchainParameters()
+    {
+        return {.framesInFlight = kFramesInFlight,
+                .surface        = {.platform = Common::SurfaceHandle::Platform::eHeadless},
+                .fallbackExtent = {.width = 64u, .height = 64u}};
+    }
+
     Rig
     makeRig()
     {
-        return {.queue     = VulkanDevice->getGraphicsQueue(),
-                .fencePool = FencePool::create(VulkanDevice),
-                .swapchain = VulkanDevice->createSwapchain(headlessSwapchainParameters()),
+        return {.queue     = mDevice->getGraphicsQueue(),
+                .fencePool = FencePool::create(mDevice),
+                .swapchain = mDevice->createSwapchain(headlessSwapchainParameters()),
                 .frames    = std::make_unique<Graphics::Frame::FrameObjectManager>(
-                    VulkanDevice, kFramesInFlight, 1u)};
+                    mDevice, kFramesInFlight, 1u)};
     }
 };
 
@@ -151,9 +178,6 @@ protected:
  */
 TEST_F(SwapchainTest, recreateRetiresOldSwapchainWhenSlotRestarts)
 {
-    if (!headlessSurfaceActive())
-        GTEST_SKIP() << "VK_EXT_headless_surface not available";
-
     Rig rig = makeRig();
 
     const SwapchainGenerationWeakPtr old = rig.renderFrame(false);
@@ -172,8 +196,8 @@ TEST_F(SwapchainTest, recreateRetiresOldSwapchainWhenSlotRestarts)
     rig.renderFrame(false);
     EXPECT_TRUE(old.expired());
 
-    EXPECT_TRUE(validationErrors.empty())
-        << (validationErrors.empty() ? "" : validationErrors.front());
+    EXPECT_TRUE(mValidationErrors.empty())
+        << (mValidationErrors.empty() ? "" : mValidationErrors.front());
 }
 
 /**
@@ -184,8 +208,8 @@ TEST_F(SwapchainTest, recreateRetiresOldSwapchainWhenSlotRestarts)
  */
 TEST_F(SwapchainTest, shutdownAfterFramesAndRecreateRaisesNoValidationError)
 {
-    if (!validationActive() || !headlessSurfaceActive())
-        GTEST_SKIP() << "validation layer or VK_EXT_headless_surface not available";
+    if (!validationActive())
+        GTEST_SKIP() << "VK_LAYER_KHRONOS_validation not available";
 
     {
         Rig rig = makeRig();
@@ -208,10 +232,7 @@ TEST_F(SwapchainTest, shutdownAfterFramesAndRecreateRaisesNoValidationError)
  */
 TEST_F(SwapchainTest, swapchainKeepsDeviceAlive)
 {
-    if (!headlessSurfaceActive())
-        GTEST_SKIP() << "VK_EXT_headless_surface not available";
-
-    auto       swapchain = VulkanDevice->createSwapchain(headlessSwapchainParameters());
+    auto       swapchain = mDevice->createSwapchain(headlessSwapchainParameters());
     const auto released  = releaseDevice();
 
     expectDependentHoldsDevice(released,
@@ -228,20 +249,17 @@ TEST_F(SwapchainTest, swapchainKeepsDeviceAlive)
  */
 TEST_F(SwapchainTest, acquiredImageKeepsSwapchainAlive)
 {
-    if (!headlessSurfaceActive())
-        GTEST_SKIP() << "VK_EXT_headless_surface not available";
-
-    auto swapchain = VulkanDevice->createSwapchain(headlessSwapchainParameters());
+    auto swapchain = mDevice->createSwapchain(headlessSwapchainParameters());
     auto acquire   = swapchain->acquireNextImage();
     ASSERT_TRUE(acquire.acquired);
     // The image is never presented. Its acquire signal still has to be consumed before the
     // semaphore may be destroyed.
-    consumeAcquireSignal(VulkanDevice, acquire.imageAvailableSemaphore);
+    consumeAcquireSignal(mDevice, acquire.imageAvailableSemaphore);
     auto acquired = std::move(acquire.acquired);
     acquire       = {};
 
     auto commandBuffer = std::make_unique<CommandBufferHandle>(
-        VulkanDevice->createCommandBufferPool()->get(vk::CommandBufferLevel::ePrimary));
+        mDevice->createCommandBufferPool()->get(vk::CommandBufferLevel::ePrimary));
 
     swapchain.reset();
     const auto released = releaseDevice();

@@ -20,6 +20,10 @@ jobs:
           - os: ubuntu-latest
             name: linux
             build_type: Release
+          # Debug keeps every VOG_ASSERT, so one runner exercises them under the validation layer.
+          - os: ubuntu-latest
+            name: linux
+            build_type: Debug
           - os: macos-26
             name: macos
             build_type: Release
@@ -46,8 +50,9 @@ jobs:
       - name: Install MoltenVK (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install molten-vk vulkan-loader
+          brew install molten-vk vulkan-loader vulkan-validationlayers
           echo "VK_ICD_FILENAMES=$(brew --prefix molten-vk)/share/vulkan/icd.d/MoltenVK_icd.json" >> "$GITHUB_ENV"
+          echo "VK_ADD_LAYER_PATH=$(brew --prefix vulkan-validationlayers)/share/vulkan/explicit_layer.d" >> "$GITHUB_ENV"
 
       - name: Set up Conan
         uses: ./.github/actions/setup-conan
@@ -73,11 +78,19 @@ jobs:
             --output-on-failure \
             --output-junit ${{ runner.temp }}/test-results.xml
 
+      # Not required to pass yet: MoltenVK on the runner's paravirtual GPU is unverified. Drop
+      # continue-on-error after two green runs.
+      - name: Test (macOS)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: |
+          ctest --test-dir build/build/${{ matrix.build_type }} --output-on-failure
+
       - name: Publish test results
         uses: dorny/test-reporter@v1
         if: runner.os == 'Linux' && (success() || failure())
         with:
-          name: Tests
+          name: Tests (${{ matrix.build_type }})
           path: ${{ runner.temp }}/test-results.xml
           reporter: java-junit
           fail-on-empty: 'false'

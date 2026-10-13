@@ -1,8 +1,8 @@
 #include "VOG/Graphics/Vulkan/FencePool.hpp"
 
-#include <VOG/Common/Assert.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/Fence.hpp>
+#include <VOG/Graphics/Vulkan/InDestructor.hpp>
 
 #include <limits>
 
@@ -19,16 +19,24 @@ FencePool::FenceHandle::FenceHandle(FencePoolPtr pool, Fence fence)
 {
 }
 
-// wait() throws on device loss and returnToPool() on allocation failure. Either one escaping a
-// destructor terminates, which is the right answer for a lost device or no memory.
-FencePool::FenceHandle::~FenceHandle() // NOLINT(bugprone-exception-escape)
+// inDestructor logs a Vulkan failure. A bad_alloc from push_back in returnToPool is not caught
+// there and terminates, which is the right answer for no memory.
+FencePool::FenceHandle::~FenceHandle()
 {
     // Resetting a fence the GPU still has to signal is invalid, and its owners (command buffers,
     // presentations) release what the fence guards right after this destructor.
-    [[maybe_unused]] const vk::Result waitResult = wait(std::numeric_limits<std::uint64_t>::max());
-    VOG_ASSERT(waitResult == vk::Result::eSuccess);
+    inDestructor("Waiting for a fence",
+                 [this]
+                 {
+                     [[maybe_unused]] const vk::Result result =
+                         wait(std::numeric_limits<std::uint64_t>::max());
+                 });
 
-    mPool->returnToPool(std::move(*this));
+    inDestructor("Returning a fence to its pool",
+                 [this]
+                 {
+                     mPool->returnToPool(std::move(*this));
+                 });
 }
 
 FencePool::FencePool(DevicePtr device)

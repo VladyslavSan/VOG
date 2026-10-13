@@ -1,15 +1,18 @@
 #include "VOG/Graphics/Vulkan/Instance.hpp"
 
 #include <VOG/Graphics/Vulkan/Device.hpp>
+#include <VOG/Graphics/Vulkan/DeviceRequirements.hpp>
 
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <atomic>
-#include <cstring>
 #include <format>
 #include <ranges>
 #include <stdexcept>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -81,12 +84,7 @@ makeInstance(const vk::raii::Context& context, const Instance::InstanceParameter
                    });
 
     auto requiredExtensions = getInstanceRequiredExtensions();
-    if (std::ranges::find_if(availableInstanceExtensions,
-                             [](const vk::ExtensionProperties& prop)
-                             {
-                                 return std::strcmp(prop.extensionName,
-                                                    gPortabilityEnumerationExtension) == 0;
-                             }) != availableInstanceExtensions.end())
+    if (hasExtension(availableInstanceExtensions, gPortabilityEnumerationExtension))
     {
         requiredExtensions.push_back(gPortabilityEnumerationExtension);
     }
@@ -95,11 +93,7 @@ makeInstance(const vk::raii::Context& context, const Instance::InstanceParameter
     {
         auto addIfPresent = [&](const char* name)
         {
-            if (std::ranges::find_if(availableInstanceExtensions,
-                                     [name](const vk::ExtensionProperties& prop)
-                                     {
-                                         return std::strcmp(prop.extensionName, name) == 0;
-                                     }) != availableInstanceExtensions.end())
+            if (hasExtension(availableInstanceExtensions, name))
             {
                 requiredExtensions.push_back(name);
             }
@@ -130,13 +124,16 @@ makeInstance(const vk::raii::Context& context, const Instance::InstanceParameter
                        return extension;
                    });
 
-    [[maybe_unused]] const auto unique = std::unique(extensionsAll.begin(),
-                                                     extensionsAll.end(),
-                                                     [](const auto& first, const auto& second)
-                                                     {
-                                                         return std::strcmp(first, second) == 0;
-                                                     });
-    vk::InstanceCreateInfo      instanceCreateInfo{
+    // The caller's list and the required list can name the same extension; Vulkan wants each once.
+    const auto byName = [](const char* name)
+    {
+        return std::string_view{name};
+    };
+    std::ranges::sort(extensionsAll, {}, byName);
+    extensionsAll.erase(std::ranges::unique(extensionsAll, {}, byName).begin(),
+                        extensionsAll.end());
+
+    vk::InstanceCreateInfo instanceCreateInfo{
         .flags                   = vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR,
         .pApplicationInfo        = &appInfo,
         .enabledLayerCount       = static_cast<std::uint32_t>(layersAll.size()),
@@ -224,28 +221,6 @@ logExtensions(const std::vector<vk::ExtensionProperties>& extensions)
     }
 }
 
-bool
-supportsSwapchainMaintenance1(const vk::raii::PhysicalDevice& device)
-{
-    const auto extensions   = device.enumerateDeviceExtensionProperties();
-    const bool hasExtension = std::ranges::any_of(
-        extensions,
-        [](const vk::ExtensionProperties& extension)
-        {
-            return std::strcmp(extension.extensionName,
-                               VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME) == 0;
-        });
-    if (!hasExtension)
-    {
-        return false;
-    }
-
-    const auto features = device.getFeatures2<vk::PhysicalDeviceFeatures2,
-                                              vk::PhysicalDeviceSwapchainMaintenance1FeaturesKHR>();
-    return features.get<vk::PhysicalDeviceSwapchainMaintenance1FeaturesKHR>()
-               .swapchainMaintenance1 != 0u;
-}
-
 vk::raii::PhysicalDevice
 makePhysicalDevice(const vk::raii::Instance& instance)
 {
@@ -272,23 +247,29 @@ makePhysicalDevice(const vk::raii::Instance& instance)
                        }
                    });
 
-    const auto selected =
-        std::ranges::find_if(physicalDevices,
-                             [](const vk::raii::PhysicalDevice& device)
-                             {
-                                 return device.getProperties().apiVersion >= gRequiredApiVersion &&
-                                        supportsSwapchainMaintenance1(device);
-                             });
+    // The first device that offers everything VOG needs; otherwise report every device's gaps.
+    std::string gaps;
+    auto        selected = physicalDevices.begin();
+    for (; selected != physicalDevices.end(); ++selected)
+    {
+        const std::vector<std::string> missing = DeviceRequirements::missing(*selected);
+        if (missing.empty())
+        {
+            break;
+        }
+
+        gaps += std::format("\n  {} lacks:", selected->getProperties().deviceName.data());
+        for (const std::string& item : missing)
+        {
+            gaps += ' ' + item + ';';
+        }
+    }
     if (selected == physicalDevices.end())
     {
-        throw std::runtime_error{std::format(
-            "No physical device supports Vulkan {}.{} with {}, which VOG requires (core "
-            "synchronization2 and dynamic rendering, and a present fence that tells when a "
-            "swapchain is free to destroy). Found {} device(s).",
-            VK_API_VERSION_MAJOR(gRequiredApiVersion),
-            VK_API_VERSION_MINOR(gRequiredApiVersion),
-            VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME,
-            physicalDevices.size())};
+        throw std::runtime_error{
+            std::format("No physical device meets VOG's requirements ({} device(s) found).{}",
+                        physicalDevices.size(),
+                        gaps)};
     }
 
     vk::raii::PhysicalDevice physicalDevice = std::move(*selected);

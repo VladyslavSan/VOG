@@ -80,7 +80,7 @@ ShaderProgramCache::ShaderProgramCache(const Vulkan::DevicePtr&     device,
     const nlohmann::json shaderConfig         = readJsonFile(mShaderSourcePath / gShaderConfigName);
     nlohmann::json::const_reference shaderMap = shaderConfig.at("shaders");
 
-    VOG_ASSERT_MSG(shaderMap.is_object(), "Shader info entry should be json object.")
+    VOG_ASSERT_MSG(shaderMap.is_object(), "Shader info entry should be json object.");
     for (auto shaderEntryIterator = shaderMap.begin(); shaderEntryIterator != shaderMap.end();
          ++shaderEntryIterator)
     {
@@ -100,7 +100,7 @@ ShaderProgramCache::ShaderProgramCache(const Vulkan::DevicePtr&     device,
             VOG_ASSERT_MSG(std::filesystem::exists(stagePath), "Shader path is invalid.");
 
             const std::string shaderSource = readFile(stagePath);
-            VOG_ASSERT_MSG(!shaderSource.empty(), "Shader source file should not be empty.")
+            VOG_ASSERT_MSG(!shaderSource.empty(), "Shader source file should not be empty.");
 
             std::shared_ptr<Vulkan::Shader> shader = nullptr;
             try

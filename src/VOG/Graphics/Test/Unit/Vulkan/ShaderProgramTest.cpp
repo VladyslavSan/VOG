@@ -94,8 +94,8 @@ TEST_F(VulkanFixture, ShaderProgram_create_noDescriptorSets)
     auto vert = createShader(Shader::ShadingStage::eVertex, gMinimalVertexShader);
     auto frag = createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
-    EXPECT_NO_THROW(VulkanDevice->createShaderProgram(
-        {.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
+    EXPECT_NO_THROW(
+        mDevice->createShaderProgram({.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
 }
 
 TEST_F(VulkanFixture, ShaderProgram_descriptorSets_consecutiveSets)
@@ -104,7 +104,7 @@ TEST_F(VulkanFixture, ShaderProgram_descriptorSets_consecutiveSets)
     auto frag = createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
     std::shared_ptr<ShaderProgram> program;
-    ASSERT_NO_THROW(program = VulkanDevice->createShaderProgram(
+    ASSERT_NO_THROW(program = mDevice->createShaderProgram(
                         {.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
 
     EXPECT_TRUE(static_cast<bool>(*program->descriptorSets[0].setLayout));
@@ -121,7 +121,7 @@ TEST_F(VulkanFixture, ShaderProgram_descriptorSets_gapInSets)
     auto frag = createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
     std::shared_ptr<ShaderProgram> program;
-    ASSERT_NO_THROW(program = VulkanDevice->createShaderProgram(
+    ASSERT_NO_THROW(program = mDevice->createShaderProgram(
                         {.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
 
     EXPECT_TRUE(static_cast<bool>(*program->descriptorSets[0].setLayout));
@@ -136,7 +136,7 @@ TEST_F(VulkanFixture, ShaderProgram_pushConstants_reflectedCorrectly)
     auto frag = createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
     std::shared_ptr<ShaderProgram> program;
-    ASSERT_NO_THROW(program = VulkanDevice->createShaderProgram(
+    ASSERT_NO_THROW(program = mDevice->createShaderProgram(
                         {.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
 
     ASSERT_EQ(program->pushConstants.ranges.size(), 1u);
@@ -154,7 +154,7 @@ TEST_F(VulkanFixture, ShaderProgram_pushConstants_reflectedCorrectly)
  */
 TEST_F(VulkanValidationFixture, ShaderProgram_keepsDeviceAlive)
 {
-    auto program = VulkanDevice->createShaderProgram(
+    auto program = mDevice->createShaderProgram(
         {.vertex   = {.shader = createShader(Shader::ShadingStage::eVertex, gMinimalVertexShader)},
          .fragment = {.shader =
                           createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader)}});
@@ -171,11 +171,11 @@ TEST_F(VulkanValidationFixture, ShaderProgram_keepsDeviceAlive)
  */
 TEST_F(VulkanValidationFixture, GraphicsPipeline_keepsDeviceAlive)
 {
-    ShaderProgramPtr program = VulkanDevice->createShaderProgram(
+    ShaderProgramPtr program = mDevice->createShaderProgram(
         {.vertex   = {.shader = createShader(Shader::ShadingStage::eVertex, gMinimalVertexShader)},
          .fragment = {.shader =
                           createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader)}});
-    GraphicsPipelinePtr pipeline = VulkanDevice->createGraphicsPipeline(
+    GraphicsPipelinePtr pipeline = mDevice->createGraphicsPipeline(
         makeMinimalPipelineParameters(program, *program->pipelineLayout));
     program.reset();
     const auto released = releaseDevice();
@@ -223,24 +223,21 @@ TEST_F(VulkanValidationFixture, GraphicsPipeline_keepsDeviceAlive)
 
 TEST_F(VulkanValidationFixture, ShaderProgram_makePipelineLayout_gapFilledCorrectly)
 {
-    if (!validationActive())
-        GTEST_SKIP() << "VK_LAYER_KHRONOS_validation or VK_EXT_debug_utils not available";
-
     auto vert = createShader(Shader::ShadingStage::eVertex, gVertexShaderSets02Gap);
     auto frag = createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader);
 
     std::shared_ptr<ShaderProgram> shaderProgram;
-    ASSERT_NO_THROW(shaderProgram = VulkanDevice->createShaderProgram(
+    ASSERT_NO_THROW(shaderProgram = mDevice->createShaderProgram(
                         {.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
 
     ASSERT_NO_THROW({
-        auto pipeline = VulkanDevice->createGraphicsPipeline(
+        auto pipeline = mDevice->createGraphicsPipeline(
             makeMinimalPipelineParameters(shaderProgram, *shaderProgram->pipelineLayout));
     });
 
-    EXPECT_TRUE(validationErrors.empty())
+    EXPECT_TRUE(mValidationErrors.empty())
         << "Validation error (gap likely not filled with empty layout):\n"
-        << (validationErrors.empty() ? "" : validationErrors.front());
+        << (mValidationErrors.empty() ? "" : mValidationErrors.front());
 }
 
 } // namespace VOG::Tests

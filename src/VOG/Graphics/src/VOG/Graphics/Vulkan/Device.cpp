@@ -4,30 +4,17 @@
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
+#include <VOG/Graphics/Vulkan/DeviceRequirements.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
 #include <VOG/Graphics/Vulkan/MemoryAllocator.hpp>
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
-
-#include <spdlog/spdlog.h>
 
 namespace VOG::Graphics::Vulkan
 {
 namespace
 {
 const char* gPortabilityExtensionName = "VK_KHR_portability_subset";
-
-constexpr std::vector<const char*>
-getDeviceRequiredExtensions()
-{
-    // synchronization2 and dynamicRendering are core in Vulkan 1.3, no extension entries needed.
-    // The EXT name, not the KHR one: the EXT type and sType values are the same, and drivers and
-    // validation layers that predate the KHR promotion expose only the EXT name.
-    std::vector<const char*> requiredExtensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-                                                VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME};
-
-    return requiredExtensions;
-}
 
 PhysicalDevice::QueueInfos
 findGraphicsTransferQueues(const vk::raii::PhysicalDevice& device)
@@ -101,72 +88,25 @@ makeDevice(const vk::raii::PhysicalDevice& physicalDevice, const PhysicalDevice:
         });
     }
 
-    std::vector<const char*> extensions = getDeviceRequiredExtensions();
-
-    // Portability extension check
+    // Selection guarantees every kExtensions entry and kFeatures bit; see DeviceRequirements.
+    std::vector<const char*> extensions{DeviceRequirements::kExtensions.begin(),
+                                        DeviceRequirements::kExtensions.end()};
+    if (hasExtension(availableExtensions, gPortabilityExtensionName))
     {
-        const auto found = std::find_if(availableExtensions.begin(),
-                                        availableExtensions.end(),
-                                        [](const auto& extension)
-                                        {
-                                            return std::strncmp(extension.extensionName,
-                                                                gPortabilityExtensionName,
-                                                                VK_MAX_EXTENSION_NAME_SIZE) == 0;
-                                        });
-
-        const bool portabilityExtensionFound = found != availableExtensions.end();
-        if (portabilityExtensionFound)
-        {
-            extensions.push_back(gPortabilityExtensionName);
-        }
+        extensions.push_back(gPortabilityExtensionName);
     }
 
-    // Consistency check, ensure that all added extensions are supported by the
-    // device
-    for (const auto& requestedExtension : extensions)
-    {
-        const bool extensionPresent =
-            std::find_if(availableExtensions.begin(),
-                         availableExtensions.end(),
-                         [&requestedExtension](const auto& extension)
-                         {
-                             return std::strncmp(extension.extensionName,
-                                                 requestedExtension,
-                                                 VK_MAX_EXTENSION_NAME_SIZE) == 0;
-                         }) != availableExtensions.end();
+    DeviceRequirements::Features features = DeviceRequirements::enabled();
 
-        if (!extensionPresent)
-        {
-            spdlog::error("Extension {} is not supported by the device.", requestedExtension);
-        }
-    }
-
-    vk::PhysicalDeviceFeatures deviceFeatues{
-        .depthClamp = 1u,
+    const vk::DeviceCreateInfo createInfo{
+        .pNext                   = &features.get<vk::PhysicalDeviceFeatures2>(),
+        .queueCreateInfoCount    = static_cast<std::uint32_t>(queueInfos.size()),
+        .pQueueCreateInfos       = queueInfos.data(),
+        .enabledExtensionCount   = static_cast<std::uint32_t>(extensions.size()),
+        .ppEnabledExtensionNames = extensions.data(),
     };
 
-    vk::StructureChain chain{
-        vk::DeviceCreateInfo{
-            .queueCreateInfoCount    = static_cast<std::uint32_t>(queueInfos.size()),
-            .pQueueCreateInfos       = queueInfos.data(),
-            .enabledExtensionCount   = static_cast<std::uint32_t>(extensions.size()),
-            .ppEnabledExtensionNames = extensions.data(),
-            .pEnabledFeatures        = &deviceFeatues,
-        },
-        vk::PhysicalDeviceVulkan12Features{
-            .timelineSemaphore = 1u,
-        },
-        vk::PhysicalDeviceVulkan13Features{
-            .synchronization2 = 1u,
-            .dynamicRendering = 1u,
-            .maintenance4     = 1u,
-        },
-        vk::PhysicalDeviceSwapchainMaintenance1FeaturesKHR{
-            .swapchainMaintenance1 = 1u,
-        },
-    };
-
-    return {physicalDevice, chain.get()};
+    return {physicalDevice, createInfo};
 }
 } // namespace
 

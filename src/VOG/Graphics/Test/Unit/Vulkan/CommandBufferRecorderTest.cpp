@@ -37,13 +37,13 @@ const std::array<vk::PipelineStageFlags, 0> gNoStages{};
  */
 TEST_F(VulkanFixture, CommandBufferRecorder_barrierRetainsBufferUntilPoolReset)
 {
-    std::shared_ptr<Buffer> buffer = VulkanDevice->createBuffer(
+    std::shared_ptr<Buffer> buffer = mDevice->createBuffer(
         {.size = gBufferSize, .usage = vk::BufferUsageFlagBits::eVertexBuffer},
         {.usage = VMA_MEMORY_USAGE_AUTO});
     const std::weak_ptr<Buffer> weakBuffer = buffer;
 
-    auto fencePool     = FencePool::create(VulkanDevice);
-    auto pool          = VulkanDevice->createCommandBufferPool();
+    auto fencePool     = FencePool::create(mDevice);
+    auto pool          = mDevice->createCommandBufferPool();
     auto commandBuffer = pool->get(vk::CommandBufferLevel::ePrimary);
 
     {
@@ -63,7 +63,7 @@ TEST_F(VulkanFixture, CommandBufferRecorder_barrierRetainsBufferUntilPoolReset)
     buffer.reset();
     EXPECT_FALSE(weakBuffer.expired());
 
-    const auto submission = VulkanDevice->getGraphicsQueue()->submit(
+    const auto submission = mDevice->getGraphicsQueue()->submit(
         fencePool, gNoSemaphores, gNoStages, std::array{std::move(commandBuffer)}, gNoSemaphores);
     ASSERT_EQ(submission.fence->wait(gWaitForever), vk::Result::eSuccess);
     EXPECT_FALSE(weakBuffer.expired());
@@ -79,13 +79,13 @@ TEST_F(VulkanFixture, CommandBufferRecorder_barrierRetainsBufferUntilPoolReset)
  */
 TEST_F(VulkanFixture, Queue_submitRetainsSemaphoresUntilPoolReset)
 {
-    auto fencePool = FencePool::create(VulkanDevice);
-    auto queue     = VulkanDevice->getGraphicsQueue();
-    auto signaller = VulkanDevice->createCommandBufferPool();
-    auto waiter    = VulkanDevice->createCommandBufferPool();
+    auto fencePool = FencePool::create(mDevice);
+    auto queue     = mDevice->getGraphicsQueue();
+    auto signaller = mDevice->createCommandBufferPool();
+    auto waiter    = mDevice->createCommandBufferPool();
 
-    SemaphorePtr                   chained        = VulkanDevice->createSemaphore();
-    SemaphorePtr                   signalOnly     = VulkanDevice->createSemaphore();
+    SemaphorePtr                   chained        = mDevice->createSemaphore();
+    SemaphorePtr                   signalOnly     = mDevice->createSemaphore();
     const std::weak_ptr<Semaphore> weakChained    = chained;
     const std::weak_ptr<Semaphore> weakSignalOnly = signalOnly;
 
@@ -131,22 +131,19 @@ TEST_F(VulkanFixture, Queue_submitRetainsSemaphoresUntilPoolReset)
  */
 TEST_F(VulkanValidationFixture, CommandBufferPool_dropWithPendingSubmissionWaitsForFence)
 {
-    if (!validationActive())
-        GTEST_SKIP() << "VK_LAYER_KHRONOS_validation or VK_EXT_debug_utils not available";
-
     std::shared_ptr<RenderBuffer> target =
-        VulkanDevice->createRenderBuffer(AttachmentUsage::eColor,
-                                         vk::Format::eR8G8B8A8Unorm,
-                                         {.width = 2048u, .height = 2048u},
-                                         SampleCount::e1,
-                                         1u,
-                                         1u,
-                                         vk::ImageTiling::eOptimal,
-                                         vk::ImageLayout::eUndefined,
-                                         vk::MemoryPropertyFlagBits::eDeviceLocal);
+        mDevice->createRenderBuffer(AttachmentUsage::eColor,
+                                    vk::Format::eR8G8B8A8Unorm,
+                                    {.width = 2048u, .height = 2048u},
+                                    SampleCount::e1,
+                                    1u,
+                                    1u,
+                                    vk::ImageTiling::eOptimal,
+                                    vk::ImageLayout::eUndefined,
+                                    vk::MemoryPropertyFlagBits::eDeviceLocal);
 
-    auto fencePool = FencePool::create(VulkanDevice);
-    auto pool      = VulkanDevice->createCommandBufferPool();
+    auto fencePool = FencePool::create(mDevice);
+    auto pool      = mDevice->createCommandBufferPool();
     {
         auto commandBuffer = pool->get(vk::CommandBufferLevel::ePrimary);
         {
@@ -162,19 +159,19 @@ TEST_F(VulkanValidationFixture, CommandBufferPool_dropWithPendingSubmissionWaits
             recorder.finish();
         }
 
-        VulkanDevice->getGraphicsQueue()->submit(fencePool,
-                                                 gNoSemaphores,
-                                                 gNoStages,
-                                                 std::array{std::move(commandBuffer)},
-                                                 gNoSemaphores);
+        mDevice->getGraphicsQueue()->submit(fencePool,
+                                            gNoSemaphores,
+                                            gNoStages,
+                                            std::array{std::move(commandBuffer)},
+                                            gNoSemaphores);
     }
 
     // Neither the caller nor the test waits: the pool owns the pending submission.
     pool.reset();
     fencePool.reset();
 
-    EXPECT_TRUE(validationErrors.empty())
-        << (validationErrors.empty() ? "" : validationErrors.front());
+    EXPECT_TRUE(mValidationErrors.empty())
+        << (mValidationErrors.empty() ? "" : mValidationErrors.front());
 }
 
 /**
@@ -184,22 +181,19 @@ TEST_F(VulkanValidationFixture, CommandBufferPool_dropWithPendingSubmissionWaits
  */
 TEST_F(VulkanValidationFixture, CommandBufferRecorder_clearRenderBufferAndSubmit)
 {
-    if (!validationActive())
-        GTEST_SKIP() << "VK_LAYER_KHRONOS_validation or VK_EXT_debug_utils not available";
-
     std::shared_ptr<RenderBuffer> target =
-        VulkanDevice->createRenderBuffer(AttachmentUsage::eColor,
-                                         vk::Format::eR8G8B8A8Unorm,
-                                         {.width = 64u, .height = 64u},
-                                         SampleCount::e1,
-                                         1u,
-                                         1u,
-                                         vk::ImageTiling::eOptimal,
-                                         vk::ImageLayout::eUndefined,
-                                         vk::MemoryPropertyFlagBits::eDeviceLocal);
+        mDevice->createRenderBuffer(AttachmentUsage::eColor,
+                                    vk::Format::eR8G8B8A8Unorm,
+                                    {.width = 64u, .height = 64u},
+                                    SampleCount::e1,
+                                    1u,
+                                    1u,
+                                    vk::ImageTiling::eOptimal,
+                                    vk::ImageLayout::eUndefined,
+                                    vk::MemoryPropertyFlagBits::eDeviceLocal);
 
-    auto fencePool     = FencePool::create(VulkanDevice);
-    auto pool          = VulkanDevice->createCommandBufferPool();
+    auto fencePool     = FencePool::create(mDevice);
+    auto pool          = mDevice->createCommandBufferPool();
     auto commandBuffer = pool->get(vk::CommandBufferLevel::ePrimary);
 
     {
@@ -217,14 +211,14 @@ TEST_F(VulkanValidationFixture, CommandBufferRecorder_clearRenderBufferAndSubmit
         recorder.finish();
     }
 
-    const auto submission = VulkanDevice->getGraphicsQueue()->submit(
+    const auto submission = mDevice->getGraphicsQueue()->submit(
         fencePool, gNoSemaphores, gNoStages, std::array{std::move(commandBuffer)}, gNoSemaphores);
 
     EXPECT_EQ(submission.fence->wait(gWaitForever), vk::Result::eSuccess);
 
     pool->reset();
 
-    EXPECT_TRUE(validationErrors.empty())
-        << (validationErrors.empty() ? "" : validationErrors.front());
+    EXPECT_TRUE(mValidationErrors.empty())
+        << (mValidationErrors.empty() ? "" : mValidationErrors.front());
 }
 } // namespace VOG::Tests

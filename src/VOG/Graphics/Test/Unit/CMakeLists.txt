@@ -18,9 +18,10 @@ target_sources(VOG.Graphics.Unit
         Vulkan/ShaderProgramTest.cpp
         Vulkan/CommandBufferRecorderTest.cpp
         Vulkan/DeviceLifetimeTest.cpp
+        Vulkan/DeviceRequirementsTest.cpp
+        Vulkan/InDestructorTest.cpp
         Vulkan/SwapchainTest.cpp
         VulkanFixture.hpp
-        VulkanHeadlessFixture.hpp
         VulkanValidationFixture.hpp
         TestShaderCompiler.hpp
 )

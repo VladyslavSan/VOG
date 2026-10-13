@@ -1,8 +1,7 @@
 #include "VOG/Graphics/Vulkan/Attachment/AcquiredSwapchainImage.hpp"
 
 #include <VOG/Graphics/Vulkan/Device.hpp>
-
-#include <spdlog/spdlog.h>
+#include <VOG/Graphics/Vulkan/InDestructor.hpp>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -18,28 +17,24 @@ AcquiredSwapchainImage::AcquiredSwapchainImage(SwapchainGenerationPtr generation
 {
 }
 
-// Releasing can only throw on device loss; there is nothing left to do about that here.
-AcquiredSwapchainImage::~AcquiredSwapchainImage() // NOLINT(bugprone-exception-escape)
+AcquiredSwapchainImage::~AcquiredSwapchainImage()
 {
     if (mPresented)
     {
         return;
     }
 
-    try
-    {
-        const std::uint32_t                     imageIndex = mImageIndex;
-        const vk::ReleaseSwapchainImagesInfoKHR releaseInfo{
-            .swapchain       = *mGeneration->swapchain,
-            .imageIndexCount = 1u,
-            .pImageIndices   = &imageIndex,
-        };
-        mGeneration->device->releaseSwapchainImagesEXT(releaseInfo);
-    }
-    catch (const std::exception& exception)
-    {
-        spdlog::error("Releasing a swapchain image failed: {}", exception.what());
-    }
+    inDestructor("vkReleaseSwapchainImagesEXT",
+                 [this]
+                 {
+                     const std::uint32_t                     imageIndex = mImageIndex;
+                     const vk::ReleaseSwapchainImagesInfoKHR releaseInfo{
+                         .swapchain       = *mGeneration->swapchain,
+                         .imageIndexCount = 1u,
+                         .pImageIndices   = &imageIndex,
+                     };
+                     mGeneration->device->releaseSwapchainImagesEXT(releaseInfo);
+                 });
 }
 
 void

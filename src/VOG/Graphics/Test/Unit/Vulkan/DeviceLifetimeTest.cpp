@@ -63,12 +63,12 @@ class DeviceLifetime : public VulkanValidationFixture
  */
 TEST_F(DeviceLifetime, releasingLastReferenceDestroysDevice)
 {
-    auto fencePool = Graphics::Vulkan::FencePool::create(VulkanDevice);
+    auto fencePool = Graphics::Vulkan::FencePool::create(mDevice);
     // Drop the handle so the pool is idle; then drop the pool itself.
     fencePool->getShared();
     fencePool.reset();
 
-    auto buffer = makeBuffer(*VulkanDevice);
+    auto buffer = makeBuffer(*mDevice);
     buffer.reset();
 
     expectDeviceReleased(releaseDevice());
@@ -80,13 +80,13 @@ TEST_F(DeviceLifetime, releasingLastReferenceDestroysDevice)
  */
 TEST_F(VulkanFixture, Device_keepsInstanceAlive)
 {
-    const Graphics::Vulkan::InstanceWeakPtr weakInstance = VulkanInstance;
-    const Graphics::Vulkan::DeviceWeakPtr   weakDevice   = VulkanDevice;
+    const Graphics::Vulkan::InstanceWeakPtr weakInstance = mInstance;
+    const Graphics::Vulkan::DeviceWeakPtr   weakDevice   = mDevice;
 
-    VulkanInstance.reset();
+    mInstance.reset();
     EXPECT_FALSE(weakInstance.expired());
 
-    VulkanDevice.reset();
+    mDevice.reset();
     EXPECT_TRUE(weakDevice.expired());
     EXPECT_TRUE(weakInstance.expired());
 }
@@ -97,7 +97,7 @@ TEST_F(VulkanFixture, Device_keepsInstanceAlive)
  */
 TEST_F(DeviceLifetime, bufferKeepsDeviceAlive)
 {
-    auto       buffer   = makeBuffer(*VulkanDevice);
+    auto       buffer   = makeBuffer(*mDevice);
     const auto released = releaseDevice();
 
     expectDependentHoldsDevice(released,
@@ -111,8 +111,8 @@ TEST_F(DeviceLifetime, bufferKeepsDeviceAlive)
 
 TEST_F(DeviceLifetime, fenceKeepsDeviceAlive)
 {
-    auto fence = std::make_unique<Graphics::Vulkan::Fence>(VulkanDevice->createFence());
-    submitSignalling(*VulkanDevice, fence->handle());
+    auto fence = std::make_unique<Graphics::Vulkan::Fence>(mDevice->createFence());
+    submitSignalling(*mDevice, fence->handle());
     fence->markUsed();
     const auto released = releaseDevice();
 
@@ -129,8 +129,8 @@ TEST_F(DeviceLifetime, fenceKeepsDeviceAlive)
  */
 TEST_F(DeviceLifetime, fenceHandleKeepsDeviceAlive)
 {
-    auto handle = Graphics::Vulkan::FencePool::create(VulkanDevice)->getShared();
-    submitSignalling(*VulkanDevice, handle->handle());
+    auto handle = Graphics::Vulkan::FencePool::create(mDevice)->getShared();
+    submitSignalling(*mDevice, handle->handle());
     handle->markUsed();
     const auto released = releaseDevice();
 
@@ -144,7 +144,7 @@ TEST_F(DeviceLifetime, fenceHandleKeepsDeviceAlive)
 
 TEST_F(DeviceLifetime, fencePoolKeepsDeviceAlive)
 {
-    auto       fencePool = Graphics::Vulkan::FencePool::create(VulkanDevice);
+    auto       fencePool = Graphics::Vulkan::FencePool::create(mDevice);
     const auto released  = releaseDevice();
 
     expectDependentHoldsDevice(released,
@@ -157,7 +157,7 @@ TEST_F(DeviceLifetime, fencePoolKeepsDeviceAlive)
 
 TEST_F(DeviceLifetime, commandBufferPoolKeepsDeviceAlive)
 {
-    auto       pool     = VulkanDevice->createCommandBufferPool();
+    auto       pool     = mDevice->createCommandBufferPool();
     const auto released = releaseDevice();
 
     expectDependentHoldsDevice(released,
@@ -175,7 +175,7 @@ TEST_F(DeviceLifetime, commandBufferPoolKeepsDeviceAlive)
 TEST_F(DeviceLifetime, commandBufferHandleKeepsDeviceAlive)
 {
     auto handle = std::make_unique<Graphics::Vulkan::CommandBufferHandle>(
-        VulkanDevice->createCommandBufferPool()->get(vk::CommandBufferLevel::ePrimary));
+        mDevice->createCommandBufferPool()->get(vk::CommandBufferLevel::ePrimary));
     const auto released = releaseDevice();
 
     expectDependentHoldsDevice(released,
@@ -193,7 +193,7 @@ TEST_F(DeviceLifetime, commandBufferHandleKeepsDeviceAlive)
  */
 TEST_F(DeviceLifetime, semaphoreKeepsDeviceAlive)
 {
-    auto       semaphore = VulkanDevice->createSemaphore();
+    auto       semaphore = mDevice->createSemaphore();
     const auto released  = releaseDevice();
 
     expectDependentHoldsDevice(released, semaphore);
@@ -201,8 +201,8 @@ TEST_F(DeviceLifetime, semaphoreKeepsDeviceAlive)
 
 TEST_F(DeviceLifetime, timelineSemaphoreKeepsDeviceAlive)
 {
-    auto semaphore = std::make_unique<Graphics::Vulkan::TimelineSemaphore>(
-        VulkanDevice->createTimelineSemaphore());
+    auto semaphore =
+        std::make_unique<Graphics::Vulkan::TimelineSemaphore>(mDevice->createTimelineSemaphore());
     const auto released = releaseDevice();
 
     expectDependentHoldsDevice(released,
@@ -218,8 +218,8 @@ TEST_F(DeviceLifetime, timelineSemaphoreKeepsDeviceAlive)
  */
 TEST_F(DeviceLifetime, queueKeepsDeviceAlive)
 {
-    auto       queue    = VulkanDevice->getGraphicsQueue();
-    auto       transfer = VulkanDevice->getTransferQueue();
+    auto       queue    = mDevice->getGraphicsQueue();
+    auto       transfer = mDevice->getTransferQueue();
     const auto released = releaseDevice();
 
     // The transfer handle alone must keep the device alive too; drop the graphics one first.
@@ -238,23 +238,23 @@ TEST_F(DeviceLifetime, queueKeepsDeviceAlive)
  */
 TEST_F(DeviceLifetime, renderBufferKeepsDeviceAlive)
 {
-    auto renderBuffer = VulkanDevice->createRenderBuffer(Graphics::Vulkan::AttachmentUsage::eColor,
-                                                         vk::Format::eR8G8B8A8Unorm,
-                                                         {.width = 16u, .height = 16u},
-                                                         Graphics::Vulkan::SampleCount::e1,
-                                                         1u,
-                                                         1u,
-                                                         vk::ImageTiling::eOptimal,
-                                                         vk::ImageLayout::eUndefined,
-                                                         vk::MemoryPropertyFlagBits::eDeviceLocal);
-    const auto released = releaseDevice();
+    auto       renderBuffer = mDevice->createRenderBuffer(Graphics::Vulkan::AttachmentUsage::eColor,
+                                                          vk::Format::eR8G8B8A8Unorm,
+                                                          {.width = 16u, .height = 16u},
+                                                          Graphics::Vulkan::SampleCount::e1,
+                                                          1u,
+                                                          1u,
+                                                          vk::ImageTiling::eOptimal,
+                                                          vk::ImageLayout::eUndefined,
+                                                          vk::MemoryPropertyFlagBits::eDeviceLocal);
+    const auto released     = releaseDevice();
 
     expectDependentHoldsDevice(released, renderBuffer);
 }
 
 TEST_F(DeviceLifetime, frameObjectsKeepDeviceAlive)
 {
-    auto frame = std::make_unique<Graphics::Frame::FrameObjects>(VulkanDevice, std::size_t{1});
+    auto       frame    = std::make_unique<Graphics::Frame::FrameObjects>(mDevice, std::size_t{1});
     const auto released = releaseDevice();
 
     expectDependentHoldsDevice(released,
@@ -269,7 +269,7 @@ TEST_F(DeviceLifetime, frameObjectsKeepDeviceAlive)
 TEST_F(DeviceLifetime, frameObjectManagerKeepsDeviceAlive)
 {
     auto manager = std::make_unique<Graphics::Frame::FrameObjectManager>(
-        VulkanDevice, std::size_t{2}, std::size_t{1});
+        mDevice, std::size_t{2}, std::size_t{1});
     const auto released = releaseDevice();
 
     expectDependentHoldsDevice(released,
@@ -286,7 +286,7 @@ TEST_F(DeviceLifetime, frameObjectManagerKeepsDeviceAlive)
  */
 TEST_F(DeviceLifetime, shaderProgramCacheKeepsDeviceAlive)
 {
-    auto cache = std::make_unique<Graphics::ShaderProgramCache>(VulkanDevice, VOG_TEST_SHADER_PATH);
+    auto cache = std::make_unique<Graphics::ShaderProgramCache>(mDevice, VOG_TEST_SHADER_PATH);
     const auto released = releaseDevice();
 
     expectDependentHoldsDevice(released,

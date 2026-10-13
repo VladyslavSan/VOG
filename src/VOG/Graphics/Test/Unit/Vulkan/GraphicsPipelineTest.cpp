@@ -40,7 +40,7 @@ TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
 {
     using namespace VOG::Graphics::Vulkan;
 
-    vk::raii::PipelineLayout pipelineLayout{*VulkanDevice, vk::PipelineLayoutCreateInfo{}};
+    vk::raii::PipelineLayout pipelineLayout{*mDevice, vk::PipelineLayoutCreateInfo{}};
 
     constexpr auto colorWriteMask =
         ColorComponent::eR | ColorComponent::eG | ColorComponent::eB | ColorComponent::eA;
@@ -77,11 +77,11 @@ TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
             createShader(Shader::ShadingStage::eFragment, gFragmentShaderGoodString);
 
         auto createInfo    = createInfoTemplate;
-        createInfo.shading = VulkanDevice->createShaderProgram(
+        createInfo.shading = mDevice->createShaderProgram(
             {.vertex   = {.shader = vertexShader, .entryPoint = "main"},
              .fragment = {.shader = fragmentShader, .entryPoint = "main"}});
 
-        EXPECT_NO_THROW(auto pipeline = VulkanDevice->createGraphicsPipeline(createInfo););
+        EXPECT_NO_THROW(auto pipeline = mDevice->createGraphicsPipeline(createInfo););
     }
 }
 } // namespace VOG::Tests

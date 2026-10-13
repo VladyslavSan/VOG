@@ -44,9 +44,11 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Vulkan/Containers.hpp
             include/VOG/Graphics/Vulkan/Device.hpp
             include/VOG/Graphics/Vulkan/DeviceChild.hpp
+            include/VOG/Graphics/Vulkan/DeviceRequirements.hpp
             include/VOG/Graphics/Vulkan/Fence.hpp
             include/VOG/Graphics/Vulkan/FencePool.hpp
             include/VOG/Graphics/Vulkan/GraphicsPipeline.hpp
+            include/VOG/Graphics/Vulkan/InDestructor.hpp
             include/VOG/Graphics/Vulkan/Instance.hpp
             include/VOG/Graphics/Vulkan/Limits.hpp
             include/VOG/Graphics/Vulkan/MemoryAllocator.hpp
@@ -74,9 +76,11 @@ target_sources(VOG.Graphics
         src/VOG/Graphics/Vulkan/CommandBufferRecorder.cpp
         src/VOG/Graphics/Vulkan/Common.cpp
         src/VOG/Graphics/Vulkan/Device.cpp
+        src/VOG/Graphics/Vulkan/DeviceRequirements.cpp
         src/VOG/Graphics/Vulkan/Fence.cpp
         src/VOG/Graphics/Vulkan/FencePool.cpp
         src/VOG/Graphics/Vulkan/GraphicsPipeline.cpp
+        src/VOG/Graphics/Vulkan/InDestructor.cpp
         src/VOG/Graphics/Vulkan/Instance.cpp
         src/VOG/Graphics/Vulkan/MemoryAllocator.cpp
         src/VOG/Graphics/Vulkan/MemoryAllocatorVmaImpl.cpp

@@ -2,11 +2,11 @@
 
 #include <VOG/Common/JSONContainer.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
+#include <VOG/Graphics/Vulkan/DeviceRequirements.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
 
 #include <gtest/gtest.h>
 
-#include <algorithm>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -21,39 +21,44 @@ namespace VOG::Tests
 class VulkanFixture : public testing::Test
 {
 public:
+    struct Options
+    {
+        /** Enable VK_LAYER_KHRONOS_validation and record its ERROR messages into
+         *  mValidationErrors. Falls back to no layer when the layer or VK_EXT_debug_utils is not
+         *  installed; check validationActive(). */
+        bool validation = false;
+
+        /** Enable VK_EXT_headless_surface so tests can build a Swapchain without a window. Falls
+         *  back to off when the instance does not offer it; check headlessSurfaceActive(). */
+        bool headlessSurface = false;
+    };
+
     VulkanFixture()
-        : VulkanFixture{false}
+        : VulkanFixture{Options{}}
     {
     }
 
     Graphics::Vulkan::ShaderPtr
     createShader(Graphics::Vulkan::Shader::ShadingStage stage, const std::string& glslCode)
     {
-        return VulkanDevice->createShader(stage, compileGLSL(stage, glslCode));
+        return mDevice->createShader(stage, compileGLSL(stage, glslCode));
     }
 
 protected:
-    /**
-     * @param withValidation  Enable VK_LAYER_KHRONOS_validation and record its ERROR messages
-     *                        into validationErrors. Falls back to no layer when the layer or
-     *                        VK_EXT_debug_utils is not installed; check validationActive().
-     * @param withHeadlessSurface  Enable VK_EXT_headless_surface so tests can build a Swapchain
-     *                        without a window. Falls back to off when the instance does not
-     *                        offer it; check headlessSurfaceActive().
-     */
-    explicit VulkanFixture(bool withValidation, bool withHeadlessSurface = false)
-        : mValidationActive{withValidation && validationInstalled()}
-        , mHeadlessSurfaceActive{withHeadlessSurface &&
-                                 instanceExtensionInstalled(gHeadlessSurfaceExtension)}
-        , VulkanInstance{Graphics::Vulkan::Instance::create({
+    explicit VulkanFixture(Options options)
+        : mValidationActive{options.validation && validationInstalled()}
+        , mHeadlessSurfaceActive{options.headlessSurface &&
+                                 instanceExtensionInstalled(kHeadlessSurfaceExtension)}
+        , mInstance{Graphics::Vulkan::Instance::create({
               .appName    = "VOG Test",
               .engineName = "Test",
-              .layers     = mValidationActive ? std::vector<std::string>{gValidationLayer}
+              .layers     = mValidationActive ? std::vector<std::string>{kValidationLayer}
                                               : std::vector<std::string>{},
               .extensions = enabledExtensions(),
           })}
-        , messenger{mValidationActive ? makeMessenger() : vk::raii::DebugUtilsMessengerEXT{nullptr}}
-        , VulkanDevice{VulkanInstance->makeDevice()}
+        , mMessenger{mValidationActive ? makeMessenger()
+                                       : vk::raii::DebugUtilsMessengerEXT{nullptr}}
+        , mDevice{mInstance->makeDevice()}
     {
     }
 
@@ -104,9 +109,9 @@ protected:
     Released
     releaseDevice()
     {
-        Released released{.instance = VulkanInstance, .device = VulkanDevice};
-        mInstanceKeeper = std::move(VulkanInstance);
-        VulkanDevice.reset();
+        Released released{.instance = mInstance, .device = mDevice};
+        mInstanceKeeper = std::move(mInstance);
+        mDevice.reset();
         return released;
     }
 
@@ -120,10 +125,10 @@ protected:
     expectDeviceReleased(const Released& released)
     {
         EXPECT_TRUE(released.device.expired());
-        EXPECT_TRUE(validationErrors.empty())
-            << (validationErrors.empty() ? "" : validationErrors.front());
+        EXPECT_TRUE(mValidationErrors.empty())
+            << (mValidationErrors.empty() ? "" : mValidationErrors.front());
 
-        messenger = vk::raii::DebugUtilsMessengerEXT{nullptr};
+        mMessenger = vk::raii::DebugUtilsMessengerEXT{nullptr};
         mInstanceKeeper.reset();
         EXPECT_TRUE(released.instance.expired());
     }
@@ -159,50 +164,36 @@ protected:
     }
 
     // Declared first, destroyed last: the messenger can still report while the device goes away.
-    std::vector<std::string> validationErrors;
+    std::vector<std::string> mValidationErrors;
 
 private:
     const bool mValidationActive;
     const bool mHeadlessSurfaceActive;
 
 protected:
-    Graphics::Vulkan::InstancePtr    VulkanInstance;
+    Graphics::Vulkan::InstancePtr    mInstance;
     Graphics::Vulkan::InstancePtr    mInstanceKeeper;
-    vk::raii::DebugUtilsMessengerEXT messenger;
-    Graphics::Vulkan::DevicePtr      VulkanDevice;
+    vk::raii::DebugUtilsMessengerEXT mMessenger;
+    Graphics::Vulkan::DevicePtr      mDevice;
 
 private:
-    static constexpr const char* gValidationLayer          = "VK_LAYER_KHRONOS_validation";
-    static constexpr const char* gDebugUtilsExtension      = "VK_EXT_debug_utils";
-    static constexpr const char* gHeadlessSurfaceExtension = "VK_EXT_headless_surface";
+    static constexpr const char* kValidationLayer          = "VK_LAYER_KHRONOS_validation";
+    static constexpr const char* kDebugUtilsExtension      = "VK_EXT_debug_utils";
+    static constexpr const char* kHeadlessSurfaceExtension = "VK_EXT_headless_surface";
 
     static bool
     instanceExtensionInstalled(std::string_view name)
     {
-        vk::raii::Context context;
-
-        const auto extensions = context.enumerateInstanceExtensionProperties();
-        return std::ranges::any_of(extensions,
-                                   [name](const vk::ExtensionProperties& extension)
-                                   {
-                                       return std::string_view{extension.extensionName} == name;
-                                   });
+        return Graphics::Vulkan::hasExtension(
+            vk::raii::Context{}.enumerateInstanceExtensionProperties(), name);
     }
 
     static bool
     validationInstalled()
     {
-        vk::raii::Context context;
-
-        const auto layers = context.enumerateInstanceLayerProperties();
-        const bool hasLayer =
-            std::ranges::any_of(layers,
-                                [](const vk::LayerProperties& layer)
-                                {
-                                    return std::string_view{layer.layerName} == gValidationLayer;
-                                });
-
-        return hasLayer && instanceExtensionInstalled(gDebugUtilsExtension);
+        return Graphics::Vulkan::hasLayer(vk::raii::Context{}.enumerateInstanceLayerProperties(),
+                                          kValidationLayer) &&
+               instanceExtensionInstalled(kDebugUtilsExtension);
     }
 
     std::vector<std::string>
@@ -211,11 +202,11 @@ private:
         std::vector<std::string> extensions;
         if (mValidationActive)
         {
-            extensions.emplace_back(gDebugUtilsExtension);
+            extensions.emplace_back(kDebugUtilsExtension);
         }
         if (mHeadlessSurfaceActive)
         {
-            extensions.emplace_back(gHeadlessSurfaceExtension);
+            extensions.emplace_back(kHeadlessSurfaceExtension);
         }
         return extensions;
     }
@@ -236,11 +227,11 @@ private:
     vk::raii::DebugUtilsMessengerEXT
     makeMessenger()
     {
-        return VulkanInstance->createDebugUtilsMessengerEXT(vk::DebugUtilsMessengerCreateInfoEXT{
+        return mInstance->createDebugUtilsMessengerEXT(vk::DebugUtilsMessengerCreateInfoEXT{
             .messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
             .messageType     = vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation,
             .pfnUserCallback = VulkanFixture::onMessage,
-            .pUserData       = &validationErrors,
+            .pUserData       = &mValidationErrors,
         });
     }
 };
