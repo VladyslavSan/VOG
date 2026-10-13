@@ -40,12 +40,18 @@ Fence::reset()
     mState = State::eNotUsed;
 }
 
-const vk::raii::Fence*
-Fence::useFence()
+vk::Fence
+Fence::handle() const
+{
+    return **this;
+}
+
+void
+Fence::markUsed()
 {
     VOG_ASSERT(mState == State::eNotUsed);
 
     mState = State::eUsed;
-    return this;
 }
+
 } // namespace VOG::Graphics::Vulkan

@@ -37,16 +37,20 @@ protected:
      * @param withValidation  Enable VK_LAYER_KHRONOS_validation and record its ERROR messages
      *                        into validationErrors. Falls back to no layer when the layer or
      *                        VK_EXT_debug_utils is not installed; check validationActive().
+     * @param withHeadlessSurface  Enable VK_EXT_headless_surface so tests can build a Swapchain
+     *                        without a window. Falls back to off when the instance does not
+     *                        offer it; check headlessSurfaceActive().
      */
-    explicit VulkanFixture(bool withValidation)
+    explicit VulkanFixture(bool withValidation, bool withHeadlessSurface = false)
         : mValidationActive{withValidation && validationInstalled()}
+        , mHeadlessSurfaceActive{withHeadlessSurface &&
+                                 instanceExtensionInstalled(gHeadlessSurfaceExtension)}
         , VulkanInstance{Graphics::Vulkan::Instance::create({
               .appName    = "VOG Test",
               .engineName = "Test",
               .layers     = mValidationActive ? std::vector<std::string>{gValidationLayer}
                                               : std::vector<std::string>{},
-              .extensions = mValidationActive ? std::vector<std::string>{gDebugUtilsExtension}
-                                              : std::vector<std::string>{},
+              .extensions = enabledExtensions(),
           })}
         , messenger{mValidationActive ? makeMessenger() : vk::raii::DebugUtilsMessengerEXT{nullptr}}
         , VulkanDevice{VulkanInstance->makeDevice()}
@@ -57,6 +61,12 @@ protected:
     validationActive() const
     {
         return mValidationActive;
+    }
+
+    bool
+    headlessSurfaceActive() const
+    {
+        return mHeadlessSurfaceActive;
     }
 
     /** Barrier that takes a fresh color image to the layout beginRendering expects. */
@@ -153,6 +163,7 @@ protected:
 
 private:
     const bool mValidationActive;
+    const bool mHeadlessSurfaceActive;
 
 protected:
     Graphics::Vulkan::InstancePtr    VulkanInstance;
@@ -161,8 +172,22 @@ protected:
     Graphics::Vulkan::DevicePtr      VulkanDevice;
 
 private:
-    static constexpr const char* gValidationLayer     = "VK_LAYER_KHRONOS_validation";
-    static constexpr const char* gDebugUtilsExtension = "VK_EXT_debug_utils";
+    static constexpr const char* gValidationLayer          = "VK_LAYER_KHRONOS_validation";
+    static constexpr const char* gDebugUtilsExtension      = "VK_EXT_debug_utils";
+    static constexpr const char* gHeadlessSurfaceExtension = "VK_EXT_headless_surface";
+
+    static bool
+    instanceExtensionInstalled(std::string_view name)
+    {
+        vk::raii::Context context;
+
+        const auto extensions = context.enumerateInstanceExtensionProperties();
+        return std::ranges::any_of(extensions,
+                                   [name](const vk::ExtensionProperties& extension)
+                                   {
+                                       return std::string_view{extension.extensionName} == name;
+                                   });
+    }
 
     static bool
     validationInstalled()
@@ -177,15 +202,22 @@ private:
                                     return std::string_view{layer.layerName} == gValidationLayer;
                                 });
 
-        const auto extensions   = context.enumerateInstanceExtensionProperties();
-        const bool hasExtension = std::ranges::any_of(
-            extensions,
-            [](const vk::ExtensionProperties& extension)
-            {
-                return std::string_view{extension.extensionName} == gDebugUtilsExtension;
-            });
+        return hasLayer && instanceExtensionInstalled(gDebugUtilsExtension);
+    }
 
-        return hasLayer && hasExtension;
+    std::vector<std::string>
+    enabledExtensions() const
+    {
+        std::vector<std::string> extensions;
+        if (mValidationActive)
+        {
+            extensions.emplace_back(gDebugUtilsExtension);
+        }
+        if (mHeadlessSurfaceActive)
+        {
+            extensions.emplace_back(gHeadlessSurfaceExtension);
+        }
+        return extensions;
     }
 
     static vk::Bool32

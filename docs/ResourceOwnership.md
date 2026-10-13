@@ -30,7 +30,9 @@ anything that flows through the tracked APIs.
    in the pool's submitted list (`Graphics/Vulkan/Queue.hpp`,
    `Graphics/Vulkan/CommandBufferPool.cpp`). If submit throws, handles are not
    parked against an unsignaled fence. The command buffer — and therefore
-   everything it retains — stays alive while the GPU works.
+   everything it retains — stays alive while the GPU works. After a successful
+   submit each submitted command buffer also retains the wait and signal
+   `Semaphore`s, so the caller can drop them.
 
 3. **Fence wait releases.** When a frame slot is re-acquired
    (`FrameObjectManager::acquireNextFrame` → `FrameObjects::onFrameStart` →
@@ -40,6 +42,18 @@ anything that flows through the tracked APIs.
 
 The release point is therefore exactly the earliest provably-safe moment:
 after the fence of the frame that referenced the resource has signaled.
+
+4. **Presenting retains.** A command buffer fence says nothing about the
+   presentation engine. `Swapchain::present` chains a present fence
+   (`VK_EXT_swapchain_maintenance1`, required) and returns a `Presentation`:
+   the swapchain generation, the semaphore the present waits, and the fence.
+   The frame slot keeps it and drops it in `FrameObjects::onFrameStart`, which
+   waits the fence — before the slot signals that semaphore again. A
+   `FenceHandle` waits for its fence in its destructor if the GPU may still
+   signal it, so any owner (a pool holding an unreset submission, a
+   `Presentation`, a `FrameObjects`) drains on drop. Swapchain recreation needs
+   no `waitIdle`: the old generation is retired by reference count.
+   Details: `SwapchainSync.md`.
 
 ## Self-sufficient handles
 
@@ -88,7 +102,9 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    `std::bad_weak_ptr` at runtime. Enforced, not documented: those types have
    private constructors, deleted copy and move constructors, and are created only
    through a factory returning `shared_ptr` (`Instance::create`, `Instance::makeDevice`,
-   `Device::createCommandBufferPool`, `FencePool::create`).
+   `Device::createCommandBufferPool`, `FencePool::create`). `Semaphore` is a
+   leaf that Device::createSemaphore returns as `shared_ptr`, because every
+   submit shares it with the command buffers.
 4. **No cycles.** A dependency never strongly references its dependents, so
    dropping the last reference destroys the object.
 5. **Own handle first, dependencies last — by declaration order.** C++ destroys
@@ -99,8 +115,8 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    dependency *member* next to a handle *base* — bases outlive members, which
    is what forced the hand-written `~Buffer` at 16af4c1. `DeviceChild` is that
    earlier base for types that derive from a `vk::raii` handle and need the
-   device (`Fence`, `GraphicsPipeline`, `TimelineSemaphore`). Creation-only
-   inputs, like the pipeline layout a `GraphicsPipeline` was built with, rely on
+   device (`Fence`, `GraphicsPipeline`, `Semaphore`, `TimelineSemaphore`).
+   Creation-only inputs, like the pipeline layout a `GraphicsPipeline` was built with, rely on
    `maintenance4` (enabled in `Device.cpp`), not on declaration order.
 6. **RAII wrappers bracket state.** A wrapper that puts its object into a state
    (recording, mapped, rendering) enters it in the constructor and leaves it in
@@ -114,22 +130,26 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    external-synchronization rules (e.g. command buffers vs. their pool). These
    are **render-thread only**, because they take no lock and the last
    reference returns the object to a pool or touches an externally synchronized
-   queue: `FencePool` and `FenceHandle`, `CommandBufferHandle` (its destructor
-   returns the command buffer to its pool), `Queue::submit` and
-   `Swapchain::present`.
+   queue or swapchain: `FencePool` and `FenceHandle` (its destructor waits for
+   the fence, then returns it to the pool), `CommandBufferHandle` (its
+   destructor returns the command buffer to its pool), `Queue::submit`,
+   `Swapchain::present`, dropping a `Swapchain::Presentation` (it holds a
+   `FenceHandle`), `AcquiredSwapchainImage` (its destructor releases an
+   unpresented image on the swapchain) and `FrameObjects::retainUntilPresented`.
 8. **Every type is tested.** Drop the dependency, make a real Vulkan call
    through the dependent, drop it, assert the dependency expired and that the
    validation layer raised no error while the dependent was destroyed — a child
    object that outlives its device is reported at `vkDestroyDevice`
    (`DeviceLifetimeTest.cpp`, `VulkanFixture::expectDependentHoldsDevice`).
    Covered: `Buffer`, `Fence`, `FenceHandle`, `FencePool`, `CommandBufferPool`,
-   `CommandBufferHandle`, `TimelineSemaphore`, `Queue`, `RenderBuffer`,
-   `Shader`, `ShaderProgram`, `GraphicsPipeline`, `FrameObjects`,
-   `FrameObjectManager`, `ShaderProgramCache`. Not covered yet: `Swapchain` and
-   `AcquiredSwapchainImage`, which need a window surface. `Shader`,
-   `ShaderProgram` and `RenderBuffer` expose no Vulkan call, so their
-   destruction is the call under test; for `ShaderProgramCache` it is the
-   lookup.
+   `CommandBufferHandle`, `Semaphore`, `TimelineSemaphore`, `Queue`,
+   `RenderBuffer`, `Shader`, `ShaderProgram`, `GraphicsPipeline`,
+   `FrameObjects`, `FrameObjectManager`, `ShaderProgramCache`, `Swapchain`,
+   `SwapchainGeneration` and `AcquiredSwapchainImage` (`SwapchainTest.cpp`, on a
+   headless surface via `VK_EXT_headless_surface`; the generation is covered by
+   `acquiredImageKeepsSwapchainAlive`, which holds nothing else). `Shader`, `ShaderProgram`, `RenderBuffer` and
+   `Semaphore` expose no Vulkan call, so their destruction is the call under
+   test; for `ShaderProgramCache` it is the lookup.
 
 ## Rules when extending the API
 
@@ -145,13 +165,12 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
 
 ## Known gaps (intentional, to be addressed where they arise)
 
-- **Objects never recorded into a command buffer.** Example: on swapchain
-  recreation (window resize), the old `vk::SwapchainKHR` and its image views are
-  referenced by the presentation engine, not by any command buffer. These need
-  explicit frame-keyed retirement at the recreation site; today
-  `Swapchain::recreate` waits for the device to be idle instead. A recorded
-  `AcquiredSwapchainImage` retains only its image view: the `VkImage` belongs
-  to the swapchain, which is not an attachment itself and is never recorded.
+- **Unpresented acquired image.** Dropping an `AcquiredSwapchainImage` without
+  presenting it releases the image but leaves its acquire semaphore signaled or
+  pending. The next acquire's swap trick can then get a signaled spare, and the
+  generation destroys a semaphore with a signal pending. Only an exception
+  between acquire and present reaches it; see `SwapchainSync.md`.
+
 - **Descriptor-set-referenced resources** (future textures/UBOs): tracking must
   be extended to descriptor set binding when those appear.
 

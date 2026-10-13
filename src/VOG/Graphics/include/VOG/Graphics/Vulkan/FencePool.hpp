@@ -42,12 +42,20 @@ public:
     public:
         FenceHandle(FencePoolPtr pool, Fence fence);
 
+        /**
+         * Waits for the fence if the GPU may still signal it, then returns it to the pool. The
+         * owner of the handle can therefore drop it at any time, and what the fence guards stays
+         * alive until the GPU is done.
+         *
+         * @note Render thread only. The pool takes no lock.
+         */
         ~FenceHandle();
 
         FenceHandle(const FenceHandle&) = delete;
         FenceHandle(FenceHandle&&)      = delete;
 
-        using Fence::useFence;
+        using Fence::handle;
+        using Fence::markUsed;
         using Fence::wait;
 
     private:

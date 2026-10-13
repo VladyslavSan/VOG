@@ -5,9 +5,11 @@
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/AcquiredSwapchainImage.hpp>
+#include <VOG/Graphics/Vulkan/Attachment/SwapchainGeneration.hpp>
+#include <VOG/Graphics/Vulkan/FencePool.hpp>
+#include <VOG/Graphics/Vulkan/Semaphore.hpp>
 
 #include <memory>
-#include <optional>
 #include <utility>
 #include <vector>
 
@@ -48,17 +50,12 @@ public:
             vk::PresentModeKHR::eFifoRelaxed};
 
         Common::SurfaceHandle surface;
-    };
 
-    /** All per-image resources share the same index: the value returned by vkAcquireNextImageKHR.
-     */
-    struct SwapchainImage
-    {
-        vk::Image                            image;
-        std::shared_ptr<vk::raii::ImageView> imageView;
-        /** PE signals this after finishing display of the image (PE→GPU "present done" signal).
-         *  Populated via the swap trick in acquireNextImage(). Submit waits this. */
-        vk::raii::Semaphore imageAvailableSemaphore;
+        /**
+         * Size to use when the surface lets the application choose it (the surface reports
+         * currentExtent as 0xFFFFFFFF, as a headless surface does). Ignored otherwise.
+         */
+        vk::Extent2D fallbackExtent = {.width = 0u, .height = 0u};
     };
 
     struct ImageAcquireResult
@@ -66,8 +63,31 @@ public:
         AcquireStatus status;
         /** Valid when eReady. */
         AcquiredSwapchainImagePtr acquired;
-        /** Valid when eReady, until the next recreate(); submit waits this. */
-        const vk::raii::Semaphore* imageAvailableSemaphore;
+        /** Valid when eReady; submit waits this. */
+        SemaphorePtr imageAvailableSemaphore;
+    };
+
+    /**
+     * What one vkQueuePresentKHR still uses after it returned. Hold it until the presentation is
+     * over: dropping it waits for the present fence, and only then lets go of the swapchain
+     * generation and the semaphore the presentation waited.
+     *
+     * Members are destroyed in reverse order, so the fence goes first.
+     *
+     * @note Render thread only. Dropping it returns the fence to its pool.
+     */
+    struct Presentation
+    {
+        SwapchainGenerationPtr generation;
+        SemaphorePtr           waitSemaphore;
+        /** Signals once the presentation engine is done with the semaphore and the swapchain. */
+        std::shared_ptr<FencePool::FenceHandle> fence;
+    };
+
+    struct PresentResult
+    {
+        PresentStatus status;
+        Presentation  presentation;
     };
 
     ~Swapchain();
@@ -78,24 +98,31 @@ private:
     Swapchain(DevicePtr device, const SwapchainParameters& parameters);
 
     /**
-     * (Re)creates the swapchain, image views and per-image sync data for the given extent.
+     * Creates a swapchain, its image views and per-image sync data for the given extent.
      *
      * @param oldSwapchain  Previous swapchain handle for driver resource reuse (may be null).
      */
-    void build(vk::SwapchainKHR oldSwapchain);
+    SwapchainGenerationPtr makeGeneration(vk::SwapchainKHR oldSwapchain, vk::Extent2D extent);
 
 public:
     ImageAcquireResult acquireNextImage();
 
     /**
+     * Presents @p acquired, which releases its acquisition. The presentation waits
+     * @p waitSemaphore. The caller keeps the returned Presentation until the frame slot that
+     * rendered the image starts again; see Presentation.
+     *
      * @note Render thread only. Presenting uses the present queue, which is externally
      * synchronized.
      */
-    PresentStatus present(vk::Semaphore renderFinishedSemaphore);
+    PresentResult present(const AcquiredSwapchainImagePtr& acquired,
+                          SemaphorePtr                     waitSemaphore,
+                          const FencePoolPtr&              fencePool);
 
     /**
-     * Recreates the swapchain to match the current surface size. Waits for the device to be idle
-     * before tearing down the old swapchain.
+     * Recreates the swapchain to match the current surface size. The old swapchain is not
+     * waited for: it dies once the last presentation and the last command buffer that use it
+     * are done (see SwapchainGeneration).
      *
      * @return true if the swapchain was rebuilt; false if skipped because the surface is currently
      *         zero-sized (e.g. the window is minimized).
@@ -117,17 +144,12 @@ protected:
     vk::raii::Queue     mPresentQueue;
 
     vk::SurfaceFormatKHR mSurfaceFormat;
-    vk::Extent3D         mExtent;
 
     /** Selected once at construction and reused on every rebuild. */
     std::uint32_t      mMinImageCount = 1u;
     vk::PresentModeKHR mPresentMode   = vk::PresentModeKHR::eFifo;
 
-    vk::raii::SwapchainKHR      mSwapchain;
-    std::vector<SwapchainImage> mImages;
-
-    /** Rotates through mImages slots via the swap trick in acquireNextImage(). */
-    vk::raii::Semaphore          mSpareAcquireSemaphore;
-    std::optional<std::uint32_t> mCurrentSwapchainImageIndex;
+    /** Replaced by recreate(); acquired images and presentations keep the old one alive. */
+    SwapchainGenerationPtr mGeneration;
 };
 } // namespace VOG::Graphics::Vulkan

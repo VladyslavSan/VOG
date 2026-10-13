@@ -13,6 +13,8 @@ struct SurfaceHandle
         eApple,
         eLinuxWayland,
         eLinuxXlib,
+        /** Surface without a window (VK_EXT_headless_surface); the handles are not used. */
+        eHeadless,
         eNone,
     };
 

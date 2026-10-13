@@ -2,7 +2,10 @@
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
+#include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
+#include <VOG/Graphics/Vulkan/Semaphore.hpp>
 
+#include <optional>
 #include <vector>
 
 namespace VOG::Graphics::Vulkan
@@ -27,7 +30,17 @@ public:
 
     ~FrameObjects();
 
-    const vk::raii::Semaphore& getRenderFinishedSemaphore() const;
+    const Vulkan::SemaphorePtr& getRenderFinishedSemaphore() const;
+
+    /**
+     * Keeps @p presentation until this frame slot starts again. The slot's render-finished
+     * semaphore is waited by that presentation, so the slot must not signal it again before the
+     * presentation fence signalled; onFrameStart() drops the presentation, which waits for the
+     * fence.
+     *
+     * @note Render thread only: dropping a Presentation returns its fence to the pool.
+     */
+    void retainUntilPresented(Vulkan::Swapchain::Presentation presentation);
 
     /**
      * Get the command buffer pool by thread id.
@@ -42,7 +55,8 @@ public:
 
 protected:
     /**
-     * Frame cleanups from previous usage like resetting the command buffers and command pools etc.
+     * Frame cleanups from previous usage like resetting the command buffers and command pools, and
+     * waiting for the previous presentation of this slot.
      */
     void onFrameStart();
 
@@ -54,12 +68,15 @@ protected:
     /** Vulkan device provider */
     Vulkan::DevicePtr mDevice;
 
-    /** Signaled by the graphics submit; waited by vkQueuePresentKHR. Safe to reuse after the
-     *  frame fence fires — the fence proves the GPU finished the submit, which means the signal
-     *  op completed and the PE's wait has been or will be satisfied before the next submit. */
-    vk::raii::Semaphore mRenderFinishedSemaphore;
+    /** Signaled by the graphics submit; waited by vkQueuePresentKHR. The submit fence does not
+     *  prove the presentation engine consumed the wait, so the semaphore is safe to signal again
+     *  only after mPresentation (and its present fence) was dropped in onFrameStart(). */
+    Vulkan::SemaphorePtr mRenderFinishedSemaphore;
 
     /** Per working thread command buffer pools */
     std::vector<Vulkan::CommandBufferPoolPtr> mCommandBufferPools;
+
+    /** The last presentation of this slot; it holds the swapchain the presentation uses. */
+    std::optional<Vulkan::Swapchain::Presentation> mPresentation;
 };
 } // namespace VOG::Graphics::Frame

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <format>
 #include <ranges>
 #include <stdexcept>
@@ -22,7 +23,10 @@ getInstanceRequiredExtensions()
     // clang-format off
     std::vector<const char*> requiredExtensions{
         VK_KHR_SURFACE_EXTENSION_NAME,
-        VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME
+        VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
+        // Instance half of VK_EXT_swapchain_maintenance1, which the device requires.
+        VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME,
+        VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME
     };
     // clang-format on
 
@@ -220,6 +224,28 @@ logExtensions(const std::vector<vk::ExtensionProperties>& extensions)
     }
 }
 
+bool
+supportsSwapchainMaintenance1(const vk::raii::PhysicalDevice& device)
+{
+    const auto extensions   = device.enumerateDeviceExtensionProperties();
+    const bool hasExtension = std::ranges::any_of(
+        extensions,
+        [](const vk::ExtensionProperties& extension)
+        {
+            return std::strcmp(extension.extensionName,
+                               VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME) == 0;
+        });
+    if (!hasExtension)
+    {
+        return false;
+    }
+
+    const auto features = device.getFeatures2<vk::PhysicalDeviceFeatures2,
+                                              vk::PhysicalDeviceSwapchainMaintenance1FeaturesKHR>();
+    return features.get<vk::PhysicalDeviceSwapchainMaintenance1FeaturesKHR>()
+               .swapchainMaintenance1 != 0u;
+}
+
 vk::raii::PhysicalDevice
 makePhysicalDevice(const vk::raii::Instance& instance)
 {
@@ -250,15 +276,18 @@ makePhysicalDevice(const vk::raii::Instance& instance)
         std::ranges::find_if(physicalDevices,
                              [](const vk::raii::PhysicalDevice& device)
                              {
-                                 return device.getProperties().apiVersion >= gRequiredApiVersion;
+                                 return device.getProperties().apiVersion >= gRequiredApiVersion &&
+                                        supportsSwapchainMaintenance1(device);
                              });
     if (selected == physicalDevices.end())
     {
         throw std::runtime_error{std::format(
-            "No physical device supports Vulkan {}.{}, which VOG requires (core synchronization2 "
-            "and dynamic rendering). Found {} device(s).",
+            "No physical device supports Vulkan {}.{} with {}, which VOG requires (core "
+            "synchronization2 and dynamic rendering, and a present fence that tells when a "
+            "swapchain is free to destroy). Found {} device(s).",
             VK_API_VERSION_MAJOR(gRequiredApiVersion),
             VK_API_VERSION_MINOR(gRequiredApiVersion),
+            VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME,
             physicalDevices.size())};
     }
 

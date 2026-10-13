@@ -26,7 +26,11 @@ queues / wait-idle calls before tracing the retention chain. Any new recording
 API must retain its resource via `CommandBuffer::addBoundResource` (use
 `CommandBufferRecorder`; `CommandBuffer` inherits `vk::raii::CommandBuffer`
 privately).
-Details: `docs/ResourceOwnership.md`.
+Presenting follows the same model: `Swapchain::present` returns a `Presentation`
+(swapchain generation, wait semaphore, present fence) that the frame slot keeps
+until the fence signals; this needs `VK_EXT_swapchain_maintenance1`, which device
+selection requires. There is no `waitIdle` anywhere in production code.
+Details: `docs/ResourceOwnership.md`, `docs/SwapchainSync.md`.
 
 ## Build & test
 

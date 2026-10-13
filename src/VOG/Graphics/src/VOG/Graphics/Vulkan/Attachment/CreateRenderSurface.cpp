@@ -142,6 +142,19 @@ CreateRenderSurface(const Instance&              instance,
     }
 #endif
 
+    case Common::SurfaceHandle::Platform::eHeadless:
+    {
+        if (instance.getDispatcher()->vkCreateHeadlessSurfaceEXT == nullptr)
+        {
+            spdlog::error("VK_EXT_headless_surface is not enabled on the Vulkan instance.");
+            break;
+        }
+
+        surfaceHandle =
+            std::make_shared<vk::raii::SurfaceKHR>(instance, vk::HeadlessSurfaceCreateInfoEXT{});
+        break;
+    }
+
     case Common::SurfaceHandle::Platform::eNone:
     default:
         break;

@@ -21,7 +21,10 @@ constexpr std::vector<const char*>
 getDeviceRequiredExtensions()
 {
     // synchronization2 and dynamicRendering are core in Vulkan 1.3, no extension entries needed.
-    std::vector<const char*> requiredExtensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    // The EXT name, not the KHR one: the EXT type and sType values are the same, and drivers and
+    // validation layers that predate the KHR promotion expose only the EXT name.
+    std::vector<const char*> requiredExtensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+                                                VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME};
 
     return requiredExtensions;
 }
@@ -158,6 +161,9 @@ makeDevice(const vk::raii::PhysicalDevice& physicalDevice, const PhysicalDevice:
             .dynamicRendering = 1u,
             .maintenance4     = 1u,
         },
+        vk::PhysicalDeviceSwapchainMaintenance1FeaturesKHR{
+            .swapchainMaintenance1 = 1u,
+        },
     };
 
     return {physicalDevice, chain.get()};
@@ -193,6 +199,12 @@ Fence
 Device::createFence()
 {
     return Fence{shared_from_this()};
+}
+
+SemaphorePtr
+Device::createSemaphore()
+{
+    return SemaphorePtr{new Semaphore{shared_from_this()}};
 }
 
 TimelineSemaphore

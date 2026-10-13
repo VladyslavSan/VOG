@@ -46,11 +46,16 @@ public:
      */
     void reset();
 
-    /*
-     * Mark fence as used and extract the Vulkan fence handle.
-     * @return Vulkan fence handle.
+    /**
+     * Vulkan fence handle to pass to a submit or present call.
      */
-    const vk::raii::Fence* useFence();
+    vk::Fence handle() const;
+
+    /**
+     * Mark the fence as used. Call it only after the submit or present call that takes handle()
+     * succeeded: a fence marked used but never handed to the GPU would never signal.
+     */
+    void markUsed();
 
 protected:
     State mState;

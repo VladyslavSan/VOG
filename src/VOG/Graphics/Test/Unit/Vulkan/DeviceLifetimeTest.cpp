@@ -22,6 +22,8 @@ namespace
 {
 constexpr vk::DeviceSize gBufferSize = 256u;
 
+constexpr std::uint64_t gWaitForever = std::numeric_limits<std::uint64_t>::max();
+
 Graphics::Vulkan::InstancePtr
 makeInstance()
 {
@@ -40,6 +42,13 @@ makeBuffer(Graphics::Vulkan::Device& device)
         {.size = gBufferSize, .usage = vk::BufferUsageFlagBits::eTransferSrc},
         {.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
          .usage = VMA_MEMORY_USAGE_AUTO});
+}
+
+/** Has the GPU signal @p fence through an empty submit; the fence must be unsignaled. */
+void
+submitSignalling(Graphics::Vulkan::Device& device, vk::Fence fence)
+{
+    device.getGraphicsQueue()->vk::raii::Queue::submit({}, fence);
 }
 } // namespace
 
@@ -76,7 +85,6 @@ TEST_F(VulkanFixture, Device_keepsInstanceAlive)
 
     VulkanInstance.reset();
     EXPECT_FALSE(weakInstance.expired());
-    VulkanDevice->waitIdle();
 
     VulkanDevice.reset();
     EXPECT_TRUE(weakDevice.expired());
@@ -103,15 +111,16 @@ TEST_F(DeviceLifetime, bufferKeepsDeviceAlive)
 
 TEST_F(DeviceLifetime, fenceKeepsDeviceAlive)
 {
-    auto       fence    = std::make_unique<Graphics::Vulkan::Fence>(VulkanDevice->createFence());
+    auto fence = std::make_unique<Graphics::Vulkan::Fence>(VulkanDevice->createFence());
+    submitSignalling(*VulkanDevice, fence->handle());
+    fence->markUsed();
     const auto released = releaseDevice();
 
     expectDependentHoldsDevice(released,
                                fence,
                                [](Graphics::Vulkan::Fence& fence)
                                {
-                                   fence.useFence();
-                                   EXPECT_EQ(fence.wait(0u), vk::Result::eTimeout);
+                                   EXPECT_EQ(fence.wait(gWaitForever), vk::Result::eSuccess);
                                });
 }
 
@@ -120,15 +129,16 @@ TEST_F(DeviceLifetime, fenceKeepsDeviceAlive)
  */
 TEST_F(DeviceLifetime, fenceHandleKeepsDeviceAlive)
 {
-    auto       handle   = Graphics::Vulkan::FencePool::create(VulkanDevice)->getShared();
+    auto handle = Graphics::Vulkan::FencePool::create(VulkanDevice)->getShared();
+    submitSignalling(*VulkanDevice, handle->handle());
+    handle->markUsed();
     const auto released = releaseDevice();
 
     expectDependentHoldsDevice(released,
                                handle,
                                [](Graphics::Vulkan::FencePool::FenceHandle& handle)
                                {
-                                   handle.useFence();
-                                   EXPECT_EQ(handle.wait(0u), vk::Result::eTimeout);
+                                   EXPECT_EQ(handle.wait(gWaitForever), vk::Result::eSuccess);
                                });
 }
 
@@ -177,6 +187,18 @@ TEST_F(DeviceLifetime, commandBufferHandleKeepsDeviceAlive)
                                });
 }
 
+/**
+ * No Vulkan entry point is reachable through a bare binary semaphore, so the call under test is
+ * its destruction (vkDestroySemaphore on a live device).
+ */
+TEST_F(DeviceLifetime, semaphoreKeepsDeviceAlive)
+{
+    auto       semaphore = VulkanDevice->createSemaphore();
+    const auto released  = releaseDevice();
+
+    expectDependentHoldsDevice(released, semaphore);
+}
+
 TEST_F(DeviceLifetime, timelineSemaphoreKeepsDeviceAlive)
 {
     auto semaphore = std::make_unique<Graphics::Vulkan::TimelineSemaphore>(
@@ -206,7 +228,7 @@ TEST_F(DeviceLifetime, queueKeepsDeviceAlive)
                                transfer,
                                [](const Graphics::Vulkan::Queue& queue)
                                {
-                                   queue.waitIdle();
+                                   queue.vk::raii::Queue::submit({});
                                });
 }
 

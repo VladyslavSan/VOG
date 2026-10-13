@@ -261,13 +261,15 @@ Renderer::render()
 
     mGraphicsQueue->submit(
         mFencePool,
-        std::array{**acquireResult.imageAvailableSemaphore},
+        std::array{acquireResult.imageAvailableSemaphore},
         std::array{vk::PipelineStageFlags{vk::PipelineStageFlagBits::eColorAttachmentOutput}},
         std::array{std::move(commandBuffer)},
-        std::array{*frame->getRenderFinishedSemaphore()});
+        std::array{frame->getRenderFinishedSemaphore()});
 
-    if (mSwapchain->present(*frame->getRenderFinishedSemaphore()) ==
-        Swapchain::PresentStatus::eOutOfDate)
+    auto presented = mSwapchain->present(acquired, frame->getRenderFinishedSemaphore(), mFencePool);
+    frame->retainUntilPresented(std::move(presented.presentation));
+
+    if (presented.status == Swapchain::PresentStatus::eOutOfDate)
     {
         if (!mSwapchain->recreate())
         {

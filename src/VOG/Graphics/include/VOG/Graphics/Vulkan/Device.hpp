@@ -10,6 +10,7 @@
 #include <VOG/Graphics/Vulkan/Limits.hpp>
 #include <VOG/Graphics/Vulkan/MemoryAllocator.hpp>
 #include <VOG/Graphics/Vulkan/Queue.hpp>
+#include <VOG/Graphics/Vulkan/Semaphore.hpp>
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 #include <VOG/Graphics/Vulkan/TimelineSemaphore.hpp>
@@ -158,6 +159,14 @@ public:
      * @return Fence object.
      */
     Fence createFence();
+
+    /**
+     * Creates a binary semaphore. Pass it to Queue::submit and Swapchain::present: the command
+     * buffers and the presentation retain it until the GPU is done with it.
+     *
+     * @return Binary semaphore.
+     */
+    SemaphorePtr createSemaphore();
 
     /**
      * Creates a timeline semaphore for ordered multi-stage GPU synchronization.

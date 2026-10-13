@@ -17,7 +17,9 @@ step builds on the previous. Completed work is kept for context.
 - **Swapchain semaphore correctness**: `imageAvailableSemaphore` is per swapchain
   image (owned by `SwapchainImage`, keyed by the index returned from
   `vkAcquireNextImageKHR`), while `renderFinishedSemaphore` is per
-  frame-in-flight slot (owned by `FrameObjects`, reuse gated by the slot fence).
+  frame-in-flight slot (owned by `FrameObjects`, reuse gated by the slot's submit
+  fence and present fence — the submit fence alone does not prove the presentation
+  engine consumed the wait, see "Present retains" below).
   The swap trick solves the chicken-and-egg for acquire semaphores: one spare is
   passed to acquire, then swapped into `mImages[K]` after K is known — the
   evicted semaphore is provably unsignaled because re-acquiring K proves the
@@ -66,6 +68,17 @@ step builds on the previous. Completed work is kept for context.
   `vk::raii` wrappers, leaf factories return `unique_ptr`, `Queue` is handed
   out as an aliasing `shared_ptr`, lifetime tests per type.
 
+- **Present retains**: no `waitIdle` anywhere in production code.
+  `Queue::submit` makes the submitted command buffers retain their wait and signal
+  semaphores (binary `Semaphore`); `Swapchain::present` chains a present fence
+  (`VK_EXT_swapchain_maintenance1`, required) and returns a `Presentation` that the
+  frame slot keeps until its next `onFrameStart`; `~FenceHandle` waits for a fence the
+  GPU may still signal, so every owner drains on drop. `recreate()` retires the old
+  `SwapchainGeneration` by reference count (supersedes the swapchain-recreation
+  wait-idle teardown above and the former "stall-free recreation" milestone); the
+  three shutdown validation errors (`vkDestroySemaphore-05149` x2,
+  `vkDestroySwapchainKHR-01282`) are gone. See `SwapchainSync.md`.
+
 ## Later milestones (in rough order)
 
 1. **Render graph**: declared passes with reads/writes; derives barriers,
@@ -76,12 +89,6 @@ step builds on the previous. Completed work is kept for context.
 3. **Materials, meshes, descriptor strategy** (extends `RenderItem`).
 4. **Scene representation** decision (ECS vs scene graph) — deferred until
    materials/meshes exist.
-5. **Stall-free swapchain recreation** (only if resize hitching ever
-   matters): retire old swapchain + views into a graveyard tagged with the
-   current frame counter, drained in `acquireNextFrame()` once
-   `framesInFlight` frames have passed — reuses the existing per-frame-slot
-   fences, no new sync primitives. Not worth the complexity while resize is
-   rare and wait-idle works.
 
 ## Standing decisions
 

@@ -40,6 +40,30 @@ findPresentQueueFamilyIndex(const Device& device, const vk::raii::SurfaceKHR& su
 
     throw std::runtime_error("No present queue found.");
 }
+
+/** The surface's size, or @p fallback clamped to the supported range if the surface has none. */
+vk::Extent2D
+chooseExtent(const vk::SurfaceCapabilitiesKHR& capabilities, vk::Extent2D fallback)
+{
+    constexpr std::uint32_t kAppChooses = std::numeric_limits<std::uint32_t>::max();
+    if (capabilities.currentExtent.width != kAppChooses &&
+        capabilities.currentExtent.height != kAppChooses)
+    {
+        return capabilities.currentExtent;
+    }
+
+    if (fallback.width == 0u || fallback.height == 0u)
+    {
+        throw std::runtime_error("Surface creation failed. Surface extents are invalid.");
+    }
+
+    return {.width  = std::clamp(fallback.width,
+                                 capabilities.minImageExtent.width,
+                                 capabilities.maxImageExtent.width),
+            .height = std::clamp(fallback.height,
+                                 capabilities.minImageExtent.height,
+                                 capabilities.maxImageExtent.height)};
+}
 } // namespace
 
 Swapchain::~Swapchain() {}
@@ -51,22 +75,10 @@ Swapchain::Swapchain(DevicePtr device, const SwapchainParameters& parameters)
     , mPresentQueueIsSameToGraphicsQueue{mPresentQueueFamilyIndex ==
                                          mDevice->queueInfos.graphics.familyIndex}
     , mPresentQueue{*mDevice, mPresentQueueFamilyIndex, 0}
-    , mSwapchain{nullptr}
-    , mSpareAcquireSemaphore{nullptr}
     , mSurfaceFormat{mDevice->getSurfaceFormatsKHR(**mSurface).at(0u)}
 {
-    auto surfaceCapabilities = mDevice->getSurfaceCapabilitiesKHR(**mSurface);
-    if (surfaceCapabilities.currentExtent.width != std::numeric_limits<uint32_t>::max() &&
-        surfaceCapabilities.currentExtent.height != std::numeric_limits<uint32_t>::max())
-    {
-        mExtent = vk::Extent3D{.width  = surfaceCapabilities.currentExtent.width,
-                               .height = surfaceCapabilities.currentExtent.height,
-                               .depth  = 1};
-    }
-    else
-    {
-        throw std::runtime_error("Surface creation failed. Surface extents are invalid.");
-    }
+    auto               surfaceCapabilities = mDevice->getSurfaceCapabilitiesKHR(**mSurface);
+    const vk::Extent2D extent = chooseExtent(surfaceCapabilities, parameters.fallbackExtent);
 
     mMinImageCount =
         std::max<std::uint32_t>(parameters.framesInFlight, surfaceCapabilities.minImageCount);
@@ -88,90 +100,85 @@ Swapchain::Swapchain(DevicePtr device, const SwapchainParameters& parameters)
         }
     }
 
-    build(nullptr);
+    mGeneration = makeGeneration(nullptr, extent);
 }
 
-void
-Swapchain::build(vk::SwapchainKHR oldSwapchain)
+SwapchainGenerationPtr
+Swapchain::makeGeneration(vk::SwapchainKHR oldSwapchain, vk::Extent2D extent)
 {
-    {
-        const std::array queueFamilyIndices = {mDevice->queueInfos.graphics.familyIndex,
-                                               mPresentQueueFamilyIndex};
-        const vk::SwapchainCreateInfoKHR swapchainCreateInfo = {
-            .surface          = **mSurface,
-            .minImageCount    = mMinImageCount,
-            .imageFormat      = mSurfaceFormat.format,
-            .imageColorSpace  = mSurfaceFormat.colorSpace,
-            .imageExtent      = vk::Extent2D{.width = mExtent.width, .height = mExtent.height},
-            .imageArrayLayers = 1u,
-            .imageUsage       = vk::ImageUsageFlagBits::eColorAttachment,
-            .imageSharingMode = mPresentQueueIsSameToGraphicsQueue ? vk::SharingMode::eExclusive
-                                                                   : vk::SharingMode::eConcurrent,
-            .queueFamilyIndexCount = mPresentQueueIsSameToGraphicsQueue ? 0u : 2u,
-            .pQueueFamilyIndices   = queueFamilyIndices.data(),
-            .preTransform          = vk::SurfaceTransformFlagBitsKHR::eIdentity,
-            .compositeAlpha        = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-            .presentMode           = mPresentMode,
-            .oldSwapchain          = oldSwapchain,
-        };
+    const std::array                 queueFamilyIndices = {mDevice->queueInfos.graphics.familyIndex,
+                                                           mPresentQueueFamilyIndex};
+    const vk::SwapchainCreateInfoKHR swapchainCreateInfo = {
+        .surface               = **mSurface,
+        .minImageCount         = mMinImageCount,
+        .imageFormat           = mSurfaceFormat.format,
+        .imageColorSpace       = mSurfaceFormat.colorSpace,
+        .imageExtent           = extent,
+        .imageArrayLayers      = 1u,
+        .imageUsage            = vk::ImageUsageFlagBits::eColorAttachment,
+        .imageSharingMode      = mPresentQueueIsSameToGraphicsQueue ? vk::SharingMode::eExclusive
+                                                                    : vk::SharingMode::eConcurrent,
+        .queueFamilyIndexCount = mPresentQueueIsSameToGraphicsQueue ? 0u : 2u,
+        .pQueueFamilyIndices   = queueFamilyIndices.data(),
+        .preTransform          = vk::SurfaceTransformFlagBitsKHR::eIdentity,
+        .compositeAlpha        = vk::CompositeAlphaFlagBitsKHR::eOpaque,
+        .presentMode           = mPresentMode,
+        .oldSwapchain          = oldSwapchain,
+    };
 
-        mSwapchain = vk::raii::SwapchainKHR{*mDevice, swapchainCreateInfo};
+    auto generation = std::make_shared<SwapchainGeneration>(
+        mDevice,
+        mSurface,
+        vk::raii::SwapchainKHR{*mDevice, swapchainCreateInfo},
+        vk::Extent3D{.width = extent.width, .height = extent.height, .depth = 1u});
+
+    const auto rawImages = generation->swapchain.getImages();
+    generation->images.reserve(rawImages.size());
+    for (const vk::Image image : rawImages)
+    {
+        const vk::ImageViewCreateInfo createInfo = {
+            .image            = image,
+            .viewType         = vk::ImageViewType::e2D,
+            .format           = mSurfaceFormat.format,
+            .components       = {.r = vk::ComponentSwizzle::eR,
+                                 .g = vk::ComponentSwizzle::eG,
+                                 .b = vk::ComponentSwizzle::eB,
+                                 .a = vk::ComponentSwizzle::eA},
+            .subresourceRange = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
+                                 .baseMipLevel   = 0u,
+                                 .levelCount     = 1u,
+                                 .baseArrayLayer = 0u,
+                                 .layerCount     = 1u}};
+        generation->images.push_back({
+            .image                   = image,
+            .imageView               = vk::raii::ImageView{*mDevice, createInfo},
+            .imageAvailableSemaphore = mDevice->createSemaphore(),
+        });
     }
 
-    mImages.clear();
+    generation->spareAcquireSemaphore = mDevice->createSemaphore();
 
-    {
-        auto rawImages = mSwapchain.getImages();
-        mImages.reserve(rawImages.size());
-        for (auto& image : rawImages)
-        {
-            const vk::ImageViewCreateInfo createInfo = {
-                .image            = image,
-                .viewType         = vk::ImageViewType::e2D,
-                .format           = mSurfaceFormat.format,
-                .components       = {.r = vk::ComponentSwizzle::eR,
-                                     .g = vk::ComponentSwizzle::eG,
-                                     .b = vk::ComponentSwizzle::eB,
-                                     .a = vk::ComponentSwizzle::eA},
-                .subresourceRange = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                                     .baseMipLevel   = 0u,
-                                     .levelCount     = 1u,
-                                     .baseArrayLayer = 0u,
-                                     .layerCount     = 1u}};
-            mImages.push_back({
-                .image     = image,
-                .imageView = std::make_shared<vk::raii::ImageView>(*mDevice, createInfo),
-                .imageAvailableSemaphore = vk::raii::Semaphore{*mDevice, vk::SemaphoreCreateInfo{}},
-            });
-        }
-    }
-
-    mSpareAcquireSemaphore = vk::raii::Semaphore{*mDevice, vk::SemaphoreCreateInfo{}};
+    return generation;
 }
 
 bool
 Swapchain::recreate()
 {
-    const auto surfaceCapabilities = mDevice->getSurfaceCapabilitiesKHR(**mSurface);
+    const auto         surfaceCapabilities = mDevice->getSurfaceCapabilitiesKHR(**mSurface);
+    const vk::Extent2D extent =
+        chooseExtent(surfaceCapabilities,
+                     {.width = mGeneration->extent.width, .height = mGeneration->extent.height});
 
-    mExtent = vk::Extent3D{.width  = surfaceCapabilities.currentExtent.width,
-                           .height = surfaceCapabilities.currentExtent.height,
-                           .depth  = 1};
-
-    if (mExtent.width == 0u || mExtent.height == 0u)
+    if (extent.width == 0u || extent.height == 0u)
     {
         // Surface is currently zero-sized (e.g. minimized); nothing to build.
         return false;
     }
 
-    // The render thread is the sole submitter, so waiting for idle lets us tear down the old
-    // swapchain immediately without tracking per-frame retirement.
-    mDevice->waitIdle();
-
-    mCurrentSwapchainImageIndex.reset();
-
-    vk::raii::SwapchainKHR oldSwapchain = std::move(mSwapchain);
-    build(*oldSwapchain);
+    // The old generation is not waited for. The presentations and command buffers that still use
+    // it keep it alive, and it is destroyed when the last of them lets go. Assigning after the
+    // build keeps the old generation in place if the build throws.
+    mGeneration = makeGeneration(*mGeneration->swapchain, extent);
 
     return true;
 }
@@ -179,7 +186,7 @@ Swapchain::recreate()
 std::size_t
 Swapchain::getImageCount() const
 {
-    return mImages.size();
+    return mGeneration->images.size();
 }
 
 vk::Format
@@ -191,14 +198,12 @@ Swapchain::getFormat() const
 Swapchain::ImageAcquireResult
 Swapchain::acquireNextImage()
 {
-    VOG_ASSERT_MSG(
-        !mCurrentSwapchainImageIndex,
-        "Previous swapchain image should have been drained before calling this function.");
+    SwapchainGeneration& generation = *mGeneration;
 
     // VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS makes eErrorOutOfDateKHR a returned result
     // instead of a thrown vk::OutOfDateKHRError.
-    auto [result, index] =
-        mSwapchain.acquireNextImage(gAcquireTimeout, {*mSpareAcquireSemaphore}, {});
+    auto [result, index] = generation.swapchain.acquireNextImage(
+        gAcquireTimeout, **generation.spareAcquireSemaphore, {});
 
     if (result == vk::Result::eErrorOutOfDateKHR)
     {
@@ -214,46 +219,83 @@ Swapchain::acquireNextImage()
                 .imageAvailableSemaphore = nullptr};
     }
 
-    // eSuccess or eSuboptimalKHR: swap the spare with mImages[index].imageAvailableSemaphore.
+    // eSuccess or eSuboptimalKHR: swap the spare with images[index].imageAvailableSemaphore.
     // After the swap:
-    //   mImages[index].imageAvailableSemaphore — freshly signaled by the PE; submit waits this.
-    //   mSpareAcquireSemaphore — the evicted slot semaphore, provably unsignaled: re-acquiring
+    //   images[index].imageAvailableSemaphore — freshly signaled by the PE; submit waits this.
+    //   spareAcquireSemaphore — the evicted slot semaphore, provably unsignaled: re-acquiring
     //     image K proves the full prior cycle (acquire→submit wait→render→present→PE display)
     //     completed, so the prior submit already consumed its wait on this semaphore.
-    std::swap(mSpareAcquireSemaphore, mImages[index].imageAvailableSemaphore);
-    mCurrentSwapchainImageIndex.emplace(index);
+    std::swap(generation.spareAcquireSemaphore, generation.images[index].imageAvailableSemaphore);
 
-    return {.status   = AcquireStatus::eReady,
-            .acquired = std::make_shared<AcquiredSwapchainImage>(
-                mImages[index].image, mImages[index].imageView, mSurfaceFormat.format, mExtent),
-            .imageAvailableSemaphore = &mImages[index].imageAvailableSemaphore};
+    return {.status                  = AcquireStatus::eReady,
+            .acquired                = AcquiredSwapchainImagePtr{new AcquiredSwapchainImage{
+                mGeneration, index, mSurfaceFormat.format}},
+            .imageAvailableSemaphore = generation.images[index].imageAvailableSemaphore};
 }
 
-Swapchain::PresentStatus
-Swapchain::present(vk::Semaphore renderFinishedSemaphore)
+Swapchain::PresentResult
+Swapchain::present(const AcquiredSwapchainImagePtr& acquired,
+                   SemaphorePtr                     waitSemaphore,
+                   const FencePoolPtr&              fencePool)
 {
-    VOG_ASSERT_MSG(
-        mCurrentSwapchainImageIndex,
-        "Swapchain::acquireNextImage should have been called before calling this function.");
+    VOG_ASSERT_MSG(acquired,
+                   "Swapchain::present needs the image Swapchain::acquireNextImage gave.");
+    VOG_ASSERT_MSG(waitSemaphore, "Swapchain::present needs a semaphore to wait.");
 
-    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
-    const std::uint32_t      imageIndex = mCurrentSwapchainImageIndex.value();
+    // The image may come from a generation recreate() has already replaced: it is presented to
+    // the swapchain it was acquired from.
+    SwapchainGenerationPtr generation = acquired->mGeneration;
+    auto                   fence      = fencePool->getShared();
+
+    const std::uint32_t                    imageIndex      = acquired->mImageIndex;
+    const vk::Semaphore                    waitHandle      = **waitSemaphore;
+    const vk::SwapchainKHR                 swapchainHandle = *generation->swapchain;
+    const vk::Fence                        fenceHandle     = fence->handle();
+    const vk::SwapchainPresentFenceInfoKHR fenceInfo{
+        .swapchainCount = 1u,
+        .pFences        = &fenceHandle,
+    };
     const vk::PresentInfoKHR presentInfoKHR{
+        .pNext              = &fenceInfo,
         .waitSemaphoreCount = 1u,
-        .pWaitSemaphores    = &renderFinishedSemaphore,
+        .pWaitSemaphores    = &waitHandle,
         .swapchainCount     = 1u,
-        .pSwapchains        = &*mSwapchain,
+        .pSwapchains        = &swapchainHandle,
         .pImageIndices      = &imageIndex,
     };
 
-    // eSuboptimalKHR and eErrorOutOfDateKHR (a valid result here, see
-    // VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS) both mean the swapchain needs recreation.
-    const auto          result = mPresentQueue.presentKHR(presentInfoKHR);
+    // Only a fence that was handed to the GPU will signal; marking it earlier would hang its
+    // destructor if the present threw. The present releases the acquisition and its queue
+    // operations count as enqueued, so their fence signals, also when the present reports
+    // eErrorOutOfDateKHR or throws SurfaceLostKHRError. Other errors (out of memory, device lost)
+    // enqueue nothing and leave the fence and the acquisition alone.
+    const auto settle = [&]
+    {
+        fence->markUsed();
+        acquired->markPresented();
+    };
+
+    vk::Result result = vk::Result::eSuccess;
+    try
+    {
+        // eSuboptimalKHR and eErrorOutOfDateKHR (a valid result here, see
+        // VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS) both mean the swapchain needs
+        // recreation.
+        result = mPresentQueue.presentKHR(presentInfoKHR);
+    }
+    catch (const vk::SurfaceLostKHRError&)
+    {
+        settle();
+        throw;
+    }
+    settle();
+
     const PresentStatus status =
         (result == vk::Result::eSuccess) ? PresentStatus::eReady : PresentStatus::eOutOfDate;
 
-    mCurrentSwapchainImageIndex.reset();
-
-    return status;
+    return {.status       = status,
+            .presentation = {.generation    = std::move(generation),
+                             .waitSemaphore = std::move(waitSemaphore),
+                             .fence         = std::move(fence)}};
 }
 } // namespace VOG::Graphics::Vulkan
