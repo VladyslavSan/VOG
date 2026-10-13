@@ -36,7 +36,7 @@ public:
         std::uint8_t framesInFlight = 2u;
     };
 
-    Application(ApplicationConfig config);
+    Application(const ApplicationConfig& config);
 
     ~Application();
 

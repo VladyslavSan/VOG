@@ -20,7 +20,9 @@ printException(std::ostream& stream, const std::exception& exception, std::uint8
     // Exception message can be multiline.
     const auto errorString = std::string_view{exception.what()};
 
-    stream << std::string(4u * level, ' ') << "Exception: " << typeid(exception).name() << '\n';
+    const std::string indent(std::size_t{4} * level, ' ');
+
+    stream << indent << "Exception: " << typeid(exception).name() << '\n';
 
     std::size_t lastIndex = 0u;
     for (;;)
@@ -29,7 +31,7 @@ printException(std::ostream& stream, const std::exception& exception, std::uint8
         std::size_t end    = idx - lastIndex;
         auto        substr = errorString.substr(lastIndex, end);
 
-        stream << std::string(4u * level, ' ') << substr << '\n';
+        stream << indent << substr << '\n';
         lastIndex = idx + 1;
 
         if (idx == std::string_view::npos || lastIndex >= errorString.size())
@@ -46,13 +48,14 @@ printException(std::ostream& stream, const std::exception& exception, std::uint8
     {
         printException(stream, nestedException, level + 1);
     }
-    catch (...)
+    catch (...) // NOLINT(bugprone-empty-catch)
     {
+        // A nested exception that is not a std::exception has nothing to print.
     }
 }
 
 int
-main(int argc, const char** argv)
+main(int argc, const char** argv) // NOLINT(bugprone-exception-escape)
 {
     try
     {

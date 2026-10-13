@@ -27,8 +27,8 @@ constexpr vk::DeviceSize gBufferSize = 256u;
 
 constexpr std::uint64_t gWaitForever = std::numeric_limits<std::uint64_t>::max();
 
-constexpr std::array<vk::Semaphore, 0>          gNoSemaphores{};
-constexpr std::array<vk::PipelineStageFlags, 0> gNoStages{};
+const std::array<vk::Semaphore, 0>          gNoSemaphores{};
+const std::array<vk::PipelineStageFlags, 0> gNoStages{};
 } // namespace
 
 /**

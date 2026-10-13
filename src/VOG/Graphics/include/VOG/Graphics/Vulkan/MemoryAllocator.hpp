@@ -62,7 +62,7 @@ public:
                VmaAllocationInfo    info,
                AllocationParameters createInfo);
 
-    Allocation(Allocation&&) noexcept;
+    Allocation(Allocation&& other) noexcept;
 
     Allocation(const Allocation&) = delete;
 
