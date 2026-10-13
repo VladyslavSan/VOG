@@ -105,9 +105,10 @@ public:
     std::unique_ptr<ShaderProgram> createShaderProgram(ShaderProgram::ShadingStages stages);
 
     /**
-     * Creates a graphics pipeline from a renderpass description.
+     * Creates a graphics pipeline for dynamic rendering into the attachments that
+     * Parameters::renderingDescription describes.
      *
-     * @param createInfo  Pipeline parameters with a renderpass description.
+     * @param createInfo  Pipeline parameters; the pipeline layout comes from `shading`.
      *
      * @return Compiled graphics pipeline.
      */

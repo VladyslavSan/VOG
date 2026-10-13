@@ -63,7 +63,6 @@ public:
      *
      * Index in this array corresponds to a set index.
      * If SetLayout::setLayout is nullptr it means that set is not present in a program.
-     * SetLayout::
      */
     using DescriptorSets = std::array<SetLayout, Limits::gMaxNumDescriptorSets>;
 

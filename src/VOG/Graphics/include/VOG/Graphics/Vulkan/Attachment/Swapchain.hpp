@@ -40,7 +40,8 @@ public:
 
     struct SwapchainParameters
     {
-        /** Frames in flight, might be lower than requested. */
+        /** Frames in flight, asked for as the minimum image count. The surface limits can move the
+         *  real count; read getImageCount(). */
         std::uint8_t framesInFlight = 1u;
 
         /** Priority list of presentation modes from most preferred to least. */

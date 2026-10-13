@@ -42,7 +42,7 @@ namespace VOG::Engine
  * Owns the Vulkan objects of one window and the thread that renders into it.
  *
  * The render thread owns nothing: it captures `this`, is the last member and is joined before
- * anything it uses is destroyed. Nothing reachable from it holds a pointer to the Renderer, so
+ * anything it uses is destroyed. Nothing reachable from it owns the Renderer, so
  * `~Renderer` cannot run on the render thread. Calling stop() or getState() from the render
  * thread (a Renderable that captured `Renderer&`) is not supported: stop() would join itself and
  * terminate, and getState() would wait for the lock that stop() holds across the join, a

@@ -37,8 +37,9 @@ Details: `docs/ResourceOwnership.md`, `docs/SwapchainSync.md`.
 - Configure once: `cmake --preset debug` (Conan-generated presets; full
   dependency setup is `conan build .`)
 - Build: `cmake --build build/build/Debug`
-- Test: `ctest --test-dir build/build/Debug --output-on-failure` (23+ gtest
-  units; Vulkan tests run headless via `VulkanFixture`)
+- Test: `ctest --test-dir build/build/Debug --output-on-failure` (gtest
+  units per module; the Graphics tests run headless through `VulkanFixture` and the Engine tests
+  render into a headless surface, so both need a Vulkan driver)
 - Run example: `./build/build/Debug/src/VOG/Examples/ApplicationExample/ApplicationExample --shader-storage-path src/VOG/Graphics/resources/shaders`
   (Windows / macOS / Linux with Wayland or X11; Linux WSI is selected from the SDL window backend)
 

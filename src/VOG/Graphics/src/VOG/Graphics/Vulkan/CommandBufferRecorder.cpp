@@ -57,6 +57,7 @@ CommandBufferRecorder::CommandBufferRecorder(CommandBufferPoolPtr           pool
     {
         // The destructor does not run for a constructor that throws. The buffer may be half
         // begun, so it waits for the pool reset like any discarded one; no lease was counted.
+        // Untested: vkBeginCommandBuffer cannot be made to fail without a hook.
         mPool->abandon(std::move(mCommandBuffer));
         throw;
     }

@@ -40,9 +40,9 @@ public:
     /**
      * Structure that holds shader reflection information.
      *
-     * #vertexAttributes sorted by VertexAttribute::location field ascending.
-     * #pushConstants sorted by PushConstant::offset ascending.
-     * #uniformBuffers and #storageBuffers sorted by UniformBuffer::location.
+     * #inAttributes and #outAttributes sorted by StageInOutAttribute::location ascending.
+     * #pushConstants.variables sorted by StructMember::offset ascending.
+     * #uniformBuffers sorted by UniformBuffer::location (set, then binding) ascending.
      */
     struct Reflection
     {

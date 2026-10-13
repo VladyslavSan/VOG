@@ -68,6 +68,21 @@ step builds on the previous. Completed work is kept for context.
   `vk::raii` wrappers, leaf factories return `unique_ptr`, `Queue` is handed
   out as an aliasing `shared_ptr`, lifetime tests per type.
 
+- **Foundations** (review stage 1): `VOG_ASSERT` is an abort-only expression; one
+  `DeviceRequirements` table drives device selection and device creation; `inDestructor`
+  logs a Vulkan failure in a destructor and lets teardown continue; test fixtures take
+  options and skip visibly when the validation layer is missing; CI runs a Linux Debug job
+  and the macOS tests.
+- **Wrapper hygiene** (review stage 2): the `vk::raii` base of every wrapper is private (`Fence`, `Queue` and
+  `CommandBuffer` in stage 3), and the roots re-export only the calls that have callers, plus
+  `raii()` accessors; `GraphicsPipeline` is built in one step from its shader program's layout and
+  the device's pipeline cache.
+- **Fences and submission** (review stage 3): a fence is pending only if the submit or
+  present call returned (`FenceHandle::arm`); command buffers move through recorder,
+  `ExecutableCommandBuffer` and submitted, and a dropped one is reset with its pool;
+  `~CommandBufferPool` waits its own fences; `Queue::submit` uses `vkQueueSubmit2` with each
+  wait semaphore paired with its stage; all destructors are `noexcept`.
+
 - **Present retains**: no `waitIdle` anywhere in production code.
   `Queue::submit` makes the submitted command buffers retain their wait and signal
   semaphores (binary `Semaphore`); `Swapchain::present` chains a present fence
@@ -77,9 +92,12 @@ step builds on the previous. Completed work is kept for context.
   `SwapchainGeneration` by reference count (supersedes the swapchain-recreation
   wait-idle teardown above and the former "stall-free recreation" milestone); the
   three shutdown validation errors (`vkDestroySemaphore-05149` x2,
-  `vkDestroySwapchainKHR-01282`) are gone. See `SwapchainSync.md`.
+  `vkDestroySwapchainKHR-01282`) are gone. Review stage 4 finished it: `SwapchainGeneration`
+  is private and built in one step, `Presentation` is move-only and its destructor waits the
+  fence, `acquireNextImage` takes a `std::chrono` timeout, and `recreate(extent)` returns
+  false for a zero size. See `SwapchainSync.md`.
 
-- **Renderer lifecycle**: `Renderer` is a `final` leaf in a `unique_ptr`. The render thread
+- **Renderer lifecycle** (review stage 5): `Renderer` is a `final` leaf in a `unique_ptr`. The render thread
   captures `this`, owns nothing and is the last member, so `~Renderer` joins it before any GPU
   state dies and cannot run on it. `start()`, `stop()` (returns the thread's failure as an
   `exception_ptr`) and `getState()` replace `requestRenderChangeState`; `Application::run()`
@@ -90,6 +108,13 @@ step builds on the previous. Completed work is kept for context.
   `SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED`) and one `applyExtent` path size the swapchain, so Wayland
   and headless surfaces resize; the acquire waits 100 ms, so a hidden window neither spins nor
   blocks quitting. Engine and Application have unit tests. See `SwapchainSync.md`.
+
+- **VMA out of the public headers** (review stage 6): no public header includes
+  `vk_mem_alloc.h`, and `PublicHeadersTest`, generated from the public header set, keeps it
+  that way. `Device::createBuffer` takes `AllocationParameters` with `AllocationFlags`;
+  `eHostSequentialWrite` is what `Buffer::mapForWrite()` needs.
+- **Docs pass** (review stage 7): current-state text checked against the code; the known
+  gaps are listed in `ResourceOwnership.md`.
 
 ## Later milestones (in rough order)
 

@@ -33,7 +33,8 @@ It says nothing about the **presentation engine's** own activity.
 `mAcquireSemaphores`: one per image, keyed by image index, plus the spare as the last entry).
 `AcquiredSwapchainImage::imageAvailableSemaphore()` hands it out, kept by value from the
 acquire, because the swap trick below rotates the list.
-`renderFinishedSemaphore` lives in `FrameObjects`, keyed by frame-in-flight slot.
+`renderFinishedSemaphore` (`FrameObjects::getRenderFinishedSemaphore()`) lives in `FrameObjects`,
+keyed by frame-in-flight slot.
 
 ### `imageAvailableSemaphore`
 
@@ -55,7 +56,7 @@ the present. The submit fence fires after the GPU finished the submit, so the si
 has completed — but `vkQueuePresentKHR` then *waits* the semaphore, and Vulkan does not
 guarantee that waiting on a submit fence synchronizes with the presentation engine's
 consumption of that wait. Signalling the semaphore again while the previous present may
-still wait it is invalid (`VUID-vkQueueSubmit-pSignalSemaphores-00067`), however many
+still wait it is invalid (`VUID-vkQueueSubmit2-semaphore-03868`), however many
 images the swapchain has. So `Swapchain::present()` chains a
 `VkSwapchainPresentFenceInfoKHR`: its fence does not signal until the presentation engine
 reset the payload of every wait semaphore. The slot keeps the `Presentation` (fence,
@@ -97,7 +98,8 @@ finished displaying image K and released it. That can only happen after:
 6. The PE released image K (now re-acquirable).
 
 After step 2 the semaphore is unsignaled; it has not been touched since. The new spare
-is therefore provably unsignaled and safe to hand to `vkAcquireNextImageKHR`.
+is therefore provably unsignaled and safe to hand to `vkAcquireNextImageKHR`, as long as
+every acquired image is presented (see the known gap below).
 
 ### Concrete walkthrough (3 images: S[0], S[1], S[2], spare Sx)
 
@@ -153,8 +155,10 @@ releases the acquisition itself, also when the present reports `eErrorOutOfDateK
 throws `SurfaceLostKHRError` (the queue operations still count as enqueued, the semaphore
 wait still executes and the fence still signals; `present()` settles the fence and the
 acquisition before it rethrows). Any other present error enqueues nothing, so the image
-reaches the destructor, as does a Vulkan error between acquire and present. The release is
-valid once the image's uses completed, which the command-buffer retention guarantees.
+reaches the destructor, as does an exception between acquire and present. The release is
+valid once the image's uses completed, which the command-buffer retention guarantees. The
+out-of-date, suboptimal and surface-lost paths have no automated test (see the known gaps in
+`ResourceOwnership.md`).
 
 Known gap: an image released unpresented leaves its acquire semaphore signaled or pending.
 The next acquire's swap trick can then hand a signaled semaphore to `vkAcquireNextImageKHR`

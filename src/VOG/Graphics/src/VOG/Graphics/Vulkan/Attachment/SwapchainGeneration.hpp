@@ -78,7 +78,8 @@ private:
      * spare, always unsignaled, goes to vkAcquireNextImageKHR before the index is known; then it
      * is swapped with the semaphore at the returned index. The evicted semaphore is provably
      * unsignaled: re-acquiring image K proves the full prior cycle completed, so the prior submit
-     * already consumed its wait on it.
+     * already consumed its wait on it. That holds only if every acquired image is presented; see
+     * the known gap in SwapchainSync.md.
      */
     std::vector<SemaphorePtr> mAcquireSemaphores;
 };

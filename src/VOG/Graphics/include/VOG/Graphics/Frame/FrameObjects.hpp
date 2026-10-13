@@ -52,7 +52,7 @@ public:
      * Get the command buffer pool by thread id.
      *
      * @param threadId Index of the thread requesting the command buffer pool.
-     * Id is simply an index from 0 to @p mCommandBufferPools size.
+     * Id is simply an index from 0 to `mCommandBufferPools` size.
      *
      * @note Access is not guarded. Engine currently uses threadCount = 1
      * (threadId 0 only); multi-threaded recording is reserved.

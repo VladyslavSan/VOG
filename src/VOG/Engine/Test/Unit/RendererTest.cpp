@@ -98,6 +98,9 @@ private:
  * Dropping the renderer from another thread while a frame is in flight waits for that frame and
  * tears the renderer down on the dropping thread: the render thread owns nothing, so it cannot
  * be the one that runs ~Renderer. The renderable it was drawing dies there too.
+ *
+ * It proves liveness and thread affinity. The self-join it is named for can no longer be
+ * written, so there is no broken version of the code for it to fail against.
  */
 TEST_F(RendererTest, destroyWhileFrameInFlightJoins)
 {

@@ -153,16 +153,17 @@ MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
         throw std::runtime_error{"Buffer creation failed."};
     }
 
-    // Own both handles before anything else can throw: the buffer first, then the allocation. If
-    // `new Buffer` throws (out of memory), the locals destroy the buffer and free the allocation
-    // instead of leaking the VkBuffer. Untested: only an allocation failure reaches it.
-    vk::raii::Buffer owningBuffer{mDevice.raii(), buffer};
+    // Own both handles before anything else can throw, in the order Buffer's bases are declared:
+    // the allocation first, the buffer second. If `new Buffer` throws (out of memory), the locals
+    // destroy the buffer and then free the allocation, like a normal teardown, instead of leaking
+    // the VkBuffer. Untested: only an allocation failure reaches it.
     Allocation       owningAllocation{std::move(device),
                                       mAllocator,
                                       allocation,
                                       allocationInfo.size,
                                       getMemoryFlags(mAllocator, allocationInfo.memoryType),
                                       allocationCreateInfo.flags};
+    vk::raii::Buffer owningBuffer{mDevice.raii(), buffer};
 
     return std::unique_ptr<Buffer>(
         new Buffer{std::move(owningAllocation), std::move(owningBuffer)});

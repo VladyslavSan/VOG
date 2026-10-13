@@ -56,9 +56,8 @@ after the fence of the frame that referenced the resource has signaled.
    the swapchain generation, the semaphore the present waits, and the fence.
    The frame slot keeps it and drops it in `FrameObjects::onFrameStart`;
    `~Presentation` waits the fence — before the slot signals that semaphore
-   again. A
-   `FenceHandle` waits for its fence in its destructor if the GPU may still
-   signal it, as a safety net; the owners that release guarded resources
+   again. A `FenceHandle` waits for its fence in its destructor if the GPU may
+   still signal it, as a safety net; the owners that release guarded resources
    (`CommandBufferPool::reset` and `~CommandBufferPool`, `~Presentation`) wait
    for their fences explicitly. Swapchain recreation needs
    no `waitIdle`: the old generation is retired by reference count.
@@ -171,8 +170,7 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    validation layer raised no error while the dependent was destroyed — a child
    object that outlives its device is reported at `vkDestroyDevice`
    (`DeviceLifetimeTest.cpp`, `VulkanFixture::expectDependentHoldsDevice`).
-   Covered: `Buffer`, `FenceHandle` (only through the pool that holds it,
-   `submittedCommandBufferKeepsDeviceAlive`), `FencePool`, `CommandBufferPool`,
+   Covered: `Device` (its `Instance`), `Buffer`, `FencePool`, `CommandBufferPool`,
    `CommandBufferRecorder`, `ExecutableCommandBuffer`, `Semaphore`,
    `TimelineSemaphore`, `Queue`,
    `RenderBuffer`, `Shader`, `ShaderProgram`, `GraphicsPipeline`,
@@ -181,9 +179,15 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    `AcquiredSwapchainImage` and `Presentation` that hold it) and
    `AcquiredSwapchainImage` (`SwapchainTest.cpp`, on a headless surface via
    `VK_EXT_headless_surface`; the generation is covered by
-   `acquiredImageKeepsSwapchainAlive`, which holds nothing else). `Shader`, `ShaderProgram`, `RenderBuffer` and
-   `Semaphore` expose no Vulkan call, so their destruction is the call under
-   test; for `ShaderProgramCache` it is the lookup.
+   `acquiredImageKeepsSwapchainAlive`, which holds nothing else). `Shader`, `ShaderProgram`, `RenderBuffer`,
+   `Semaphore` and `ExecutableCommandBuffer` expose no Vulkan call, so their
+   destruction is the call under test; for `ShaderProgramCache` it is the lookup.
+   `Device` (its `Instance`) and `Queue` are ownership-only: no Vulkan call is
+   reachable through a transfer `Queue`, and the `Device` test checks the
+   expiry order without the validation layer. A `FenceHandle` is only
+   reachable through the pool that holds it, and that pool keeps the device alive
+   on its own, so the handle's retention has no test that could fail
+   independently (`submittedCommandBufferKeepsDeviceAlive` runs the path).
 
 ## Rules when extending the API
 
@@ -209,6 +213,17 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
 
 - **Descriptor-set-referenced resources** (future textures/UBOs): tracking must
   be extended to descriptor set binding when those appear.
+
+- **Out-of-date and suboptimal paths are untested.** A headless surface never
+  reports them, so no automated test reaches the acquire/present
+  `eErrorOutOfDateKHR` / `eSuboptimalKHR` handling or the `SurfaceLostKHRError`
+  rethrow in `Swapchain::present`. The example's resize and close runs on a real
+  window are the only coverage.
+
+- **Windows CI only builds.** The Windows job does not run the tests.
+
+- **Wayland and X11 have no CI.** The Linux jobs build and test on a headless
+  surface; the Wayland and X11 surface paths have not run in CI.
 
 ## Performance note
 

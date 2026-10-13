@@ -133,6 +133,8 @@ TEST_F(DeviceLifetime, bufferKeepsDeviceAlive)
  * A submitted command buffer parks in its pool with the FenceHandle of its submit. The handle
  * retains the FencePool and the pool retains the device; the handle is not reachable on its own,
  * so the pool is the dependent, and its reset() waits the fence after the device was released.
+ * It cannot fail independently of commandBufferPoolKeepsDeviceAlive: the pool alone keeps the
+ * device alive, so the handle's own retention of the FencePool is never the only thing that does.
  */
 TEST_F(DeviceLifetime, submittedCommandBufferKeepsDeviceAlive)
 {
