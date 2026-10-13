@@ -8,8 +8,8 @@
 #include <gtest/gtest.h>
 
 #include <array>
-#include <limits>
 #include <memory>
+#include <span>
 
 #include "VulkanFixture.hpp"
 
@@ -21,7 +21,7 @@ namespace
 {
 /** Takes a freshly acquired image to the layout vkQueuePresentKHR expects. */
 vk::ImageMemoryBarrier2
-toPresentBarrier(vk::Image image)
+toPresentBarrier()
 {
     return {.srcStageMask        = vk::PipelineStageFlagBits2::eTopOfPipe,
             .dstStageMask        = vk::PipelineStageFlagBits2::eBottomOfPipe,
@@ -29,7 +29,6 @@ toPresentBarrier(vk::Image image)
             .newLayout           = vk::ImageLayout::ePresentSrcKHR,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image               = image,
             .subresourceRange    = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
                                     .baseMipLevel   = 0u,
                                     .levelCount     = VK_REMAINING_MIP_LEVELS,
@@ -45,23 +44,16 @@ toPresentBarrier(vk::Image image)
 void
 consumeAcquireSignal(const DevicePtr& device, const SemaphorePtr& imageAvailable)
 {
-    auto fencePool     = FencePool::create(device);
-    auto pool          = device->createCommandBufferPool();
-    auto commandBuffer = pool->get(vk::CommandBufferLevel::ePrimary);
-    {
-        CommandBufferRecorder recorder{**commandBuffer};
-        recorder.finish();
-    }
+    auto fencePool  = FencePool::create(device);
+    auto pool       = device->createCommandBufferPool();
+    auto executable = recordEmpty(pool);
 
-    const std::array<SemaphorePtr, 0> noSignals{};
-    const auto                        submission = device->getGraphicsQueue()->submit(
-        fencePool,
-        std::array{imageAvailable},
-        std::array{vk::PipelineStageFlags{vk::PipelineStageFlagBits::eTopOfPipe}},
-        std::array{std::move(commandBuffer)},
-        noSignals);
-    EXPECT_EQ(submission.fence->wait(std::numeric_limits<std::uint64_t>::max()),
-              vk::Result::eSuccess);
+    device->getGraphicsQueue()->submit(
+        *fencePool,
+        std::array{Queue::SemaphoreWait{.semaphore = imageAvailable,
+                                        .stage     = vk::PipelineStageFlagBits2::eTopOfPipe}},
+        std::span{&executable, 1u},
+        {});
     pool->reset();
 }
 
@@ -95,29 +87,26 @@ struct Rig
             return {};
         }
 
-        auto frame = frames->acquireNextFrame();
-        auto commandBuffer =
-            frame->getCommandBufferPoolForThread(0u)->get(vk::CommandBufferLevel::ePrimary);
+        auto frame    = frames->acquireNextFrame();
+        auto recorder = frame->getCommandBufferPoolForThread(0u)->record();
+        auto barrier  = toPresentBarrier();
+        if (recordAcquired)
         {
-            CommandBufferRecorder recorder{**commandBuffer};
-            const auto            barrier = toPresentBarrier(acquired->getImage());
-            if (recordAcquired)
-            {
-                recorder.setImageBarrier(acquired, barrier);
-            }
-            else
-            {
-                recorder.unsafeSetBarriers({}, {}, {barrier});
-            }
-            recorder.finish();
+            recorder.setImageBarrier(acquired, barrier);
         }
+        else
+        {
+            barrier.image = acquired->getImage();
+            recorder.unsafeSetBarriers({}, {}, {barrier});
+        }
+        auto executable = recorder.finish();
 
-        queue->submit(
-            fencePool,
-            std::array{acquireResult.imageAvailableSemaphore},
-            std::array{vk::PipelineStageFlags{vk::PipelineStageFlagBits::eColorAttachmentOutput}},
-            std::array{std::move(commandBuffer)},
-            std::array{frame->getRenderFinishedSemaphore()});
+        queue->submit(*fencePool,
+                      std::array{Queue::SemaphoreWait{
+                          .semaphore = acquireResult.imageAvailableSemaphore,
+                          .stage     = vk::PipelineStageFlagBits2::eColorAttachmentOutput}},
+                      std::span{&executable, 1u},
+                      std::array{frame->getRenderFinishedSemaphore()});
 
         auto presented =
             swapchain->present(acquired, frame->getRenderFinishedSemaphore(), fencePool);
@@ -258,24 +247,23 @@ TEST_F(SwapchainTest, acquiredImageKeepsSwapchainAlive)
     auto acquired = std::move(acquire.acquired);
     acquire       = {};
 
-    auto commandBuffer = std::make_unique<CommandBufferHandle>(
-        mDevice->createCommandBufferPool()->get(vk::CommandBufferLevel::ePrimary));
+    auto pool = mDevice->createCommandBufferPool();
 
     swapchain.reset();
     const auto released = releaseDevice();
 
     expectDependentHoldsDevice(released,
                                acquired,
-                               [&](AcquiredSwapchainImage& image)
+                               [&](AcquiredSwapchainImage&)
                                {
                                    {
-                                       CommandBufferRecorder recorder{***commandBuffer};
-                                       recorder.setImageBarrier(acquired,
-                                                                toPresentBarrier(image.getImage()));
-                                       recorder.finish();
+                                       auto recorder = pool->record();
+                                       recorder.setImageBarrier(acquired, toPresentBarrier());
+                                       auto executable = recorder.finish();
                                    }
-                                   // Returning the command buffer drops what it retained.
-                                   commandBuffer.reset();
+                                   // Dropping the unsubmitted command buffer released what it
+                                   // retained; dropping the pool lets go of the device.
+                                   pool.reset();
                                });
 }
 } // namespace VOG::Tests

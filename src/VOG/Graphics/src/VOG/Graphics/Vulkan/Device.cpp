@@ -147,12 +147,6 @@ Device::createShader(Shader::ShadingStage stage, std::span<const std::uint32_t> 
     return std::unique_ptr<Shader>(new Shader{shared_from_this(), stage, binary});
 }
 
-Fence
-Device::createFence()
-{
-    return Fence{shared_from_this()};
-}
-
 SemaphorePtr
 Device::createSemaphore()
 {

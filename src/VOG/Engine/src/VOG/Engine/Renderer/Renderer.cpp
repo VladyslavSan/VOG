@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <span>
 #include <thread>
 #include <utility>
 
@@ -165,11 +166,9 @@ Renderer::render()
     auto frame = mFrameObjectManager->acquireNextFrame();
     auto pool  = frame->getCommandBufferPoolForThread(threadId);
 
-    auto commandBuffer = pool->get(vk::CommandBufferLevel::ePrimary);
+    auto recorder = pool->record();
 
     {
-        CommandBufferRecorder recorder{**commandBuffer};
-
         recorder.setImageBarrier(
             acquired,
             {.srcStageMask        = vk::PipelineStageFlagBits2::eBottomOfPipe,
@@ -179,7 +178,6 @@ Renderer::render()
              .newLayout           = vk::ImageLayout::eColorAttachmentOptimal,
              .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
              .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-             .image               = acquired->getImage(),
              .subresourceRange    = {
                  .aspectMask     = vk::ImageAspectFlagBits::eColor,
                  .baseMipLevel   = 0,
@@ -247,7 +245,6 @@ Renderer::render()
              .newLayout           = vk::ImageLayout::ePresentSrcKHR,
              .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
              .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-             .image               = acquired->getImage(),
              .subresourceRange    = {
                  .aspectMask     = vk::ImageAspectFlagBits::eColor,
                  .baseMipLevel   = 0,
@@ -255,16 +252,16 @@ Renderer::render()
                  .baseArrayLayer = 0,
                  .layerCount     = VK_REMAINING_ARRAY_LAYERS,
              }});
-
-        recorder.finish();
     }
 
-    mGraphicsQueue->submit(
-        mFencePool,
-        std::array{acquireResult.imageAvailableSemaphore},
-        std::array{vk::PipelineStageFlags{vk::PipelineStageFlagBits::eColorAttachmentOutput}},
-        std::array{std::move(commandBuffer)},
-        std::array{frame->getRenderFinishedSemaphore()});
+    auto executable = recorder.finish();
+
+    mGraphicsQueue->submit(*mFencePool,
+                           std::array{Queue::SemaphoreWait{
+                               .semaphore = acquireResult.imageAvailableSemaphore,
+                               .stage     = vk::PipelineStageFlagBits2::eColorAttachmentOutput}},
+                           std::span{&executable, 1u},
+                           std::array{frame->getRenderFinishedSemaphore()});
 
     auto presented = mSwapchain->present(acquired, frame->getRenderFinishedSemaphore(), mFencePool);
     frame->retainUntilPresented(std::move(presented.presentation));

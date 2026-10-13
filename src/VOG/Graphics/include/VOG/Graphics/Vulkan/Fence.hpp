@@ -1,63 +1,75 @@
 #pragma once
 
+#include <VOG/Common/Assert.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/DeviceChild.hpp>
 
+#include <concepts>
+#include <functional>
+#include <type_traits>
+
 namespace VOG::Graphics::Vulkan
 {
 /**
- * Fence with additional state checks so that things like wait operation on not used fence never
- * happens.
+ * Binary fence that knows whether the GPU may still signal it, so a wait on a fence that was
+ * never handed to the GPU returns at once instead of hanging. Only FencePool creates one, and the
+ * VkFence never leaves the class: it goes to the GPU through arm().
  */
 class Fence
-    : protected DeviceChild
-    , protected vk::raii::Fence
+    : private DeviceChild
+    , private vk::raii::Fence
 {
-    /**
-     * Describes possible Fence states.
-     */
+    friend class FencePool;
+
     enum class State : std::uint8_t
     {
-        eNotUsed,
-        eUsed,
-        eUsedAndWaitTimeout,
-        eUsedAndWaited
+        eNotArmed,
+        eArmed,
+        eArmedAndWaitTimeout,
+        eArmedAndWaited
     };
 
-private:
-    friend class Device;
-
-    /**
-     * @param device Vulkan device to use for fence construction.
-     */
-    Fence(DevicePtr device);
+    explicit Fence(DevicePtr device);
 
 public:
-    /*
-     * Wait for fence to be signaled.
+    /**
+     * Hands the VkFence to @p enqueue, which passes it to a submit or present call. The fence is
+     * pending only if @p enqueue returned: a fence that is armed but never handed to the GPU would
+     * never signal and its wait would hang.
+     *
+     * @return what @p enqueue returned.
+     */
+    template <std::invocable<vk::Fence> Enqueue>
+    std::invoke_result_t<Enqueue, vk::Fence>
+    arm(Enqueue&& enqueue)
+    {
+        VOG_ASSERT_MSG(mState == State::eNotArmed, "A fence is armed once per use.");
+
+        if constexpr (std::is_void_v<std::invoke_result_t<Enqueue, vk::Fence>>)
+        {
+            std::invoke(std::forward<Enqueue>(enqueue), **this);
+            mState = State::eArmed;
+        }
+        else
+        {
+            auto result = std::invoke(std::forward<Enqueue>(enqueue), **this);
+            mState      = State::eArmed;
+            return result;
+        }
+    }
+
+    /**
+     * Waits until the GPU signaled the fence; returns eSuccess at once if it was never armed.
+     *
      * @param timeout Amount of time to wait.
      */
     vk::Result wait(std::uint64_t timeout);
 
-    /**
-     * Reset the fence.
-     * Mark it as not used and remove signaled state.
-     */
+private:
+    /** Unsignals the fence for reuse. Only FencePool calls it, when the fence returns to it. */
     void reset();
 
-    /**
-     * Vulkan fence handle to pass to a submit or present call.
-     */
-    vk::Fence handle() const;
-
-    /**
-     * Mark the fence as used. Call it only after the submit or present call that takes handle()
-     * succeeded: a fence marked used but never handed to the GPU would never signal.
-     */
-    void markUsed();
-
-protected:
-    State mState;
+    State mState = State::eNotArmed;
 };
 } // namespace VOG::Graphics::Vulkan

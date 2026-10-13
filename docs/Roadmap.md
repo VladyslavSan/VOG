@@ -73,7 +73,7 @@ step builds on the previous. Completed work is kept for context.
   semaphores (binary `Semaphore`); `Swapchain::present` chains a present fence
   (`VK_EXT_swapchain_maintenance1`, required) and returns a `Presentation` that the
   frame slot keeps until its next `onFrameStart`; `~FenceHandle` waits for a fence the
-  GPU may still signal, so every owner drains on drop. `recreate()` retires the old
+  GPU may still signal, as a safety net; the owners wait explicitly. `recreate()` retires the old
   `SwapchainGeneration` by reference count (supersedes the swapchain-recreation
   wait-idle teardown above and the former "stall-free recreation" milestone); the
   three shutdown validation errors (`vkDestroySemaphore-05149` x2,
@@ -95,7 +95,7 @@ step builds on the previous. Completed work is kept for context.
 - **Vulkan-only**; an RHI layer can be reintroduced later if a second
   backend is ever wanted.
 - Resource lifetimes follow the recording-retains model
-  (`ResourceOwnership.md`); new recording APIs must retain via
-  `CommandBuffer::addBoundResource`.
+  (`ResourceOwnership.md`); new recording APIs must retain through
+  `CommandBufferRecorder`.
 - Per-command-buffer retention stays the primary lifetime mechanism until
   profiling shows the per-bind cost matters.

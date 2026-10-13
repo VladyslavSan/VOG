@@ -7,7 +7,6 @@
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 
 #include <array>
-#include <exception>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -45,27 +44,46 @@ toAttachmentInfo(const CommandBufferRecorder::DepthAttachment& depth)
 }
 } // namespace
 
-CommandBufferRecorder::CommandBufferRecorder(Vulkan::CommandBuffer& commandBuffer)
-    : mCommandBuffer{commandBuffer}
-    , mUncaughtAtStart{std::uncaught_exceptions()}
+CommandBufferRecorder::CommandBufferRecorder(CommandBufferPoolPtr           pool,
+                                             std::unique_ptr<CommandBuffer> commandBuffer)
+    : mPool{std::move(pool)}
+    , mCommandBuffer{std::move(commandBuffer)}
 {
-    mCommandBuffer.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+    try
+    {
+        mCommandBuffer->begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+    }
+    catch (...)
+    {
+        // The destructor does not run for a constructor that throws. The buffer may be half
+        // begun, so it waits for the pool reset like any discarded one; no lease was counted.
+        mPool->abandon(std::move(mCommandBuffer));
+        throw;
+    }
+
+    ++mPool->mLeased;
 }
 
-CommandBufferRecorder::~CommandBufferRecorder()
+CommandBufferRecorder::~CommandBufferRecorder() noexcept
 {
-    VOG_ASSERT_MSG(mFinished || std::uncaught_exceptions() > mUncaughtAtStart,
-                   "CommandBufferRecorder destroyed without finish().");
+    VOG_ASSERT_MSG(!mRenderingActive,
+                   "CommandBufferRecorder destroyed with a RenderingPass alive.");
+
+    if (mCommandBuffer)
+    {
+        mPool->discard(std::move(mCommandBuffer));
+    }
 }
 
-void
+ExecutableCommandBuffer
 CommandBufferRecorder::finish()
 {
-    VOG_ASSERT_MSG(!mFinished, "CommandBufferRecorder::finish() called twice.");
+    VOG_ASSERT_MSG(mCommandBuffer, "CommandBufferRecorder::finish() called twice.");
     VOG_ASSERT_MSG(!mRenderingActive, "finish() called while a RenderingPass is alive.");
 
-    mCommandBuffer.end();
-    mFinished = true;
+    mCommandBuffer->end();
+
+    return ExecutableCommandBuffer{mPool, std::move(mCommandBuffer)};
 }
 
 CommandBufferRecorder::RenderingPass
@@ -85,7 +103,7 @@ CommandBufferRecorder::RenderingPass::RenderingPass(
     VOG_ASSERT_MSG(!colorAttachments.empty() || depthAttachment.has_value(),
                    "beginRendering needs at least one attachment.");
 
-    CommandBuffer& commandBuffer = mRecorder.mCommandBuffer;
+    CommandBuffer& commandBuffer = *mRecorder.mCommandBuffer;
 
     StaticVector<vk::RenderingAttachmentInfo, Limits::gMaxNumColorAttachments> colorInfos;
     vk::Extent2D                                                               extent{};
@@ -97,7 +115,7 @@ CommandBufferRecorder::RenderingPass::RenderingPass(
                        "All attachments of a rendering scope must share their extent.");
 
         extent = color.attachment->getExtent2D();
-        commandBuffer.addBoundResource(color.attachment);
+        commandBuffer.retain(color.attachment);
     }
 
     vk::RenderingAttachmentInfo depthInfo{};
@@ -108,7 +126,7 @@ CommandBufferRecorder::RenderingPass::RenderingPass(
                        "All attachments of a rendering scope must share their extent.");
 
         extent = depthAttachment->attachment->getExtent2D();
-        commandBuffer.addBoundResource(depthAttachment->attachment);
+        commandBuffer.retain(depthAttachment->attachment);
     }
 
     commandBuffer.beginRendering({
@@ -123,15 +141,15 @@ CommandBufferRecorder::RenderingPass::RenderingPass(
 
 CommandBufferRecorder::RenderingPass::~RenderingPass()
 {
-    mRecorder.mCommandBuffer.endRendering();
+    mRecorder.mCommandBuffer->endRendering();
     mRecorder.mRenderingActive = false;
 }
 
 void
 CommandBufferRecorder::RenderingPass::bindPipeline(GraphicsPipelinePtr pipeline)
 {
-    mRecorder.mCommandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, **pipeline);
-    mRecorder.mCommandBuffer.addBoundResource(std::move(pipeline));
+    mRecorder.mCommandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, **pipeline);
+    mRecorder.mCommandBuffer->retain(std::move(pipeline));
 }
 
 void
@@ -140,7 +158,7 @@ CommandBufferRecorder::RenderingPass::bindVertexBuffers(
     StaticVectorStrict<CommandBuffer::BufferBinding, CommandBuffer::kMaxNumVertexBufferBind>
         bindings)
 {
-    CommandBuffer& commandBuffer = mRecorder.mCommandBuffer;
+    CommandBuffer& commandBuffer = *mRecorder.mCommandBuffer;
 
     std::array<vk::Buffer, CommandBuffer::kMaxNumVertexBufferBind>     bufferHandles{};
     std::array<vk::DeviceSize, CommandBuffer::kMaxNumVertexBufferBind> offsets{};
@@ -148,7 +166,7 @@ CommandBufferRecorder::RenderingPass::bindVertexBuffers(
     {
         bufferHandles[i] = **bindings[i].buffer;
         offsets[i]       = bindings[i].offset;
-        commandBuffer.mBoundVertexBuffers.insert(std::move(bindings[i].buffer));
+        commandBuffer.retain(std::move(bindings[i].buffer));
     }
 
     commandBuffer.bindVertexBuffers(
@@ -161,14 +179,14 @@ void
 CommandBufferRecorder::RenderingPass::setViewport(std::uint32_t                      firstViewport,
                                                   vk::ArrayProxy<const vk::Viewport> viewports)
 {
-    mRecorder.mCommandBuffer.setViewport(firstViewport, viewports);
+    mRecorder.mCommandBuffer->setViewport(firstViewport, viewports);
 }
 
 void
 CommandBufferRecorder::RenderingPass::setScissor(std::uint32_t                    firstScissor,
                                                  vk::ArrayProxy<const vk::Rect2D> scissors)
 {
-    mRecorder.mCommandBuffer.setScissor(firstScissor, scissors);
+    mRecorder.mCommandBuffer->setScissor(firstScissor, scissors);
 }
 
 void
@@ -177,14 +195,18 @@ CommandBufferRecorder::RenderingPass::draw(std::uint32_t vertexCount,
                                            std::uint32_t firstVertex,
                                            std::uint32_t firstInstance)
 {
-    mRecorder.mCommandBuffer.draw(vertexCount, instanceCount, firstVertex, firstInstance);
+    mRecorder.mCommandBuffer->draw(vertexCount, instanceCount, firstVertex, firstInstance);
 }
 
 void
-CommandBufferRecorder::setImageBarrier(const std::shared_ptr<void>&   resource,
-                                       const vk::ImageMemoryBarrier2& barrier)
+CommandBufferRecorder::setImageBarrier(const AttachmentInterfacePtr& attachment,
+                                       vk::ImageMemoryBarrier2       barrier)
 {
-    mCommandBuffer.addBoundResource(resource);
+    VOG_ASSERT_MSG(attachment, "Image barrier needs an attachment.");
+    VOG_ASSERT_MSG(!barrier.image, "setImageBarrier fills barrier.image from the attachment.");
+
+    barrier.image = attachment->getImage();
+    mCommandBuffer->retain(attachment);
     unsafeSetBarriers({}, {}, {barrier});
 }
 
@@ -193,7 +215,7 @@ CommandBufferRecorder::setBufferBarrier(const std::shared_ptr<Buffer>& buffer,
                                         vk::BufferMemoryBarrier2       barrier)
 {
     barrier.buffer = **buffer;
-    mCommandBuffer.addBoundResource(buffer);
+    mCommandBuffer->retain(buffer);
     unsafeSetBarriers({}, {barrier}, {});
 }
 
@@ -202,11 +224,11 @@ CommandBufferRecorder::unsafeSetBarriers(vk::ArrayProxy<vk::MemoryBarrier2>     
                                          vk::ArrayProxy<vk::BufferMemoryBarrier2> bufferBarriers,
                                          vk::ArrayProxy<vk::ImageMemoryBarrier2>  imageBarriers)
 {
-    mCommandBuffer.pipelineBarrier2({.memoryBarrierCount       = memoryBarriers.size(),
-                                     .pMemoryBarriers          = memoryBarriers.begin(),
-                                     .bufferMemoryBarrierCount = bufferBarriers.size(),
-                                     .pBufferMemoryBarriers    = bufferBarriers.begin(),
-                                     .imageMemoryBarrierCount  = imageBarriers.size(),
-                                     .pImageMemoryBarriers     = imageBarriers.begin()});
+    mCommandBuffer->pipelineBarrier2({.memoryBarrierCount       = memoryBarriers.size(),
+                                      .pMemoryBarriers          = memoryBarriers.begin(),
+                                      .bufferMemoryBarrierCount = bufferBarriers.size(),
+                                      .pBufferMemoryBarriers    = bufferBarriers.begin(),
+                                      .imageMemoryBarrierCount  = imageBarriers.size(),
+                                      .pImageMemoryBarriers     = imageBarriers.begin()});
 }
 } // namespace VOG::Graphics::Vulkan

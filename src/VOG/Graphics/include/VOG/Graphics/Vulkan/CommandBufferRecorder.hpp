@@ -4,6 +4,7 @@
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp>
 #include <VOG/Graphics/Vulkan/CommandBuffer.hpp>
+#include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
 #include <VOG/Graphics/Vulkan/Containers.hpp>
 #include <VOG/Graphics/Vulkan/Limits.hpp>
 
@@ -17,12 +18,14 @@ VOG_DECLARE_PTR(GraphicsPipeline);
 VOG_DECLARE_PTR(Buffer);
 
 /**
- * Only supported recording surface. All resource-referencing commands retain via
- * CommandBuffer::addBoundResource / mBoundVertexBuffers.
+ * Only supported recording surface, and the only way to retain a resource in a command buffer:
+ * every command that references one retains it until the GPU is done.
  *
- * The recorder brackets the recording state: the constructor begins the command buffer and
- * finish() ends it. beginRendering() hands out a RenderingPass that brackets a dynamic-rendering
- * scope, and the draw commands exist only on that pass.
+ * The recorder owns the command buffer it leased from CommandBufferPool::record(). It brackets the
+ * recording state: the constructor begins the command buffer and finish() ends it and hands out the
+ * ExecutableCommandBuffer. Dropping the recorder instead discards the recording. beginRendering()
+ * hands out a RenderingPass that brackets a dynamic-rendering scope, and the draw commands exist
+ * only on that pass.
  */
 class CommandBufferRecorder
 {
@@ -86,7 +89,7 @@ public:
                       std::uint32_t           offset,
                       vk::ArrayProxy<const T> values)
         {
-            mRecorder.mCommandBuffer.pushConstants(layout, stageFlags, offset, values);
+            mRecorder.mCommandBuffer->pushConstants(layout, stageFlags, offset, values);
         }
 
         void draw(std::uint32_t vertexCount,
@@ -99,21 +102,20 @@ public:
     };
 
     /**
-     * Begins @p commandBuffer for a single submit. The recorder borrows it, so it must stay alive
-     * until finish().
+     * Discards the recording unless finish() ran. No RenderingPass may be alive.
+     *
+     * @note Render thread only. The pool takes no lock.
      */
-    explicit CommandBufferRecorder(Vulkan::CommandBuffer& commandBuffer);
-
-    /** finish() must have been called, unless the recorder is destroyed while unwinding. */
-    ~CommandBufferRecorder();
+    ~CommandBufferRecorder() noexcept;
 
     CommandBufferRecorder(const CommandBufferRecorder&)            = delete;
     CommandBufferRecorder(CommandBufferRecorder&&)                 = delete;
     CommandBufferRecorder& operator=(const CommandBufferRecorder&) = delete;
     CommandBufferRecorder& operator=(CommandBufferRecorder&&)      = delete;
 
-    /** Ends the command buffer. No rendering pass may be alive. */
-    void finish();
+    /** Ends the command buffer. No rendering pass may be alive. The recorder is empty afterwards.
+     */
+    [[nodiscard]] ExecutableCommandBuffer finish();
 
     /**
      * Starts a dynamic-rendering scope covering the full extent of the attachments.
@@ -129,11 +131,10 @@ public:
                    const std::optional<DepthAttachment>& depthAttachment = {});
 
     /**
-     * Image barrier that retains @p resource until the command buffer's fence fires.
-     * @p barrier.image must already reference the underlying VkImage.
+     * Image barrier that retains @p attachment until the command buffer's fence fires. Fills
+     * barrier.image from @p attachment, so @p barrier.image must be null.
      */
-    void setImageBarrier(const std::shared_ptr<void>&   resource,
-                         const vk::ImageMemoryBarrier2& barrier);
+    void setImageBarrier(const AttachmentInterfacePtr& attachment, vk::ImageMemoryBarrier2 barrier);
 
     /**
      * Buffer barrier that retains @p buffer until the command buffer's fence fires.
@@ -147,9 +148,13 @@ public:
                            vk::ArrayProxy<vk::ImageMemoryBarrier2>  imageBarriers);
 
 private:
-    CommandBuffer& mCommandBuffer;
-    bool           mFinished        = false;
-    bool           mRenderingActive = false;
-    int            mUncaughtAtStart = 0;
+    friend class CommandBufferPool;
+
+    /** Begins @p commandBuffer, which the pool leased for this recorder. */
+    CommandBufferRecorder(CommandBufferPoolPtr pool, std::unique_ptr<CommandBuffer> commandBuffer);
+
+    CommandBufferPoolPtr           mPool;
+    std::unique_ptr<CommandBuffer> mCommandBuffer;
+    bool                           mRenderingActive = false;
 };
 } // namespace VOG::Graphics::Vulkan

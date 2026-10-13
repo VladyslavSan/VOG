@@ -1,6 +1,8 @@
 #pragma once
 
 #include <VOG/Common/JSONContainer.hpp>
+#include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
+#include <VOG/Graphics/Vulkan/CommandBufferRecorder.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/DeviceRequirements.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
@@ -15,6 +17,14 @@
 
 namespace VOG::Tests
 {
+/** A command buffer that records nothing, ready to submit. */
+inline Graphics::Vulkan::ExecutableCommandBuffer
+recordEmpty(const Graphics::Vulkan::CommandBufferPoolPtr& pool)
+{
+    auto recorder = pool->record();
+    return recorder.finish();
+}
+
 /**
  * Headless Instance and Device. The validation layer is off here; see VulkanValidationFixture.
  */
@@ -74,9 +84,13 @@ protected:
         return mHeadlessSurfaceActive;
     }
 
-    /** Barrier that takes a fresh color image to the layout beginRendering expects. */
+public:
+    /**
+     * Barrier that takes a fresh color image to the layout beginRendering expects. Leaves .image
+     * null: setImageBarrier fills it from the attachment.
+     */
     static vk::ImageMemoryBarrier2
-    toColorAttachmentBarrier(vk::Image image)
+    toColorAttachmentBarrier()
     {
         return {.srcStageMask        = vk::PipelineStageFlagBits2::eTopOfPipe,
                 .dstStageMask        = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
@@ -85,7 +99,6 @@ protected:
                 .newLayout           = vk::ImageLayout::eColorAttachmentOptimal,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .image               = image,
                 .subresourceRange    = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
                                         .baseMipLevel   = 0u,
                                         .levelCount     = VK_REMAINING_MIP_LEVELS,
@@ -93,6 +106,7 @@ protected:
                                         .layerCount     = VK_REMAINING_ARRAY_LAYERS}};
     }
 
+protected:
     /** Weak views of the Instance and Device the fixture created. */
     struct Released
     {

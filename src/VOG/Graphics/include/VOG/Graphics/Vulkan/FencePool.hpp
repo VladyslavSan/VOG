@@ -4,13 +4,14 @@
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Fence.hpp>
 
+#include <concepts>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Device);
-VOG_DECLARE_PTR(Fence);
 VOG_DECLARE_PTR(FencePool);
 
 /**
@@ -37,11 +38,34 @@ public:
         return std::shared_ptr<FencePool>(new FencePool{std::move(device)});
     }
 
-    class FenceHandle : protected Fence
+    /**
+     * One fence on loan from the pool. It can be shared: one submit fence guards the command
+     * buffers of several pools.
+     */
+    class FenceHandle
     {
-    public:
-        FenceHandle(FencePoolPtr pool, Fence fence);
+        friend class FencePool;
+        friend class Queue;
+        friend class Swapchain;
 
+        FenceHandle(FencePoolPtr pool, Fence fence) noexcept;
+
+        /**
+         * Hands the fence to @p enqueue and marks it pending only if @p enqueue returned.
+         *
+         * Not tested directly, by decision: arm is a few lines, only Queue and Swapchain call it,
+         * and a surface can only be lost with a hook the tests do not have. The shape is enforced
+         * by review, and the present path keeps its fence armed when the present reports
+         * SurfaceLost (see Swapchain::present).
+         */
+        template <std::invocable<vk::Fence> Enqueue>
+        auto
+        arm(Enqueue&& enqueue)
+        {
+            return mFence.arm(std::forward<Enqueue>(enqueue));
+        }
+
+    public:
         /**
          * Waits for the fence if the GPU may still signal it, then returns it to the pool. The
          * owner of the handle can therefore drop it at any time, and what the fence guards stays
@@ -49,30 +73,36 @@ public:
          *
          * @note Render thread only. The pool takes no lock.
          */
-        ~FenceHandle();
+        ~FenceHandle() noexcept;
 
         FenceHandle(const FenceHandle&) = delete;
         FenceHandle(FenceHandle&&)      = delete;
 
-        using Fence::handle;
-        using Fence::markUsed;
-        using Fence::wait;
+        /** Returns eSuccess at once for a fence that was never armed. */
+        vk::Result wait(std::uint64_t timeout);
 
     private:
         FencePoolPtr mPool;
+        Fence        mFence;
     };
 
-    std::shared_ptr<FenceHandle> getShared();
+    using FenceHandlePtr = std::shared_ptr<FenceHandle>;
 
-protected:
-    friend class FenceHandle;
-    void returnToPool(Fence fence);
+    FenceHandlePtr take();
 
 private:
-    Fence take();
+    friend class FenceHandle;
+
+    /** Never allocates: mFences is reserved for every fence the pool created. */
+    void returnToPool(Fence fence);
+
+    Fence makeFence();
 
     DevicePtr mDevice;
 
     std::vector<Fence> mFences;
+
+    /** Fences created so far; mFences never needs more room than this. */
+    std::size_t mCreated = 0u;
 };
 } // namespace VOG::Graphics::Vulkan

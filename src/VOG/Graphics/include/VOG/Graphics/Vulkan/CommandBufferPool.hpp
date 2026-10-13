@@ -13,52 +13,36 @@ namespace VOG::Graphics::Vulkan
 VOG_DECLARE_PTR(Device);
 VOG_DECLARE_PTR(CommandBufferPool);
 
-/**
- * A handle to command buffer that is bound to CommandBufferPool. It can be recorded and then
- * submitted for execution via CommandBufferHandle::submit() method or simply drop it if execution
- * is not desired (if recorded commands in the command buffer should be discarded).
- */
-class CommandBufferHandle
-{
-    friend class CommandBufferPool;
+class CommandBufferRecorder;
 
-    CommandBufferHandle(CommandBufferPoolPtr           pool,
-                        std::unique_ptr<CommandBuffer> commandBuffer) noexcept;
+/**
+ * A recorded command buffer, ready for Queue::submit. It holds its pool, so the pool outlives it.
+ * Dropping it without submitting is a legal discard: the recording is thrown away, everything it
+ * retained is released at once, and the pool recycles the buffer at its next reset().
+ */
+class ExecutableCommandBuffer
+{
+    friend class CommandBufferRecorder;
+    friend class Queue;
+
+    ExecutableCommandBuffer(CommandBufferPoolPtr           pool,
+                            std::unique_ptr<CommandBuffer> commandBuffer);
 
 public:
-    CommandBufferHandle(CommandBufferHandle&&) = default;
+    ExecutableCommandBuffer(ExecutableCommandBuffer&&) noexcept = default;
+
+    ExecutableCommandBuffer(const ExecutableCommandBuffer&)            = delete;
+    ExecutableCommandBuffer& operator=(const ExecutableCommandBuffer&) = delete;
+    ExecutableCommandBuffer& operator=(ExecutableCommandBuffer&&)      = delete;
 
     /**
-     * Returns the command buffer to its pool unless it was submitted.
+     * Discards the recording unless it was submitted.
      *
      * @note Render thread only. The pool takes no lock.
      */
-    ~CommandBufferHandle() noexcept(false);
+    ~ExecutableCommandBuffer() noexcept;
 
-    /**
-     * Parks the command buffer in the pool until @p fence signals. Called by Queue::submit after
-     * the submit succeeded.
-     */
-    void consumeForSubmission(std::shared_ptr<FencePool::FenceHandle> fence);
-
-    /**
-     * Raw Vulkan handle for submit. Recording through it bypasses resource retention.
-     */
-    vk::CommandBuffer unsafeVkHandle() const;
-
-    /**
-     * Allows usage of the handle as if it's an instance of the CommandBuffer.
-     * @return CommandBuffer handle.
-     */
-    CommandBuffer* operator*() noexcept;
-
-    /**
-     * Allows usage of the handle as if it's an instance of the CommandBuffer.
-     * @return CommandBuffer handle.
-     */
-    CommandBuffer* operator->() noexcept;
-
-protected:
+private:
     CommandBufferPoolPtr           mPool;
     std::unique_ptr<CommandBuffer> mCommandBuffer;
 };
@@ -66,21 +50,34 @@ protected:
 /**
  * Manages a pool of command buffers for a single recording thread.
  *
+ * A buffer is in exactly one place: free (initial state), leased (a recorder or an executable
+ * command buffer holds it), dirty (leased and discarded, not yet reset) or submitted (parked with
+ * the fence of its submit). reset() waits for the submitted fences, resets the Vulkan pool and
+ * makes everything free again.
+ *
  * @note One pool must be used by only one thread at a time. FrameObjects can
  * allocate several pools (threadCount), but the engine currently hardcodes
  * threadCount = 1 until a second recorder thread exists.
  */
 class CommandBufferPool : public std::enable_shared_from_this<CommandBufferPool>
 {
-    friend class CommandBufferHandle;
+    friend class CommandBufferRecorder;
+    friend class ExecutableCommandBuffer;
     friend class Device;
+    friend class Queue;
 
     explicit CommandBufferPool(const DevicePtr& device);
 
-    struct SubmittedCommandBuffer
+    struct Submitted
     {
-        std::unique_ptr<CommandBuffer>          commandBuffer;
-        std::shared_ptr<FencePool::FenceHandle> fence;
+        std::unique_ptr<CommandBuffer> commandBuffer;
+        /**
+         * What keeps the buffer from being freed under the GPU is ~CommandBufferPool's explicit
+         * wait: a fence shared with another pool is not the last reference here, so ~FenceHandle
+         * does not wait. Declared after the buffer, so it is destroyed first; that only helps
+         * when this is the last reference.
+         */
+        FencePool::FenceHandlePtr fence;
     };
 
 public:
@@ -88,34 +85,51 @@ public:
     CommandBufferPool(CommandBufferPool&&)      = delete;
 
     /**
-     * Retrieves clean command buffer from cache or allocates new if cache is exhausted.
+     * Waits for every submitted command buffer, so the buffers are never freed while the GPU runs
+     * them.
      *
-     * @param type Type of the command buffer to return - primary or secondary.
-     *
-     * @returns A lease on a pooled CommandBuffer (record via CommandBufferRecorder).
+     * @note Render thread only.
      */
-    CommandBufferHandle get(CommandBufferType type);
+    ~CommandBufferPool() noexcept;
 
     /**
-     * Reset command buffer pool.
+     * The only way to lease a command buffer: the recorder begins it. Dropping the recorder
+     * discards the recording.
+     */
+    [[nodiscard]] CommandBufferRecorder record();
+
+    /**
+     * Waits for every submitted fence, resets the Vulkan pool and makes every buffer free.
+     * No recorder or executable command buffer of this pool may be alive.
      */
     void reset();
 
-protected:
-    /**
-     * Return command buffer back to the pool.
-     *
-     * @param commandBuffer Command buffer to return to the pool.
-     */
-    void returnCommandBufferToPool(std::unique_ptr<CommandBuffer> commandBuffer);
+private:
+    /** A leased buffer that will not be submitted: released now, recycled at reset(). */
+    void discard(std::unique_ptr<CommandBuffer> commandBuffer) noexcept;
 
-    DevicePtr             mDevice;
+    /** discard() for a buffer whose lease was never counted (its begin() threw). */
+    void abandon(std::unique_ptr<CommandBuffer> commandBuffer) noexcept;
+
+    /** A leased buffer that was submitted: kept until @p fence signals. */
+    void park(std::unique_ptr<CommandBuffer> commandBuffer, FencePool::FenceHandlePtr fence);
+
+    /** Allocates a batch of command buffers. The vectors below get room for all of them first. */
+    void grow();
+
+    DevicePtr mDevice;
+
+    /** Declared before the buffers: members are destroyed in reverse, so the buffers are freed
+     *  while the Vulkan pool still exists. */
     vk::raii::CommandPool mVulkanPool;
 
-    std::vector<std::unique_ptr<CommandBuffer>> mPrimaryBuffers;
-    std::vector<std::unique_ptr<CommandBuffer>> mSecondaryBuffers;
+    /** Each buffer is in one of these or leased, so each vector holds at most mAllocated entries.
+     *  They are reserved for that in grow(), so discard() and park() never allocate. */
+    std::vector<std::unique_ptr<CommandBuffer>> mFree;
+    std::vector<std::unique_ptr<CommandBuffer>> mDirty;
+    std::vector<Submitted>                      mSubmitted;
 
-    /** A list of used command buffer handles during frame recording */
-    std::vector<SubmittedCommandBuffer> mSubmittedCommandBuffers;
+    std::size_t mAllocated = 0u;
+    std::size_t mLeased    = 0u;
 };
 } // namespace VOG::Graphics::Vulkan

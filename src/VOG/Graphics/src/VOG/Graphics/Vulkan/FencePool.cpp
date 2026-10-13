@@ -13,15 +13,14 @@ namespace
 constexpr std::size_t gGrowthSize = 10u;
 }
 
-FencePool::FenceHandle::FenceHandle(FencePoolPtr pool, Fence fence)
-    : Fence{std::move(fence)}
-    , mPool{std::move(pool)}
+FencePool::FenceHandle::FenceHandle(FencePoolPtr pool, Fence fence) noexcept
+    : mPool{std::move(pool)}
+    , mFence{std::move(fence)}
 {
 }
 
-// inDestructor logs a Vulkan failure. A bad_alloc from push_back in returnToPool is not caught
-// there and terminates, which is the right answer for no memory.
-FencePool::FenceHandle::~FenceHandle()
+// inDestructor logs a Vulkan failure; returnToPool does not allocate.
+FencePool::FenceHandle::~FenceHandle() noexcept
 {
     // Resetting a fence the GPU still has to signal is invalid, and its owners (command buffers,
     // presentations) release what the fence guards right after this destructor.
@@ -29,14 +28,20 @@ FencePool::FenceHandle::~FenceHandle()
                  [this]
                  {
                      [[maybe_unused]] const vk::Result result =
-                         wait(std::numeric_limits<std::uint64_t>::max());
+                         mFence.wait(std::numeric_limits<std::uint64_t>::max());
                  });
 
     inDestructor("Returning a fence to its pool",
                  [this]
                  {
-                     mPool->returnToPool(std::move(*this));
+                     mPool->returnToPool(std::move(mFence));
                  });
+}
+
+vk::Result
+FencePool::FenceHandle::wait(std::uint64_t timeout)
+{
+    return mFence.wait(timeout);
 }
 
 FencePool::FencePool(DevicePtr device)
@@ -44,10 +49,25 @@ FencePool::FencePool(DevicePtr device)
 {
 }
 
-std::shared_ptr<FencePool::FenceHandle>
-FencePool::getShared()
+FencePool::FenceHandlePtr
+FencePool::take()
 {
-    return std::make_shared<FenceHandle>(shared_from_this(), take());
+    if (mFences.empty())
+    {
+        // Reserve first: the fences are created in this batch, and returnToPool must never need
+        // more room than the number of fences that exist.
+        mFences.reserve(mCreated + gGrowthSize);
+        for (std::size_t i = 0u; i < gGrowthSize; ++i)
+        {
+            mFences.push_back(makeFence());
+            ++mCreated;
+        }
+    }
+
+    Fence fence = std::move(mFences.back());
+    mFences.pop_back();
+
+    return FenceHandlePtr{new FenceHandle{shared_from_this(), std::move(fence)}};
 }
 
 void
@@ -58,19 +78,8 @@ FencePool::returnToPool(Fence fence)
 }
 
 Fence
-FencePool::take()
+FencePool::makeFence()
 {
-    if (mFences.empty())
-    {
-        for (std::size_t i = 0u; i < gGrowthSize; ++i)
-        {
-            mFences.push_back(mDevice->createFence());
-        }
-    }
-
-    auto fence = std::move(mFences.back());
-    mFences.pop_back();
-
-    return fence;
+    return Fence{mDevice};
 }
 } // namespace VOG::Graphics::Vulkan

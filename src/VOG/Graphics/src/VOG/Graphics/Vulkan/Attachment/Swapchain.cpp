@@ -9,6 +9,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <exception>
 #include <stdexcept>
 
 namespace VOG::Graphics::Vulkan
@@ -245,51 +246,55 @@ Swapchain::present(const AcquiredSwapchainImagePtr& acquired,
     // The image may come from a generation recreate() has already replaced: it is presented to
     // the swapchain it was acquired from.
     SwapchainGenerationPtr generation = acquired->mGeneration;
-    auto                   fence      = fencePool->getShared();
+    auto                   fence      = fencePool->take();
 
-    const std::uint32_t                    imageIndex      = acquired->mImageIndex;
-    const vk::Semaphore                    waitHandle      = **waitSemaphore;
-    const vk::SwapchainKHR                 swapchainHandle = *generation->swapchain;
-    const vk::Fence                        fenceHandle     = fence->handle();
-    const vk::SwapchainPresentFenceInfoKHR fenceInfo{
-        .swapchainCount = 1u,
-        .pFences        = &fenceHandle,
-    };
-    const vk::PresentInfoKHR presentInfoKHR{
-        .pNext              = &fenceInfo,
-        .waitSemaphoreCount = 1u,
-        .pWaitSemaphores    = &waitHandle,
-        .swapchainCount     = 1u,
-        .pSwapchains        = &swapchainHandle,
-        .pImageIndices      = &imageIndex,
-    };
+    const std::uint32_t    imageIndex      = acquired->mImageIndex;
+    const vk::Semaphore    waitHandle      = **waitSemaphore;
+    const vk::SwapchainKHR swapchainHandle = *generation->swapchain;
 
-    // Only a fence that was handed to the GPU will signal; marking it earlier would hang its
-    // destructor if the present threw. The present releases the acquisition and its queue
-    // operations count as enqueued, so their fence signals, also when the present reports
-    // eErrorOutOfDateKHR or throws SurfaceLostKHRError. Other errors (out of memory, device lost)
-    // enqueue nothing and leave the fence and the acquisition alone.
-    const auto settle = [&]
+    // The fence is armed when the lambda returns, also when the present reports
+    // eErrorOutOfDateKHR or the surface is lost: the present's queue operations count as enqueued,
+    // so the presentation engine still waits the semaphore and uses the swapchain, and the fence
+    // signals when it is done. Hence the lambda catches SurfaceLostKHRError, lets `fence` arm, and
+    // present() rethrows below. Any other error enqueues nothing: it leaves the fence unarmed and
+    // the acquisition alone. VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS makes
+    // eErrorOutOfDateKHR a returned result.
+    vk::Result         result = vk::Result::eSuccess;
+    std::exception_ptr lost;
+    fence->arm(
+        [&](vk::Fence vkFence)
+        {
+            const vk::SwapchainPresentFenceInfoKHR fenceInfo{
+                .swapchainCount = 1u,
+                .pFences        = &vkFence,
+            };
+            const vk::PresentInfoKHR presentInfoKHR{
+                .pNext              = &fenceInfo,
+                .waitSemaphoreCount = 1u,
+                .pWaitSemaphores    = &waitHandle,
+                .swapchainCount     = 1u,
+                .pSwapchains        = &swapchainHandle,
+                .pImageIndices      = &imageIndex,
+            };
+
+            try
+            {
+                result = mPresentQueue.presentKHR(presentInfoKHR);
+            }
+            catch (const vk::SurfaceLostKHRError&)
+            {
+                lost = std::current_exception();
+            }
+        });
+
+    // The present releases the acquisition, also when it reports eErrorOutOfDateKHR.
+    acquired->markPresented();
+    if (lost)
     {
-        fence->markUsed();
-        acquired->markPresented();
-    };
-
-    vk::Result result = vk::Result::eSuccess;
-    try
-    {
-        // eSuboptimalKHR and eErrorOutOfDateKHR (a valid result here, see
-        // VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS) both mean the swapchain needs
-        // recreation.
-        result = mPresentQueue.presentKHR(presentInfoKHR);
+        std::rethrow_exception(lost);
     }
-    catch (const vk::SurfaceLostKHRError&)
-    {
-        settle();
-        throw;
-    }
-    settle();
 
+    // eSuboptimalKHR and eErrorOutOfDateKHR both mean the swapchain needs recreation.
     const PresentStatus status =
         (result == vk::Result::eSuccess) ? PresentStatus::eReady : PresentStatus::eOutOfDate;
 

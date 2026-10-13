@@ -5,7 +5,6 @@
 #include <VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
 #include <VOG/Graphics/Vulkan/Containers.hpp>
-#include <VOG/Graphics/Vulkan/Fence.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/Limits.hpp>
 #include <VOG/Graphics/Vulkan/MemoryAllocator.hpp>
@@ -169,14 +168,6 @@ public:
     std::unique_ptr<Buffer>
     createBuffer(const vk::BufferCreateInfo&                  createInfo,
                  const MemoryAllocator::AllocationParameters& allocationInfo);
-
-    /**
-     * Creates a binary fence for CPU/GPU synchronization.
-     * The fence starts in the unsignaled state.
-     *
-     * @return Fence object.
-     */
-    Fence createFence();
 
     /**
      * Creates a binary semaphore. Pass it to Queue::submit and Swapchain::present: the command

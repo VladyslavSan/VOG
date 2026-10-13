@@ -10,8 +10,9 @@
 #include <gtest/gtest.h>
 
 #include <array>
-#include <limits>
 #include <memory>
+#include <optional>
+#include <span>
 #include <type_traits>
 
 #include "VulkanFixture.hpp"
@@ -30,14 +31,20 @@ static_assert(!std::is_convertible_v<Graphics::Vulkan::Device&, vk::raii::Device
 static_assert(!std::is_convertible_v<Graphics::Vulkan::Device&, vk::raii::PhysicalDevice&>);
 static_assert(!std::is_convertible_v<Graphics::Vulkan::Instance&, vk::raii::Instance&>);
 static_assert(!std::is_convertible_v<Graphics::Vulkan::Instance&, vk::raii::Context&>);
+// Every destructor of an owner is noexcept: a failing wait is logged by inDestructor, not thrown.
+static_assert(std::is_nothrow_destructible_v<Graphics::Vulkan::FencePool::FenceHandle>);
+static_assert(std::is_nothrow_destructible_v<Graphics::Vulkan::CommandBufferPool>);
+static_assert(std::is_nothrow_destructible_v<Graphics::Vulkan::CommandBufferRecorder>);
+static_assert(std::is_nothrow_destructible_v<Graphics::Vulkan::ExecutableCommandBuffer>);
+static_assert(std::is_nothrow_destructible_v<Graphics::Vulkan::AcquiredSwapchainImage>);
+static_assert(std::is_nothrow_destructible_v<Graphics::Vulkan::Swapchain::Presentation>);
+static_assert(std::is_nothrow_destructible_v<Graphics::Frame::FrameObjects>);
 // The slot owns a presentation and command buffer pools; a moved-from one has nothing to wait on.
 static_assert(!std::is_move_constructible_v<Graphics::Frame::FrameObjects>);
 
 namespace
 {
 constexpr vk::DeviceSize gBufferSize = 256u;
-
-constexpr std::uint64_t gWaitForever = std::numeric_limits<std::uint64_t>::max();
 
 Graphics::Vulkan::InstancePtr
 makeInstance()
@@ -58,13 +65,6 @@ makeBuffer(Graphics::Vulkan::Device& device)
         {.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
          .usage = VMA_MEMORY_USAGE_AUTO});
 }
-
-/** Has the GPU signal @p fence through an empty submit; the fence must be unsignaled. */
-void
-submitSignalling(Graphics::Vulkan::Device& device, vk::Fence fence)
-{
-    device.getGraphicsQueue()->vk::raii::Queue::submit({}, fence);
-}
 } // namespace
 
 /** Requirement 8 of ResourceOwnership.md; see VulkanFixture::expectDependentHoldsDevice(). */
@@ -80,7 +80,7 @@ TEST_F(DeviceLifetime, releasingLastReferenceDestroysDevice)
 {
     auto fencePool = Graphics::Vulkan::FencePool::create(mDevice);
     // Drop the handle so the pool is idle; then drop the pool itself.
-    fencePool->getShared();
+    fencePool->take();
     fencePool.reset();
 
     auto buffer = makeBuffer(*mDevice);
@@ -124,36 +124,27 @@ TEST_F(DeviceLifetime, bufferKeepsDeviceAlive)
                                });
 }
 
-TEST_F(DeviceLifetime, fenceKeepsDeviceAlive)
-{
-    auto fence = std::make_unique<Graphics::Vulkan::Fence>(mDevice->createFence());
-    submitSignalling(*mDevice, fence->handle());
-    fence->markUsed();
-    const auto released = releaseDevice();
-
-    expectDependentHoldsDevice(released,
-                               fence,
-                               [](Graphics::Vulkan::Fence& fence)
-                               {
-                                   EXPECT_EQ(fence.wait(gWaitForever), vk::Result::eSuccess);
-                               });
-}
-
 /**
- * A live FenceHandle keeps the pool and therefore the device alive via FencePoolPtr → DevicePtr.
+ * A submitted command buffer parks in its pool with the FenceHandle of its submit. The handle
+ * retains the FencePool and the pool retains the device; the handle is not reachable on its own,
+ * so the pool is the dependent, and its reset() waits the fence after the device was released.
  */
-TEST_F(DeviceLifetime, fenceHandleKeepsDeviceAlive)
+TEST_F(DeviceLifetime, submittedCommandBufferKeepsDeviceAlive)
 {
-    auto handle = Graphics::Vulkan::FencePool::create(mDevice)->getShared();
-    submitSignalling(*mDevice, handle->handle());
-    handle->markUsed();
+    auto fencePool = Graphics::Vulkan::FencePool::create(mDevice);
+    auto pool      = mDevice->createCommandBufferPool();
+    {
+        auto executable = recordEmpty(pool);
+        mDevice->getGraphicsQueue()->submit(*fencePool, {}, std::span{&executable, 1u}, {});
+    }
+    fencePool.reset();
     const auto released = releaseDevice();
 
     expectDependentHoldsDevice(released,
-                               handle,
-                               [](Graphics::Vulkan::FencePool::FenceHandle& handle)
+                               pool,
+                               [](Graphics::Vulkan::CommandBufferPool& pool)
                                {
-                                   EXPECT_EQ(handle.wait(gWaitForever), vk::Result::eSuccess);
+                                   pool.reset();
                                });
 }
 
@@ -166,7 +157,7 @@ TEST_F(DeviceLifetime, fencePoolKeepsDeviceAlive)
                                fencePool,
                                [](Graphics::Vulkan::FencePool& fencePool)
                                {
-                                   fencePool.getShared();
+                                   fencePool.take();
                                });
 }
 
@@ -179,26 +170,41 @@ TEST_F(DeviceLifetime, commandBufferPoolKeepsDeviceAlive)
                                pool,
                                [](Graphics::Vulkan::CommandBufferPool& pool)
                                {
-                                   pool.get(vk::CommandBufferLevel::ePrimary);
+                                   {
+                                       auto executable = recordEmpty(pool.shared_from_this());
+                                   }
                                    pool.reset();
                                });
 }
 
 /**
- * A handle keeps its pool, and through it the device, alive: user code holds nothing else.
+ * An executable command buffer keeps its pool, and through it the device, alive: user code holds
+ * nothing else. Its destruction (a discard, then freeing the buffer and the pool) is the call
+ * under test.
  */
-TEST_F(DeviceLifetime, commandBufferHandleKeepsDeviceAlive)
+TEST_F(DeviceLifetime, executableCommandBufferKeepsDeviceAlive)
 {
-    auto handle = std::make_unique<Graphics::Vulkan::CommandBufferHandle>(
-        mDevice->createCommandBufferPool()->get(vk::CommandBufferLevel::ePrimary));
+    std::optional<Graphics::Vulkan::ExecutableCommandBuffer> executable;
+    executable.emplace(recordEmpty(mDevice->createCommandBufferPool()));
+    const auto released = releaseDevice();
+
+    expectDependentHoldsDevice(released, executable);
+}
+
+/**
+ * A recorder keeps its pool alive and ends the command buffer in finish(), a real Vulkan call.
+ */
+TEST_F(DeviceLifetime, commandBufferRecorderKeepsDeviceAlive)
+{
+    std::unique_ptr<Graphics::Vulkan::CommandBufferRecorder> recorder{
+        new Graphics::Vulkan::CommandBufferRecorder(mDevice->createCommandBufferPool()->record())};
     const auto released = releaseDevice();
 
     expectDependentHoldsDevice(released,
-                               handle,
-                               [](Graphics::Vulkan::CommandBufferHandle& handle)
+                               recorder,
+                               [](Graphics::Vulkan::CommandBufferRecorder& recorder)
                                {
-                                   Graphics::Vulkan::CommandBufferRecorder recorder{**handle};
-                                   recorder.finish();
+                                   auto executable = recorder.finish();
                                });
 }
 
@@ -229,7 +235,11 @@ TEST_F(DeviceLifetime, timelineSemaphoreKeepsDeviceAlive)
 }
 
 /**
- * The queue is owned by the device; the handle it hands out shares ownership of the device.
+ * The queue is owned by the device; the handle it hands out shares ownership of the device. The
+ * transfer queue is kept for future uploads, and no Vulkan call can reach it yet because there is
+ * no transfer-family command buffer pool. Like Semaphore, the call under test is its destruction:
+ * the graphics handle goes first, so the transfer handle alone must keep the device alive. A real
+ * submit through the graphics handle is covered by submittedCommandBufferKeepsDeviceAlive.
  */
 TEST_F(DeviceLifetime, queueKeepsDeviceAlive)
 {
@@ -237,14 +247,8 @@ TEST_F(DeviceLifetime, queueKeepsDeviceAlive)
     auto       transfer = mDevice->getTransferQueue();
     const auto released = releaseDevice();
 
-    // The transfer handle alone must keep the device alive too; drop the graphics one first.
     queue.reset();
-    expectDependentHoldsDevice(released,
-                               transfer,
-                               [](const Graphics::Vulkan::Queue& queue)
-                               {
-                                   queue.vk::raii::Queue::submit({});
-                               });
+    expectDependentHoldsDevice(released, transfer);
 }
 
 /**
@@ -276,8 +280,8 @@ TEST_F(DeviceLifetime, frameObjectsKeepDeviceAlive)
                                frame,
                                [](Graphics::Frame::FrameObjects& frame)
                                {
-                                   frame.getCommandBufferPoolForThread(0u)->get(
-                                       vk::CommandBufferLevel::ePrimary);
+                                   auto executable =
+                                       recordEmpty(frame.getCommandBufferPoolForThread(0u));
                                });
 }
 

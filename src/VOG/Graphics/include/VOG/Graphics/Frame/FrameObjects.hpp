@@ -28,7 +28,13 @@ public:
     FrameObjects(FrameObjects&&)      = delete;
     FrameObjects(const FrameObjects&) = delete;
 
-    ~FrameObjects();
+    /**
+     * Nothing to do by hand: members are destroyed in reverse order, so the presentation goes
+     * first and waits for its present fence, then the pools it last holds wait for their
+     * submitted command buffers (a pool someone else still holds waits in its own destructor).
+     * Every wait is a noexcept inDestructor path.
+     */
+    ~FrameObjects() = default;
 
     const Vulkan::SemaphorePtr& getRenderFinishedSemaphore() const;
 

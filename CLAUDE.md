@@ -23,9 +23,9 @@ it (fence-keyed release on frame-slot reuse) — the same model the Metal API
 provides. Letting a `shared_ptr` die at scope end is safe even for in-flight
 resources — do NOT diagnose "destroyed while GPU in use" bugs or add deletion
 queues / wait-idle calls before tracing the retention chain. Any new recording
-API must retain its resource via `CommandBuffer::addBoundResource` (use
-`CommandBufferRecorder`; `CommandBuffer` inherits `vk::raii::CommandBuffer`
-privately).
+API must retain its resource through `CommandBufferRecorder`, the only
+recording path (`Queue::submit` retains the semaphores it is given;
+`CommandBuffer` inherits `vk::raii::CommandBuffer` privately).
 Presenting follows the same model: `Swapchain::present` returns a `Presentation`
 (swapchain generation, wait semaphore, present fence) that the frame slot keeps
 until the fence signals; this needs `VK_EXT_swapchain_maintenance1`, which device

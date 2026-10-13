@@ -1,6 +1,5 @@
 #pragma once
 
-#include <VOG/Common/Concepts.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
@@ -8,25 +7,24 @@
 
 #include <memory>
 #include <unordered_set>
-#include <vector>
 
 namespace VOG::Graphics::Vulkan
 {
-using CommandBufferType = vk::CommandBufferLevel;
-
 /**
- * Tracked Vulkan command buffer. Inherits vk::raii::CommandBuffer privately so recording
- * that needs retention goes through CommandBufferRecorder (or the few public APIs below).
+ * Vulkan command buffer that keeps everything recorded into it alive. Inherits
+ * vk::raii::CommandBuffer privately: recording goes through CommandBufferRecorder, which retains
+ * what it records, and submission goes through Queue.
  *
- * Never copied or moved: the pool and its handles pass it around as unique_ptr<CommandBuffer>.
+ * Never copied or moved: the pool, the recorder and the executable command buffer pass it around
+ * as unique_ptr<CommandBuffer>.
  */
 class CommandBuffer : private vk::raii::CommandBuffer
 {
     friend class CommandBufferPool;
     friend class CommandBufferRecorder;
-    friend class CommandBufferHandle;
+    friend class Queue;
 
-    CommandBuffer(vk::raii::CommandBuffer commandBuffer, CommandBufferType type);
+    explicit CommandBuffer(vk::raii::CommandBuffer commandBuffer);
 
 public:
     constexpr static std::size_t kMaxNumVertexBufferBind = 8u;
@@ -40,21 +38,20 @@ public:
     CommandBuffer(const CommandBuffer&) = delete;
     CommandBuffer(CommandBuffer&&)      = delete;
 
-    void addBoundResource(const std::shared_ptr<void>& resource);
-
-    const CommandBufferType type;
-
 private:
     void begin(const vk::CommandBufferBeginInfo& beginInfo);
     void end();
 
-    /** Raw Vulkan handle for submit; does not bypass retention on recording paths. */
+    /** Raw Vulkan handle for submit. */
     vk::CommandBuffer vkHandle() const;
 
-    /** Drops everything recording retained; call once the fence of the last submit signaled. */
-    void clearBoundResources();
+    /** Keeps @p resource alive until releaseRetained(); the one entry point for retention. */
+    void retain(std::shared_ptr<const void> resource);
 
-    std::vector<std::shared_ptr<void>>          mBoundResources;
-    std::unordered_set<std::shared_ptr<Buffer>> mBoundVertexBuffers;
+    /** Drops everything retained; call once the GPU is done with the command buffer. */
+    void releaseRetained() noexcept;
+
+    /** A set: binding the same pipeline 1000 times holds one reference. */
+    std::unordered_set<std::shared_ptr<const void>> mRetained;
 };
 } // namespace VOG::Graphics::Vulkan

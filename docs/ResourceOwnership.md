@@ -15,30 +15,38 @@ anything that flows through the tracked APIs.
 ## How the chain works
 
 1. **Recording retains.** Recording APIs accept `shared_ptr`s and store them on
-   the command buffer:
-   - `CommandBufferRecorder::RenderingPass::bindVertexBuffers` inserts the
-     buffer into `CommandBuffer::mBoundVertexBuffers`
-     (`Graphics/Vulkan/CommandBuffer.hpp`).
-   - `CommandBufferRecorder::beginRendering` registers every color and depth
-     attachment, `RenderingPass::bindPipeline` registers the pipeline — all via
-     `CommandBuffer::addBoundResource` (`Graphics/Vulkan/CommandBufferRecorder.cpp`).
-   - `setImageBarrier` / `setBufferBarrier` retain the passed resource; prefer
-     these over `unsafeSetBarriers` (raw Vulkan barriers with no retention).
+   the command buffer, through its one private entry point,
+   `CommandBuffer::retain` (`Graphics/Vulkan/CommandBuffer.hpp`), which is private:
+   `CommandBufferRecorder` (recording) and `Queue::submit` (semaphores) call it.
+   The command buffer keeps them
+   in a set, so binding one pipeline 1000 times holds one reference:
+   - `RenderingPass::bindVertexBuffers` retains each buffer, and
+     `RenderingPass::bindPipeline` the pipeline
+     (`Graphics/Vulkan/CommandBufferRecorder.cpp`).
+   - `CommandBufferRecorder::beginRendering` retains every color and depth
+     attachment.
+   - `setImageBarrier` / `setBufferBarrier` retain the passed attachment or
+     buffer; prefer these over `unsafeSetBarriers` (raw Vulkan barriers with no
+     retention). `setImageBarrier` fills `barrier.image` from the attachment.
 
-2. **Submission retains the command buffer.** `Queue::submit` calls
-   `vkQueueSubmit` first, then parks each `CommandBuffer` with a `FenceHandle`
-   in the pool's submitted list (`Graphics/Vulkan/Queue.hpp`,
-   `Graphics/Vulkan/CommandBufferPool.cpp`). If submit throws, handles are not
-   parked against an unsignaled fence. The command buffer — and therefore
-   everything it retains — stays alive while the GPU works. After a successful
-   submit each submitted command buffer also retains the wait and signal
-   `Semaphore`s, so the caller can drop them.
+2. **Submission retains the command buffer.** `Queue::submit` consumes
+   `ExecutableCommandBuffer`s (what `CommandBufferRecorder::finish()` returns).
+   It makes each retain the wait and signal `Semaphore`s, so the caller can
+   drop them, then calls `vkQueueSubmit2` with a `FenceHandle` whose fence
+   becomes pending only if the call returned, then parks each `CommandBuffer`
+   with that handle in its pool's submitted list (`Graphics/Vulkan/Queue.cpp`,
+   `Graphics/Vulkan/CommandBufferPool.cpp`). If the submit throws, nothing is
+   parked and the caller still owns the executables; dropping one is a
+   discard, which releases everything it retained at once. The command buffer
+   — and therefore everything it retains — stays alive while the GPU works.
 
 3. **Fence wait releases.** When a frame slot is re-acquired
    (`FrameObjectManager::acquireNextFrame` → `FrameObjects::onFrameStart` →
-   `CommandBufferPool::reset`), the pool **waits on the fences first**, then
-   calls `CommandBuffer::clearBoundResources`, which clears the bound-resource sets. Only at
-   that point do retained resources drop their reference and (possibly) die.
+   `CommandBufferPool::reset`), the pool **waits on the fences first**, resets
+   the Vulkan pool, then calls `CommandBuffer::releaseRetained`. Only at that
+   point do retained resources drop their reference and (possibly) die.
+   `~CommandBufferPool` waits for its submitted fences too, so a pool that is
+   dropped with work in flight never frees a command buffer the GPU still runs.
 
 The release point is therefore exactly the earliest provably-safe moment:
 after the fence of the frame that referenced the resource has signaled.
@@ -50,8 +58,9 @@ after the fence of the frame that referenced the resource has signaled.
    The frame slot keeps it and drops it in `FrameObjects::onFrameStart`, which
    waits the fence — before the slot signals that semaphore again. A
    `FenceHandle` waits for its fence in its destructor if the GPU may still
-   signal it, so any owner (a pool holding an unreset submission, a
-   `Presentation`, a `FrameObjects`) drains on drop. Swapchain recreation needs
+   signal it, as a safety net; the owners that release guarded resources
+   (`CommandBufferPool::reset` and `~CommandBufferPool`, `FrameObjects::onFrameStart`) wait
+   for their fences explicitly. Swapchain recreation needs
    no `waitIdle`: the old generation is retired by reference count.
    Details: `SwapchainSync.md`.
 
@@ -62,7 +71,7 @@ it depends on** — the object that created it, the object it wraps, and the
 objects it references. Holding one handle is always enough; user code never
 keeps a parent around "for" a child and never sequences teardown.
 Examples, not the whole list: a `Buffer` keeps its `Device` alive; a
-`CommandBufferHandle` keeps its pool (and through it the device) alive; a
+`CommandBufferRecorder` or `ExecutableCommandBuffer` keeps its pool (and through it the device) alive; a
 `Device` keeps its `Instance` alive. Scope guards (`Buffer::MemoryMapping`,
 `CommandBufferRecorder` and its `RenderingPass`) are the one deliberate
 exception — see requirement 2.
@@ -118,18 +127,20 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    device (`Fence`, `GraphicsPipeline`, `Semaphore`, `TimelineSemaphore`).
    A `GraphicsPipeline` retains its `ShaderProgram`, which owns the pipeline
    layout, so the layout outlives the pipeline by retention, not by order.
-   In `Semaphore`, `TimelineSemaphore`, `GraphicsPipeline`, `Buffer`,
-   `PhysicalDevice`, `Device` and `Instance` the `vk::raii` base is `private`,
-   with a `using` for the calls that have callers, so a caller cannot slice the
-   wrapper into the bare handle and drop the object that keeps its
-   dependencies alive; `Fence` and `Queue` still expose theirs. `Device::raii()`,
+   The `vk::raii` base is `private` in `Semaphore`, `TimelineSemaphore`,
+   `GraphicsPipeline`, `Buffer`, `PhysicalDevice`, `Device`, `Instance`, `Fence`,
+   `Queue` and `CommandBuffer`, with a `using` for the calls that have callers,
+   so a caller cannot slice the wrapper into the bare handle and drop the
+   object that keeps its dependencies alive. `Device::raii()`,
    `PhysicalDevice::raiiPhysicalDevice()` and `Instance::raii()` hand the raii
    object to the constructors of raii children (`vk::raii::Fence{device->raii(), ...}`).
 6. **RAII wrappers bracket state.** A wrapper that puts its object into a state
    (recording, mapped, rendering) enters it in the constructor and leaves it in
    the destructor: `CommandBufferRecorder` begins the command buffer in its
-   constructor and ends it in `finish()` (its destructor asserts that
-   `finish()` ran); `beginRendering()` returns a `RenderingPass` whose
+   constructor and ends it in `finish()`, which hands out the
+   `ExecutableCommandBuffer` (dropping the recorder instead discards the
+   recording, and its destructor asserts that no `RenderingPass` is alive);
+   `beginRendering()` returns a `RenderingPass` whose
    constructor records `vkCmdBeginRendering` and whose destructor records
    `vkCmdEndRendering`. Draw and bind commands exist only on the pass.
 7. **Destruction respects external synchronization.** The last reference can
@@ -138,18 +149,29 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    are **render-thread only**, because they take no lock and the last
    reference returns the object to a pool or touches an externally synchronized
    queue or swapchain: `FencePool` and `FenceHandle` (its destructor waits for
-   the fence, then returns it to the pool), `CommandBufferHandle` (its
-   destructor returns the command buffer to its pool), `Queue::submit`,
+   the fence, then returns it to the pool), `CommandBufferRecorder` and
+   `ExecutableCommandBuffer` (their destructors discard the command buffer into
+   its pool), `CommandBufferPool` (its destructor waits for the submitted
+   fences), `Queue::submit`,
    `Swapchain::present`, dropping a `Swapchain::Presentation` (it holds a
    `FenceHandle`), `AcquiredSwapchainImage` (its destructor releases an
    unpresented image on the swapchain) and `FrameObjects::retainUntilPresented`.
+
+   All destructors are `noexcept`. A Vulkan call that can fail in a destructor goes through
+   `inDestructor` (`Graphics/Vulkan/InDestructor.hpp`), which logs a
+   `vk::SystemError` and lets the teardown continue: device loss cannot be
+   recovered from there, and a logged release beats an unlogged
+   `std::terminate`. `VOG_ASSERT` is allowed in a destructor only for an
+   invariant.
 8. **Every type is tested.** Drop the dependency, make a real Vulkan call
    through the dependent, drop it, assert the dependency expired and that the
    validation layer raised no error while the dependent was destroyed — a child
    object that outlives its device is reported at `vkDestroyDevice`
    (`DeviceLifetimeTest.cpp`, `VulkanFixture::expectDependentHoldsDevice`).
-   Covered: `Buffer`, `Fence`, `FenceHandle`, `FencePool`, `CommandBufferPool`,
-   `CommandBufferHandle`, `Semaphore`, `TimelineSemaphore`, `Queue`,
+   Covered: `Buffer`, `FenceHandle` (only through the pool that holds it,
+   `submittedCommandBufferKeepsDeviceAlive`), `FencePool`, `CommandBufferPool`,
+   `CommandBufferRecorder`, `ExecutableCommandBuffer`, `Semaphore`,
+   `TimelineSemaphore`, `Queue`,
    `RenderBuffer`, `Shader`, `ShaderProgram`, `GraphicsPipeline`,
    `FrameObjects`, `FrameObjectManager`, `ShaderProgramCache`, `Swapchain`,
    `SwapchainGeneration` and `AcquiredSwapchainImage` (`SwapchainTest.cpp`, on a
@@ -161,9 +183,10 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
 ## Rules when extending the API
 
 - Any new recording call that references a GPU resource **must** accept a
-  `shared_ptr` and register it via `CommandBuffer::addBoundResource` (or a
-  dedicated tracked container, like vertex buffers use). Raw `vk::` handles may
-  only be used transiently inside the call.
+  `shared_ptr` and retain it through `CommandBufferRecorder`; it and
+  `Queue::submit` (for semaphores) are the only callers of
+  `CommandBuffer::retain`. Raw `vk::` handles may only be used transiently
+  inside the call.
 - Do not add manual `vkDeviceWaitIdle`-style synchronization to "fix" lifetime
   issues — if a resource can die too early, it means an API failed to retain it.
 - Do not bypass the tracked wrappers by recording into the raw

@@ -7,8 +7,8 @@
 #include <gtest/gtest.h>
 
 #include <array>
-#include <limits>
 #include <memory>
+#include <span>
 #include <type_traits>
 
 #include "VulkanFixture.hpp"
@@ -18,17 +18,65 @@ using namespace VOG::Graphics::Vulkan;
 
 namespace VOG::Tests
 {
-// The raw vk::raii::CommandBuffer base is private: recording must go through the recorder.
+// The raw Vulkan bases are private: recording and submission must go through the recorder and the
+// queue, which retain what they touch.
 static_assert(!std::is_convertible_v<CommandBuffer*, vk::raii::CommandBuffer*>);
+static_assert(!std::is_convertible_v<Queue*, vk::raii::Queue*>);
+static_assert(!std::is_convertible_v<Fence*, vk::raii::Fence*>);
 
 namespace
 {
 constexpr vk::DeviceSize gBufferSize = 256u;
 
-constexpr std::uint64_t gWaitForever = std::numeric_limits<std::uint64_t>::max();
+/** Submits @p executable on the graphics queue with nothing to wait and nothing to signal. */
+void
+submitAlone(const DevicePtr& device, FencePool& fencePool, ExecutableCommandBuffer& executable)
+{
+    device->getGraphicsQueue()->submit(fencePool, {}, std::span{&executable, 1u}, {});
+}
 
-const std::array<SemaphorePtr, 0>           gNoSemaphores{};
-const std::array<vk::PipelineStageFlags, 0> gNoStages{};
+/** Records and submits a command buffer that clears @p target; heavy enough to still run later. */
+ExecutableCommandBuffer
+recordClear(const CommandBufferPoolPtr& pool, const std::shared_ptr<RenderBuffer>& target)
+{
+    auto recorder = pool->record();
+    recorder.setImageBarrier(target, VulkanFixture::toColorAttachmentBarrier());
+    {
+        auto pass = recorder.beginRendering(
+            {{.attachment = target,
+              .loadOp     = vk::AttachmentLoadOp::eClear,
+              .storeOp    = vk::AttachmentStoreOp::eStore,
+              .clearValue = vk::ClearColorValue{std::array{0.25f, 0.5f, 0.75f, 1.0f}}}});
+    }
+    return recorder.finish();
+}
+
+std::shared_ptr<RenderBuffer>
+makeTarget(Device& device, std::uint32_t size)
+{
+    return device.createRenderBuffer(AttachmentUsage::eColor,
+                                     vk::Format::eR8G8B8A8Unorm,
+                                     {.width = size, .height = size},
+                                     SampleCount::e1,
+                                     1u,
+                                     1u,
+                                     vk::ImageTiling::eOptimal,
+                                     vk::ImageLayout::eUndefined,
+                                     vk::MemoryPropertyFlagBits::eDeviceLocal);
+}
+
+vk::BufferMemoryBarrier2
+vertexBufferBarrier()
+{
+    return {.srcStageMask        = vk::PipelineStageFlagBits2::eTransfer,
+            .srcAccessMask       = vk::AccessFlagBits2::eTransferWrite,
+            .dstStageMask        = vk::PipelineStageFlagBits2::eVertexInput,
+            .dstAccessMask       = vk::AccessFlagBits2::eVertexAttributeRead,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .offset              = 0u,
+            .size                = VK_WHOLE_SIZE};
+}
 } // namespace
 
 /**
@@ -42,30 +90,17 @@ TEST_F(VulkanFixture, CommandBufferRecorder_barrierRetainsBufferUntilPoolReset)
         {.usage = VMA_MEMORY_USAGE_AUTO});
     const std::weak_ptr<Buffer> weakBuffer = buffer;
 
-    auto fencePool     = FencePool::create(mDevice);
-    auto pool          = mDevice->createCommandBufferPool();
-    auto commandBuffer = pool->get(vk::CommandBufferLevel::ePrimary);
+    auto fencePool = FencePool::create(mDevice);
+    auto pool      = mDevice->createCommandBufferPool();
 
-    {
-        CommandBufferRecorder recorder{**commandBuffer};
-        recorder.setBufferBarrier(buffer,
-                                  {.srcStageMask        = vk::PipelineStageFlagBits2::eTransfer,
-                                   .srcAccessMask       = vk::AccessFlagBits2::eTransferWrite,
-                                   .dstStageMask        = vk::PipelineStageFlagBits2::eVertexInput,
-                                   .dstAccessMask       = vk::AccessFlagBits2::eVertexAttributeRead,
-                                   .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                                   .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                                   .offset              = 0u,
-                                   .size                = VK_WHOLE_SIZE});
-        recorder.finish();
-    }
+    auto recorder = pool->record();
+    recorder.setBufferBarrier(buffer, vertexBufferBarrier());
+    auto executable = recorder.finish();
 
     buffer.reset();
     EXPECT_FALSE(weakBuffer.expired());
 
-    const auto submission = mDevice->getGraphicsQueue()->submit(
-        fencePool, gNoSemaphores, gNoStages, std::array{std::move(commandBuffer)}, gNoSemaphores);
-    ASSERT_EQ(submission.fence->wait(gWaitForever), vk::Result::eSuccess);
+    submitAlone(mDevice, *fencePool, executable);
     EXPECT_FALSE(weakBuffer.expired());
 
     pool->reset();
@@ -89,30 +124,19 @@ TEST_F(VulkanFixture, Queue_submitRetainsSemaphoresUntilPoolReset)
     const std::weak_ptr<Semaphore> weakChained    = chained;
     const std::weak_ptr<Semaphore> weakSignalOnly = signalOnly;
 
-    const auto submitEmpty = [&](const CommandBufferPoolPtr&                 pool,
-                                 const std::vector<SemaphorePtr>&            waits,
-                                 const std::array<vk::PipelineStageFlags, 1> stages,
-                                 const std::vector<SemaphorePtr>&            signals)
-    {
-        auto commandBuffer = pool->get(vk::CommandBufferLevel::ePrimary);
-        {
-            CommandBufferRecorder recorder{**commandBuffer};
-            recorder.finish();
-        }
-        return queue->submit(
-            fencePool, waits, stages, std::array{std::move(commandBuffer)}, signals);
-    };
+    auto first = recordEmpty(signaller);
+    queue->submit(
+        *fencePool, {}, std::span{&first, 1u}, std::array<SemaphorePtr, 2>{chained, signalOnly});
 
-    const auto first  = submitEmpty(signaller, {}, {}, {chained, signalOnly});
-    const auto second = submitEmpty(waiter, {chained}, {vk::PipelineStageFlagBits::eTopOfPipe}, {});
+    auto second = recordEmpty(waiter);
+    queue->submit(*fencePool,
+                  std::array{Queue::SemaphoreWait{
+                      .semaphore = chained, .stage = vk::PipelineStageFlagBits2::eAllCommands}},
+                  std::span{&second, 1u},
+                  {});
 
     chained.reset();
     signalOnly.reset();
-    EXPECT_FALSE(weakChained.expired());
-    EXPECT_FALSE(weakSignalOnly.expired());
-
-    ASSERT_EQ(first.fence->wait(gWaitForever), vk::Result::eSuccess);
-    ASSERT_EQ(second.fence->wait(gWaitForever), vk::Result::eSuccess);
     EXPECT_FALSE(weakChained.expired());
     EXPECT_FALSE(weakSignalOnly.expired());
 
@@ -131,39 +155,12 @@ TEST_F(VulkanFixture, Queue_submitRetainsSemaphoresUntilPoolReset)
  */
 TEST_F(VulkanValidationFixture, CommandBufferPool_dropWithPendingSubmissionWaitsForFence)
 {
-    std::shared_ptr<RenderBuffer> target =
-        mDevice->createRenderBuffer(AttachmentUsage::eColor,
-                                    vk::Format::eR8G8B8A8Unorm,
-                                    {.width = 2048u, .height = 2048u},
-                                    SampleCount::e1,
-                                    1u,
-                                    1u,
-                                    vk::ImageTiling::eOptimal,
-                                    vk::ImageLayout::eUndefined,
-                                    vk::MemoryPropertyFlagBits::eDeviceLocal);
-
+    auto target    = makeTarget(*mDevice, 2048u);
     auto fencePool = FencePool::create(mDevice);
     auto pool      = mDevice->createCommandBufferPool();
     {
-        auto commandBuffer = pool->get(vk::CommandBufferLevel::ePrimary);
-        {
-            CommandBufferRecorder recorder{**commandBuffer};
-            recorder.setImageBarrier(target, toColorAttachmentBarrier(target->getImage()));
-            {
-                auto pass = recorder.beginRendering(
-                    {{.attachment = target,
-                      .loadOp     = vk::AttachmentLoadOp::eClear,
-                      .storeOp    = vk::AttachmentStoreOp::eStore,
-                      .clearValue = vk::ClearColorValue{std::array{0.25f, 0.5f, 0.75f, 1.0f}}}});
-            }
-            recorder.finish();
-        }
-
-        mDevice->getGraphicsQueue()->submit(fencePool,
-                                            gNoSemaphores,
-                                            gNoStages,
-                                            std::array{std::move(commandBuffer)},
-                                            gNoSemaphores);
+        auto executable = recordClear(pool, target);
+        submitAlone(mDevice, *fencePool, executable);
     }
 
     // Neither the caller nor the test waits: the pool owns the pending submission.
@@ -175,46 +172,96 @@ TEST_F(VulkanValidationFixture, CommandBufferPool_dropWithPendingSubmissionWaits
 }
 
 /**
- * The whole frame path without a swapchain: barrier, cleared rendering pass, submit, fence wait.
+ * One submit can guard command buffers of several pools with one fence. Dropping a pool then does
+ * not drop the last reference to the fence, so only the pool's own wait keeps its command buffers
+ * from being freed while the GPU still runs them.
+ */
+TEST_F(VulkanValidationFixture, CommandBufferPool_dropWaitsForFenceSharedWithAnotherPool)
+{
+    auto target    = makeTarget(*mDevice, 2048u);
+    auto fencePool = FencePool::create(mDevice);
+    auto heavy     = mDevice->createCommandBufferPool();
+    auto light     = mDevice->createCommandBufferPool();
+
+    std::array executables{recordClear(heavy, target), recordEmpty(light)};
+    mDevice->getGraphicsQueue()->submit(*fencePool, {}, executables, {});
+
+    // `light` still holds the fence, so dropping `heavy` is not the last reference to it.
+    heavy.reset();
+    EXPECT_TRUE(mValidationErrors.empty())
+        << (mValidationErrors.empty() ? "" : mValidationErrors.front());
+
+    light.reset();
+    fencePool.reset();
+    EXPECT_TRUE(mValidationErrors.empty())
+        << (mValidationErrors.empty() ? "" : mValidationErrors.front());
+}
+
+/**
+ * Dropping a recorder discards the recording: what it retained is released at once, not at the
+ * next reset(), and the discarded buffer is not handed out again before then. It is still in the
+ * recording state, so reusing it would begin a buffer that is already begun.
+ */
+TEST_F(VulkanValidationFixture, CommandBufferPool_droppedRecorderReleasesAndIsNotReused)
+{
+    std::shared_ptr<Buffer> buffer = mDevice->createBuffer(
+        {.size = gBufferSize, .usage = vk::BufferUsageFlagBits::eVertexBuffer},
+        {.usage = VMA_MEMORY_USAGE_AUTO});
+    const std::weak_ptr<Buffer> weakBuffer = buffer;
+
+    auto fencePool = FencePool::create(mDevice);
+    auto pool      = mDevice->createCommandBufferPool();
+    {
+        auto recorder = pool->record();
+        recorder.setBufferBarrier(buffer, vertexBufferBarrier());
+        buffer.reset();
+        EXPECT_FALSE(weakBuffer.expired());
+    }
+    EXPECT_TRUE(weakBuffer.expired());
+
+    auto executable = recordEmpty(pool);
+    submitAlone(mDevice, *fencePool, executable);
+    pool->reset();
+
+    EXPECT_TRUE(mValidationErrors.empty())
+        << (mValidationErrors.empty() ? "" : mValidationErrors.front());
+}
+
+/**
+ * Dropping a finished command buffer without submitting it is a legal discard too. The pool has no
+ * reset-command-buffer flag, so beginning the executable buffer again would be
+ * VUID-vkBeginCommandBuffer-00050: it must wait for the pool reset.
+ */
+TEST_F(VulkanValidationFixture, CommandBufferPool_droppedExecutableIsNotReused)
+{
+    auto fencePool = FencePool::create(mDevice);
+    auto pool      = mDevice->createCommandBufferPool();
+    {
+        auto discarded = recordEmpty(pool);
+    }
+
+    auto executable = recordEmpty(pool);
+    submitAlone(mDevice, *fencePool, executable);
+    pool->reset();
+
+    EXPECT_TRUE(mValidationErrors.empty())
+        << (mValidationErrors.empty() ? "" : mValidationErrors.front());
+}
+
+/**
+ * The whole frame path without a swapchain: barrier, cleared rendering pass, submit, reset.
  * Runs under the validation layer: a driver accepts a null view or a missing vkCmdEndRendering
- * silently, so only the layer can fail this test.
+ * silently, so only the layer can fail this test. The barrier is passed without an image: the
+ * recorder fills it from the attachment, and a null image is a validation error.
  */
 TEST_F(VulkanValidationFixture, CommandBufferRecorder_clearRenderBufferAndSubmit)
 {
-    std::shared_ptr<RenderBuffer> target =
-        mDevice->createRenderBuffer(AttachmentUsage::eColor,
-                                    vk::Format::eR8G8B8A8Unorm,
-                                    {.width = 64u, .height = 64u},
-                                    SampleCount::e1,
-                                    1u,
-                                    1u,
-                                    vk::ImageTiling::eOptimal,
-                                    vk::ImageLayout::eUndefined,
-                                    vk::MemoryPropertyFlagBits::eDeviceLocal);
+    auto target    = makeTarget(*mDevice, 64u);
+    auto fencePool = FencePool::create(mDevice);
+    auto pool      = mDevice->createCommandBufferPool();
 
-    auto fencePool     = FencePool::create(mDevice);
-    auto pool          = mDevice->createCommandBufferPool();
-    auto commandBuffer = pool->get(vk::CommandBufferLevel::ePrimary);
-
-    {
-        CommandBufferRecorder recorder{**commandBuffer};
-        recorder.setImageBarrier(target, toColorAttachmentBarrier(target->getImage()));
-
-        {
-            auto pass = recorder.beginRendering(
-                {{.attachment = target,
-                  .loadOp     = vk::AttachmentLoadOp::eClear,
-                  .storeOp    = vk::AttachmentStoreOp::eStore,
-                  .clearValue = vk::ClearColorValue{std::array{0.25f, 0.5f, 0.75f, 1.0f}}}});
-        }
-
-        recorder.finish();
-    }
-
-    const auto submission = mDevice->getGraphicsQueue()->submit(
-        fencePool, gNoSemaphores, gNoStages, std::array{std::move(commandBuffer)}, gNoSemaphores);
-
-    EXPECT_EQ(submission.fence->wait(gWaitForever), vk::Result::eSuccess);
+    auto executable = recordClear(pool, target);
+    submitAlone(mDevice, *fencePool, executable);
 
     pool->reset();
 

@@ -196,16 +196,52 @@ TEST_F(VulkanValidationFixture, GraphicsPipeline_keepsDeviceAlive)
                                            vk::ImageTiling::eOptimal,
                                            vk::ImageLayout::eUndefined,
                                            vk::MemoryPropertyFlagBits::eDeviceLocal);
-            auto                  commandBuffer = pool->get(vk::CommandBufferLevel::ePrimary);
-            CommandBufferRecorder recorder{**commandBuffer};
+            auto recorder = pool->record();
 
-            recorder.setImageBarrier(target, toColorAttachmentBarrier(target->getImage()));
+            recorder.setImageBarrier(target, toColorAttachmentBarrier());
             {
                 auto pass = recorder.beginRendering({{.attachment = target}});
                 pass.bindPipeline(pipeline);
             }
-            recorder.finish();
+            auto executable = recorder.finish();
         });
+}
+
+/**
+ * The command buffer retains a pipeline once, however often it binds it: retention is a set, so
+ * a draw-heavy frame does not grow the command buffer's retained list.
+ */
+TEST_F(VulkanFixture, CommandBufferRecorder_bindingOnePipelineRepeatedlyRetainsItOnce)
+{
+    ShaderProgramPtr program = mDevice->createShaderProgram(
+        {.vertex   = {.shader = createShader(Shader::ShadingStage::eVertex, gMinimalVertexShader)},
+         .fragment = {.shader =
+                          createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader)}});
+    GraphicsPipelinePtr pipeline =
+        mDevice->createGraphicsPipeline(makeMinimalPipelineParameters(program));
+    std::shared_ptr<RenderBuffer> target =
+        mDevice->createRenderBuffer(AttachmentUsage::eColor,
+                                    vk::Format::eR32G32B32A32Sfloat,
+                                    {.width = 16u, .height = 16u},
+                                    SampleCount::e1,
+                                    1u,
+                                    1u,
+                                    vk::ImageTiling::eOptimal,
+                                    vk::ImageLayout::eUndefined,
+                                    vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+    auto pool     = mDevice->createCommandBufferPool();
+    auto recorder = pool->record();
+    {
+        auto pass = recorder.beginRendering({{.attachment = target}});
+        for (int i = 0; i < 1000; ++i)
+        {
+            pass.bindPipeline(pipeline);
+        }
+    }
+
+    // One reference for the test, one for the command buffer.
+    EXPECT_EQ(pipeline.use_count(), 2);
 }
 
 // ============================================================

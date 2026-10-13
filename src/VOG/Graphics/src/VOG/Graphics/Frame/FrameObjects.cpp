@@ -23,8 +23,6 @@ FrameObjects::FrameObjects(Vulkan::DevicePtr device, std::size_t threadCount)
                     });
 }
 
-FrameObjects::~FrameObjects() { resetPools(); }
-
 const Vulkan::SemaphorePtr&
 FrameObjects::getRenderFinishedSemaphore() const
 {

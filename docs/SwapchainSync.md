@@ -12,7 +12,7 @@ A Vulkan frame involves three independent indices that are easy to conflate:
 1. **Frame slot** (`FrameObjectManager::mRenderFrame % framesInFlight`) — CPU-side ring
    for recycling command pools. Advanced by the renderer only when an image was acquired
    and a submit will follow (skip / out-of-date paths do not advance). Gated by the
-   per-slot submit fence (waited in `CommandBufferPool::reset`) and by the slot's present
+   per-slot submit fence (waited in `CommandBufferPool::reset`, and in `~CommandBufferPool`) and by the slot's present
    fence (waited when `FrameObjects::onFrameStart` drops the slot's `Presentation`).
 
 2. **Swapchain image index** — returned by `vkAcquireNextImageKHR`. The driver picks
