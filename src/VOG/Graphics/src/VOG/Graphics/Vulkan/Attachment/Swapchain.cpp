@@ -74,7 +74,7 @@ Swapchain::Swapchain(DevicePtr device, const SwapchainParameters& parameters)
     , mPresentQueueFamilyIndex{findPresentQueueFamilyIndex(*mDevice, *mSurface)}
     , mPresentQueueIsSameToGraphicsQueue{mPresentQueueFamilyIndex ==
                                          mDevice->queueInfos.graphics.familyIndex}
-    , mPresentQueue{*mDevice, mPresentQueueFamilyIndex, 0}
+    , mPresentQueue{mDevice->raii(), mPresentQueueFamilyIndex, 0}
     , mSurfaceFormat{mDevice->getSurfaceFormatsKHR(**mSurface).at(0u)}
 {
     auto               surfaceCapabilities = mDevice->getSurfaceCapabilitiesKHR(**mSurface);
@@ -129,7 +129,7 @@ Swapchain::makeGeneration(vk::SwapchainKHR oldSwapchain, vk::Extent2D extent)
     auto generation = std::make_shared<SwapchainGeneration>(
         mDevice,
         mSurface,
-        vk::raii::SwapchainKHR{*mDevice, swapchainCreateInfo},
+        vk::raii::SwapchainKHR{mDevice->raii(), swapchainCreateInfo},
         vk::Extent3D{.width = extent.width, .height = extent.height, .depth = 1u});
 
     const auto rawImages = generation->swapchain.getImages();
@@ -151,7 +151,7 @@ Swapchain::makeGeneration(vk::SwapchainKHR oldSwapchain, vk::Extent2D extent)
                                  .layerCount     = 1u}};
         generation->images.push_back({
             .image                   = image,
-            .imageView               = vk::raii::ImageView{*mDevice, createInfo},
+            .imageView               = vk::raii::ImageView{mDevice->raii(), createInfo},
             .imageAvailableSemaphore = mDevice->createSemaphore(),
         });
     }

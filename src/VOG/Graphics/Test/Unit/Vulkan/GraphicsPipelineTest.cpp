@@ -40,13 +40,10 @@ TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
 {
     using namespace VOG::Graphics::Vulkan;
 
-    vk::raii::PipelineLayout pipelineLayout{*mDevice, vk::PipelineLayoutCreateInfo{}};
-
     constexpr auto colorWriteMask =
         ColorComponent::eR | ColorComponent::eG | ColorComponent::eB | ColorComponent::eA;
 
     const GraphicsPipeline::Parameters createInfoTemplate{
-        .cache   = nullptr,
         .shading = {},
         .vertexLayout =
             {.bindingDescription =
@@ -61,13 +58,12 @@ TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
                                        .binding  = 0u,
                                        .format   = vk::Format::eR32G32B32A32Sfloat,
                                        .offset   = 16u}}},
-        .rasterizer     = {.cullMode = CullMode::eNone},
-        .viewportState  = {.viewportCount = 1u, .scissorCount = 1u},
-        .depthStencil   = {},
-        .blending       = {.attachments = {{.blendEnable = 0u, .colorWriteMask = colorWriteMask}}},
-        .multisample    = {},
-        .dynamicStates  = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
-        .pipelineLayout = *pipelineLayout,
+        .rasterizer    = {.cullMode = CullMode::eNone},
+        .viewportState = {.viewportCount = 1u, .scissorCount = 1u},
+        .depthStencil  = {},
+        .blending      = {.attachments = {{.blendEnable = 0u, .colorWriteMask = colorWriteMask}}},
+        .multisample   = {},
+        .dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
         .renderingDescription = {.colorAttachmentFormats = {vk::Format::eR32G32B32A32Sfloat}}};
 
     {

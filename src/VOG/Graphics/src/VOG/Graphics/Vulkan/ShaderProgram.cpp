@@ -77,7 +77,7 @@ buildDescriptorSets(const Device& device, const ShaderProgram::ShadingStages& st
         if (!bindings.empty())
         {
             set.setLayout = vk::raii::DescriptorSetLayout{
-                device,
+                device.raii(),
                 vk::DescriptorSetLayoutCreateInfo{
                     .bindingCount = static_cast<std::uint32_t>(bindings.size()),
                     .pBindings    = bindings.data(),
@@ -176,12 +176,12 @@ makePipelineLayout(const Device&                        device,
         }
         else
         {
-            emptyLayouts.emplace_back(device, vk::DescriptorSetLayoutCreateInfo{});
+            emptyLayouts.emplace_back(device.raii(), vk::DescriptorSetLayoutCreateInfo{});
             descriptorSetLayouts.push_back(*emptyLayouts.back());
         }
     }
 
-    return {device,
+    return {device.raii(),
             {
                 .setLayoutCount         = static_cast<std::uint32_t>(descriptorSetLayouts.size()),
                 .pSetLayouts            = descriptorSetLayouts.data(),

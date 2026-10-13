@@ -18,7 +18,10 @@ fail(const char* expression, const char* message, std::source_location location)
                          location.file_name(),
                          location.line());
         // Flush, not shutdown: another thread may still log before abort() ends the process.
-        spdlog::default_logger_raw()->flush();
+        if (auto* logger = spdlog::default_logger_raw())
+        {
+            logger->flush();
+        }
     }
     catch (...) // NOLINT(bugprone-empty-catch): a failing log must not hide the abort.
     {

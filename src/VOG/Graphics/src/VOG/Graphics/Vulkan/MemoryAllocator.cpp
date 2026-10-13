@@ -154,7 +154,7 @@ MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
                                                          allocation,
                                                          allocationInfo,
                                                          allocationCreateInfo},
-                                              vk::raii::Buffer{mDevice, buffer}});
+                                              vk::raii::Buffer{mDevice.raii(), buffer}});
 }
 
 MemoryAllocator::

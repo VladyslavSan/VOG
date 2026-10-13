@@ -33,14 +33,14 @@ RenderBuffer::RenderBuffer(DevicePtr               device,
         .initialLayout = initialLayout,
     };
 
-    mImage                       = std::make_shared<vk::raii::Image>(*mDevice, imageCreateInfo);
+    mImage = std::make_shared<vk::raii::Image>(mDevice->raii(), imageCreateInfo);
     auto imageMemoryRequirements = mImage->getMemoryRequirements();
 
     std::uint32_t memoryTypeIndex = FindMemoryType(
         mDevice->getMemoryProperties(), imageMemoryRequirements.memoryTypeBits, memoryProperties);
     vk::MemoryAllocateInfo memoryAllocateInfo{.allocationSize  = imageMemoryRequirements.size,
                                               .memoryTypeIndex = memoryTypeIndex};
-    mMemory = std::make_shared<vk::raii::DeviceMemory>(*mDevice, memoryAllocateInfo);
+    mMemory = std::make_shared<vk::raii::DeviceMemory>(mDevice->raii(), memoryAllocateInfo);
 
     mImage->bindMemory(**mMemory, 0);
 
@@ -58,7 +58,7 @@ RenderBuffer::RenderBuffer(DevicePtr               device,
                                                     .baseArrayLayer = 0u,
                                                     .layerCount     = 1u,
                                                 }};
-    mImageView = std::make_shared<vk::raii::ImageView>(*mDevice, imageViewCreateInfo);
+    mImageView = std::make_shared<vk::raii::ImageView>(mDevice->raii(), imageViewCreateInfo);
 }
 
 const vk::Image&

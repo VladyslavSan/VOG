@@ -116,8 +116,15 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    is what forced the hand-written `~Buffer` at 16af4c1. `DeviceChild` is that
    earlier base for types that derive from a `vk::raii` handle and need the
    device (`Fence`, `GraphicsPipeline`, `Semaphore`, `TimelineSemaphore`).
-   Creation-only inputs, like the pipeline layout a `GraphicsPipeline` was built with, rely on
-   `maintenance4` (enabled in `Device.cpp`), not on declaration order.
+   A `GraphicsPipeline` retains its `ShaderProgram`, which owns the pipeline
+   layout, so the layout outlives the pipeline by retention, not by order.
+   In `Semaphore`, `TimelineSemaphore`, `GraphicsPipeline`, `Buffer`,
+   `PhysicalDevice`, `Device` and `Instance` the `vk::raii` base is `private`,
+   with a `using` for the calls that have callers, so a caller cannot slice the
+   wrapper into the bare handle and drop the object that keeps its
+   dependencies alive; `Fence` and `Queue` still expose theirs. `Device::raii()`,
+   `PhysicalDevice::raiiPhysicalDevice()` and `Instance::raii()` hand the raii
+   object to the constructors of raii children (`vk::raii::Fence{device->raii(), ...}`).
 6. **RAII wrappers bracket state.** A wrapper that puts its object into a state
    (recording, mapped, rendering) enters it in the constructor and leaves it in
    the destructor: `CommandBufferRecorder` begins the command buffer in its

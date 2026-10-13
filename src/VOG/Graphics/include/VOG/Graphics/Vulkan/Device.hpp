@@ -22,7 +22,7 @@ VOG_DECLARE_PTR(CommandBufferPool);
 VOG_DECLARE_PTR(RenderBuffer);
 VOG_DECLARE_PTR(Instance);
 
-class PhysicalDevice : public vk::raii::PhysicalDevice
+class PhysicalDevice : private vk::raii::PhysicalDevice
 {
 public:
     struct QueueFamilyInfo
@@ -39,6 +39,17 @@ public:
 
     PhysicalDevice(InstancePtr instance, vk::raii::PhysicalDevice physicalDevice);
 
+    using vk::raii::PhysicalDevice::getMemoryProperties;
+    using vk::raii::PhysicalDevice::getQueueFamilyProperties;
+    using vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR;
+    using vk::raii::PhysicalDevice::getSurfaceFormatsKHR;
+    using vk::raii::PhysicalDevice::getSurfacePresentModesKHR;
+    using vk::raii::PhysicalDevice::getSurfaceSupportKHR;
+    using vk::raii::PhysicalDevice::operator*;
+
+    /** For the raii objects that take a physical device; the base itself stays private. */
+    const vk::raii::PhysicalDevice& raiiPhysicalDevice() const noexcept;
+
     /**
      * Instance this physical device was queried from. Held here, in the first base of Device, so
      * that it outlives the VkDevice and everything the device owns.
@@ -50,7 +61,7 @@ public:
 
 class Device
     : public PhysicalDevice
-    , public vk::raii::Device
+    , private vk::raii::Device
     , public std::enable_shared_from_this<Device>
 {
     friend class Instance;
@@ -63,8 +74,15 @@ public:
 
     ~Device(); // NOLINT(bugprone-derived-method-shadowing-base-method)
 
-    using vk::raii::Device::operator*;
     using vk::raii::Device::getDispatcher;
+    using vk::raii::Device::operator*;
+    using vk::raii::Device::releaseSwapchainImagesEXT;
+    using vk::raii::Device::resetFences;
+    using vk::raii::Device::waitForFences;
+    using vk::raii::Device::waitSemaphores;
+
+    /** For the raii objects that take a device; the base itself stays private. */
+    const vk::raii::Device& raii() const noexcept;
 
     /**
      * Compiles a single shader stage from a SPIR-V binary.

@@ -36,27 +36,31 @@ using DynamicStates     = StaticVector<vk::DynamicState, Limits::gMaxNumDynamicS
 
 class GraphicsPipeline
     : public DeviceChild
-    , public vk::raii::Pipeline
+    , private vk::raii::Pipeline
 {
 public:
+    using vk::raii::Pipeline::operator*;
+
     struct ColorBlendState
     {
         StaticVector<vk::PipelineColorBlendAttachmentState, Limits::gMaxNumAttachments> attachments;
     };
 
+    /**
+     * The pipeline is built with the pipeline layout of `shading` and the device's pipeline cache,
+     * so neither is a parameter.
+     */
     struct Parameters
     {
-        vk::Optional<const vk::raii::PipelineCache> cache;
-        ShaderProgramPtr                            shading;
-        VertexLayout                                vertexLayout;
-        RasterizationOptions                        rasterizer;
-        ViewportState                               viewportState;
-        DepthStencilState                           depthStencil;
-        ColorBlendState                             blending;
-        MultisampleState                            multisample;
-        DynamicStates                               dynamicStates;
-        const vk::PipelineLayout&                   pipelineLayout;
-        RenderingDescription                        renderingDescription;
+        ShaderProgramPtr     shading;
+        VertexLayout         vertexLayout;
+        RasterizationOptions rasterizer;
+        ViewportState        viewportState;
+        DepthStencilState    depthStencil;
+        ColorBlendState      blending;
+        MultisampleState     multisample;
+        DynamicStates        dynamicStates;
+        RenderingDescription renderingDescription;
     };
 
 private:

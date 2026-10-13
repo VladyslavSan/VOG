@@ -57,28 +57,26 @@ void main() { gl_Position = inPosition + pc.transform; }
 )";
 
 GraphicsPipeline::Parameters
-makeMinimalPipelineParameters(ShaderProgramPtr program, const vk::PipelineLayout& layout)
+makeMinimalPipelineParameters(ShaderProgramPtr program)
 {
     constexpr auto colorWriteMask =
         ColorComponent::eR | ColorComponent::eG | ColorComponent::eB | ColorComponent::eA;
 
     return GraphicsPipeline::Parameters{
-        .cache          = nullptr,
-        .shading        = program,
-        .vertexLayout   = {.bindingDescription   = {{.binding   = 0u,
-                                                     .stride    = 16u,
-                                                     .inputRate = vk::VertexInputRate::eVertex}},
-                           .attributeDescription = {{.location = 0u,
-                                                     .binding  = 0u,
-                                                     .format   = vk::Format::eR32G32B32A32Sfloat,
-                                                     .offset   = 0u}}},
-        .rasterizer     = {.cullMode = CullMode::eNone},
-        .viewportState  = {.viewportCount = 1u, .scissorCount = 1u},
-        .depthStencil   = {},
-        .blending       = {.attachments = {{.colorWriteMask = colorWriteMask}}},
-        .multisample    = {},
-        .dynamicStates  = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
-        .pipelineLayout = layout,
+        .shading       = program,
+        .vertexLayout  = {.bindingDescription   = {{.binding   = 0u,
+                                                    .stride    = 16u,
+                                                    .inputRate = vk::VertexInputRate::eVertex}},
+                          .attributeDescription = {{.location = 0u,
+                                                    .binding  = 0u,
+                                                    .format   = vk::Format::eR32G32B32A32Sfloat,
+                                                    .offset   = 0u}}},
+        .rasterizer    = {.cullMode = CullMode::eNone},
+        .viewportState = {.viewportCount = 1u, .scissorCount = 1u},
+        .depthStencil  = {},
+        .blending      = {.attachments = {{.colorWriteMask = colorWriteMask}}},
+        .multisample   = {},
+        .dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
         .renderingDescription = {.colorAttachmentFormats = {vk::Format::eR32G32B32A32Sfloat}},
     };
 }
@@ -175,8 +173,8 @@ TEST_F(VulkanValidationFixture, GraphicsPipeline_keepsDeviceAlive)
         {.vertex   = {.shader = createShader(Shader::ShadingStage::eVertex, gMinimalVertexShader)},
          .fragment = {.shader =
                           createShader(Shader::ShadingStage::eFragment, gMinimalFragmentShader)}});
-    GraphicsPipelinePtr pipeline = mDevice->createGraphicsPipeline(
-        makeMinimalPipelineParameters(program, *program->pipelineLayout));
+    GraphicsPipelinePtr pipeline =
+        mDevice->createGraphicsPipeline(makeMinimalPipelineParameters(program));
     program.reset();
     const auto released = releaseDevice();
 
@@ -231,8 +229,8 @@ TEST_F(VulkanValidationFixture, ShaderProgram_makePipelineLayout_gapFilledCorrec
                         {.vertex = {.shader = vert}, .fragment = {.shader = frag}}));
 
     ASSERT_NO_THROW({
-        auto pipeline = mDevice->createGraphicsPipeline(
-            makeMinimalPipelineParameters(shaderProgram, *shaderProgram->pipelineLayout));
+        auto pipeline =
+            mDevice->createGraphicsPipeline(makeMinimalPipelineParameters(shaderProgram));
     });
 
     EXPECT_TRUE(mValidationErrors.empty())

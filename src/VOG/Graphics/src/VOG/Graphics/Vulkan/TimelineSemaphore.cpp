@@ -13,7 +13,7 @@ inline constexpr vk::SemaphoreCreateInfo gCreateInfo{.pNext = &gTypeCreateInfo};
 
 TimelineSemaphore::TimelineSemaphore(DevicePtr device)
     : DeviceChild{std::move(device)}
-    , Semaphore{*DeviceChild::device(), gCreateInfo}
+    , vk::raii::Semaphore{DeviceChild::device()->raii(), gCreateInfo}
 {
 }
 

@@ -12,12 +12,27 @@
 #include <array>
 #include <limits>
 #include <memory>
+#include <type_traits>
 
 #include "VulkanFixture.hpp"
 #include "VulkanValidationFixture.hpp"
 
 namespace VOG::Tests
 {
+// A wrapper that retains its Vulkan object must not be usable as the bare raii object: that would
+// let a caller destroy or move the handle out from under the wrapper's owners.
+static_assert(!std::is_convertible_v<Graphics::Vulkan::Semaphore&, vk::raii::Semaphore&>);
+static_assert(!std::is_convertible_v<Graphics::Vulkan::TimelineSemaphore&, vk::raii::Semaphore&>);
+static_assert(!std::is_convertible_v<Graphics::Vulkan::GraphicsPipeline&, vk::raii::Pipeline&>);
+static_assert(!std::is_convertible_v<Graphics::Vulkan::Buffer&, vk::raii::Buffer&>);
+static_assert(!std::is_convertible_v<Graphics::Vulkan::PhysicalDevice&, vk::raii::PhysicalDevice&>);
+static_assert(!std::is_convertible_v<Graphics::Vulkan::Device&, vk::raii::Device&>);
+static_assert(!std::is_convertible_v<Graphics::Vulkan::Device&, vk::raii::PhysicalDevice&>);
+static_assert(!std::is_convertible_v<Graphics::Vulkan::Instance&, vk::raii::Instance&>);
+static_assert(!std::is_convertible_v<Graphics::Vulkan::Instance&, vk::raii::Context&>);
+// The slot owns a presentation and command buffer pools; a moved-from one has nothing to wait on.
+static_assert(!std::is_move_constructible_v<Graphics::Frame::FrameObjects>);
+
 namespace
 {
 constexpr vk::DeviceSize gBufferSize = 256u;

@@ -9,7 +9,7 @@ namespace VOG::Graphics::Vulkan
 {
 Fence::Fence(DevicePtr device)
     : DeviceChild{std::move(device)}
-    , vk::raii::Fence{*DeviceChild::device(), vk::FenceCreateInfo{}}
+    , vk::raii::Fence{DeviceChild::device()->raii(), vk::FenceCreateInfo{}}
     , mState{State::eNotUsed}
 {
 }

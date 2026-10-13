@@ -60,7 +60,7 @@ CreateRenderSurface(const Instance&              instance,
             .hwnd      = static_cast<HWND>(windowHandle),
         };
 
-        surfaceHandle = std::make_shared<vk::raii::SurfaceKHR>(instance, createInfo);
+        surfaceHandle = std::make_shared<vk::raii::SurfaceKHR>(instance.raii(), createInfo);
         break;
     }
 #endif
@@ -89,7 +89,7 @@ CreateRenderSurface(const Instance&              instance,
                 view.layer      = [CAMetalLayer layer];
 
                 vk::MetalSurfaceCreateInfoEXT createInfo{.pLayer = (CAMetalLayer*)view.layer};
-                surfaceHandle = std::make_shared<vk::raii::SurfaceKHR>(instance, createInfo);
+                surfaceHandle = std::make_shared<vk::raii::SurfaceKHR>(instance.raii(), createInfo);
             }
     #elif defined(TARGET_OS_IPHONE)
     #endif
@@ -116,7 +116,7 @@ CreateRenderSurface(const Instance&              instance,
             .display = display,
             .surface = wlSurf,
         };
-        surfaceHandle = std::make_shared<vk::raii::SurfaceKHR>(instance, createInfo);
+        surfaceHandle = std::make_shared<vk::raii::SurfaceKHR>(instance.raii(), createInfo);
         break;
     }
 #endif
@@ -137,7 +137,7 @@ CreateRenderSurface(const Instance&              instance,
             .dpy    = display,
             .window = static_cast<::Window>(surface.surfaceHandle),
         };
-        surfaceHandle = std::make_shared<vk::raii::SurfaceKHR>(instance, createInfo);
+        surfaceHandle = std::make_shared<vk::raii::SurfaceKHR>(instance.raii(), createInfo);
         break;
     }
 #endif
@@ -150,8 +150,8 @@ CreateRenderSurface(const Instance&              instance,
             break;
         }
 
-        surfaceHandle =
-            std::make_shared<vk::raii::SurfaceKHR>(instance, vk::HeadlessSurfaceCreateInfoEXT{});
+        surfaceHandle = std::make_shared<vk::raii::SurfaceKHR>(instance.raii(),
+                                                               vk::HeadlessSurfaceCreateInfoEXT{});
         break;
     }
 

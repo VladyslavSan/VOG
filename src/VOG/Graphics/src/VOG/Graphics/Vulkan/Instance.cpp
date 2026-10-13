@@ -306,6 +306,12 @@ Instance::Instance(const InstanceParameters& parameters)
 {
 }
 
+const vk::raii::Instance&
+Instance::raii() const noexcept
+{
+    return *this;
+}
+
 DevicePtr
 Instance::makeDevice()
 {

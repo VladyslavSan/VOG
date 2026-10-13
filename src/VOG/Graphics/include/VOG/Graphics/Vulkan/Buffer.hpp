@@ -6,11 +6,13 @@ namespace VOG::Graphics::Vulkan
 {
 class Buffer
     : protected MemoryAllocator::Allocation
-    , public vk::raii::Buffer
+    , private vk::raii::Buffer
 {
     friend class MemoryAllocator;
 
 public:
+    using vk::raii::Buffer::operator*;
+
     template <class PtrType = std::byte*>
     struct MemoryMapping
     {

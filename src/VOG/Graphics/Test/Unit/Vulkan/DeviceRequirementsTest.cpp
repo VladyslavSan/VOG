@@ -34,9 +34,7 @@ static_assert(requiresExtension(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME));
 /** The device the fixture created was selected by missing(), so nothing can be missing from it. */
 TEST_F(VulkanFixture, DeviceRequirements_selectedDeviceMissesNothing)
 {
-    const vk::raii::PhysicalDevice& physicalDevice = *mDevice;
-
-    const auto missing = DeviceRequirements::missing(physicalDevice);
+    const auto missing = DeviceRequirements::missing(mDevice->raiiPhysicalDevice());
 
     std::string joined;
     for (const std::string& item : missing)

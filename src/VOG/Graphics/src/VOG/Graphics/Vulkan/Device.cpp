@@ -117,9 +117,21 @@ PhysicalDevice::PhysicalDevice(InstancePtr _instance, vk::raii::PhysicalDevice p
 {
 }
 
+const vk::raii::PhysicalDevice&
+PhysicalDevice::raiiPhysicalDevice() const noexcept
+{
+    return *this;
+}
+
+const vk::raii::Device&
+Device::raii() const noexcept
+{
+    return *this;
+}
+
 Device::Device(InstancePtr _instance, vk::raii::PhysicalDevice physicalDevice)
     : PhysicalDevice{std::move(_instance), std::move(physicalDevice)}
-    , vk::raii::Device{makeDevice(*this, queueInfos)}
+    , vk::raii::Device{makeDevice(raiiPhysicalDevice(), queueInfos)}
     , mGraphicsQueue{*this, queueInfos.graphics.familyIndex, queueInfos.graphics.familyProperties}
     , mTransferQueue{*this, queueInfos.transfer.familyIndex, queueInfos.transfer.familyProperties}
     , pipelineCache{*this, {}}

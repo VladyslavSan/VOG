@@ -11,9 +11,11 @@ namespace VOG::Graphics::Vulkan
  */
 class TimelineSemaphore
     : public DeviceChild
-    , public vk::raii::Semaphore
+    , private vk::raii::Semaphore
 {
 public:
+    using vk::raii::Semaphore::operator*;
+
     /** Describes wait operation on timeline semaphore. */
     struct WaitRequest
     {

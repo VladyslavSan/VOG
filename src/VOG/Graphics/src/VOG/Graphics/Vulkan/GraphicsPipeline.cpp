@@ -8,6 +8,8 @@
 
 namespace VOG::Graphics::Vulkan
 {
+namespace
+{
 bool
 validateVertexAttributes(const ShaderProgram& shaderProgram, const VertexLayout& vertexLayout)
 {
@@ -37,24 +39,23 @@ validateVertexAttributes(const ShaderProgram& shaderProgram, const VertexLayout&
     return true;
 }
 
-GraphicsPipeline::GraphicsPipeline(DevicePtr device, Parameters createInfo)
-    : DeviceChild{std::move(device)}
-    , vk::raii::Pipeline{nullptr}
-    , renderingDescription{createInfo.renderingDescription}
-    , program{std::move(createInfo.shading)}
+vk::raii::Pipeline
+makePipeline(const Device&                       device,
+             const ShaderProgram&                program,
+             const GraphicsPipeline::Parameters& createInfo)
 {
     using ShadingStateInfo = vk::PipelineShaderStageCreateInfo;
 
     std::array shadingStages = {
         ShadingStateInfo{
             .stage  = vk::ShaderStageFlagBits::eVertex,
-            .module = *program->stages.vertex.shader->module,
-            .pName  = program->stages.vertex.entryPoint,
+            .module = *program.stages.vertex.shader->module,
+            .pName  = program.stages.vertex.entryPoint,
         },
         ShadingStateInfo{
             .stage  = vk::ShaderStageFlagBits::eFragment,
-            .module = *program->stages.fragment.shader->module,
-            .pName  = program->stages.fragment.entryPoint,
+            .module = *program.stages.fragment.shader->module,
+            .pName  = program.stages.fragment.entryPoint,
         },
     };
 
@@ -101,7 +102,7 @@ GraphicsPipeline::GraphicsPipeline(DevicePtr device, Parameters createInfo)
             .pDepthStencilState  = &createInfo.depthStencil,
             .pColorBlendState    = &blendingState,
             .pDynamicState       = &dynamicState,
-            .layout              = createInfo.pipelineLayout,
+            .layout              = *program.pipelineLayout,
         },
         vk::PipelineRenderingCreateInfo{
             .colorAttachmentCount = static_cast<std::uint32_t>(
@@ -114,13 +115,12 @@ GraphicsPipeline::GraphicsPipeline(DevicePtr device, Parameters createInfo)
 
     try
     {
-        vk::raii::Pipeline pipeline{*this->device(), createInfo.cache, info.get()};
-        static_cast<vk::raii::Pipeline&>(*this) = std::move(pipeline);
+        return vk::raii::Pipeline{device.raii(), device.pipelineCache, info.get()};
     }
     catch (const vk::SystemError& error)
     {
         using namespace std::string_literals;
-        if (!validateVertexAttributes(*program, vertexLayout))
+        if (!validateVertexAttributes(program, vertexLayout))
         {
             throw std::runtime_error{
                 "GraphicsPipeline creation failed. Shader program is incompatible with vertex "
@@ -128,5 +128,23 @@ GraphicsPipeline::GraphicsPipeline(DevicePtr device, Parameters createInfo)
         }
         throw std::runtime_error{"GraphicsPipeline creation failed. "s + error.what()};
     }
+}
+
+const ShaderProgram&
+requireProgram(const GraphicsPipeline::Parameters& createInfo)
+{
+    VOG_ASSERT_MSG(createInfo.shading, "A graphics pipeline needs a shader program.");
+
+    return *createInfo.shading;
+}
+} // namespace
+
+GraphicsPipeline::GraphicsPipeline(DevicePtr device, Parameters createInfo)
+    : DeviceChild{std::move(device)}
+    , vk::raii::Pipeline{makePipeline(
+          *DeviceChild::device(), requireProgram(createInfo), createInfo)}
+    , renderingDescription{createInfo.renderingDescription}
+    , program{std::move(createInfo.shading)}
+{
 }
 } // namespace VOG::Graphics::Vulkan

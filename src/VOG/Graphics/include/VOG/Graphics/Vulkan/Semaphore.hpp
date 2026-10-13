@@ -15,13 +15,15 @@ VOG_DECLARE_PTR(Semaphore);
  */
 class Semaphore
     : public DeviceChild
-    , public vk::raii::Semaphore
+    , private vk::raii::Semaphore
 {
     friend class Device;
 
     explicit Semaphore(DevicePtr device);
 
 public:
+    using vk::raii::Semaphore::operator*;
+
     Semaphore(const Semaphore&) = delete;
     Semaphore(Semaphore&&)      = delete;
 };

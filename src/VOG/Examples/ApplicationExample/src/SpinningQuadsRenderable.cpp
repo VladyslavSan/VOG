@@ -76,29 +76,27 @@ SpinningQuadsRenderable::prepare(VOG::Engine::ResourceContext& resourceContext)
         ColorComponent::eR | ColorComponent::eG | ColorComponent::eB | ColorComponent::eA;
 
     mPipeline = device->createGraphicsPipeline(GraphicsPipeline::Parameters{
-        .cache          = nullptr,
-        .shading        = program,
-        .vertexLayout   = {.bindingDescription =
-                               {
-                                   {.binding   = 0u,
-                                    .stride    = sizeof(VertexData),
-                                    .inputRate = vk::VertexInputRate::eVertex},
-                               },
-                           .attributeDescription = {{.location = 0u,
-                                                     .binding  = 0u,
-                                                     .format   = vk::Format::eR32G32Sfloat,
-                                                     .offset   = 0u},
-                                                    {.location = 1u,
-                                                     .binding  = 0u,
-                                                     .format   = vk::Format::eR32G32B32A32Sfloat,
-                                                     .offset   = offsetof(VertexData, color)}}},
-        .rasterizer     = {.cullMode = CullMode::eNone},
-        .viewportState  = {.viewportCount = 1u, .scissorCount = 1u},
-        .depthStencil   = {.depthTestEnable = 0u},
-        .blending       = {.attachments = {{.blendEnable = 0u, .colorWriteMask = colorWriteMask}}},
-        .multisample    = {},
-        .dynamicStates  = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
-        .pipelineLayout = *program->pipelineLayout,
+        .shading       = program,
+        .vertexLayout  = {.bindingDescription =
+                              {
+                                  {.binding   = 0u,
+                                   .stride    = sizeof(VertexData),
+                                   .inputRate = vk::VertexInputRate::eVertex},
+                              },
+                          .attributeDescription = {{.location = 0u,
+                                                    .binding  = 0u,
+                                                    .format   = vk::Format::eR32G32Sfloat,
+                                                    .offset   = 0u},
+                                                   {.location = 1u,
+                                                    .binding  = 0u,
+                                                    .format   = vk::Format::eR32G32B32A32Sfloat,
+                                                    .offset   = offsetof(VertexData, color)}}},
+        .rasterizer    = {.cullMode = CullMode::eNone},
+        .viewportState = {.viewportCount = 1u, .scissorCount = 1u},
+        .depthStencil  = {.depthTestEnable = 0u},
+        .blending      = {.attachments = {{.blendEnable = 0u, .colorWriteMask = colorWriteMask}}},
+        .multisample   = {},
+        .dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
         .renderingDescription = {
             .colorAttachmentFormats = {resourceContext.colorAttachmentFormat}}});
 }

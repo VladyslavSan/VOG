@@ -58,7 +58,7 @@ CommandBufferHandle::operator->() noexcept
 CommandBufferPool::CommandBufferPool(const DevicePtr& device)
     : mDevice{device}
     , mVulkanPool{
-          *mDevice,
+          mDevice->raii(),
           vk::CommandPoolCreateInfo{.queueFamilyIndex = mDevice->queueInfos.graphics.familyIndex}}
 {
 }
@@ -70,7 +70,7 @@ CommandBufferPool::get(vk::CommandBufferLevel type)
     if (pool.empty())
     {
         vk::raii::CommandBuffers rawBuffers{
-            *mDevice,
+            mDevice->raii(),
             {.commandPool = *mVulkanPool, .level = type, .commandBufferCount = gGrowSize}};
         for (auto& buffer : rawBuffers)
         {

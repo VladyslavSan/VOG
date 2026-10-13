@@ -13,7 +13,7 @@ VOG_DECLARE_PTR(Device);
 
 class Instance
     : private vk::raii::Context
-    , public vk::raii::Instance
+    , private vk::raii::Instance
     , public std::enable_shared_from_this<Instance>
 {
 public:
@@ -38,8 +38,12 @@ public:
         return std::shared_ptr<Instance>(new Instance{parameters});
     }
 
+    using vk::raii::Instance::createDebugUtilsMessengerEXT;
     using vk::raii::Instance::getDispatcher;
     using vk::raii::Instance::operator*;
+
+    /** For the raii objects that take an instance; the base itself stays private. */
+    const vk::raii::Instance& raii() const noexcept;
 
     DevicePtr makeDevice();
 };

@@ -25,7 +25,7 @@ class FrameObjects
 public:
     FrameObjects(Vulkan::DevicePtr device, std::size_t threadCount);
 
-    FrameObjects(FrameObjects&&)      = default;
+    FrameObjects(FrameObjects&&)      = delete;
     FrameObjects(const FrameObjects&) = delete;
 
     ~FrameObjects();
