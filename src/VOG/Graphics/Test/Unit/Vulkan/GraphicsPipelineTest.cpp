@@ -1,5 +1,4 @@
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
-#include <VOG/Graphics/Vulkan/RenderPass.hpp>
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 
@@ -41,17 +40,12 @@ TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
 {
     using namespace VOG::Graphics::Vulkan;
 
-    auto renderPass =
-        VulkanDevice->createRenderPass({{.format        = vk::Format::eR32G32B32A32Sfloat,
-                                         .loadOp        = vk::AttachmentLoadOp::eClear,
-                                         .storeOp       = vk::AttachmentStoreOp::eStore,
-                                         .initialLayout = vk::ImageLayout::eUndefined,
-                                         .finalLayout = vk::ImageLayout::eColorAttachmentOptimal}},
-                                       {});
-
     vk::raii::PipelineLayout pipelineLayout{*VulkanDevice, vk::PipelineLayoutCreateInfo{}};
 
-    const GraphicsPipeline::ParametersLegacy createInfoTemplate{
+    constexpr auto colorWriteMask =
+        ColorComponent::eR | ColorComponent::eG | ColorComponent::eB | ColorComponent::eA;
+
+    const GraphicsPipeline::Parameters createInfoTemplate{
         .cache   = nullptr,
         .shading = {},
         .vertexLayout =
@@ -67,16 +61,14 @@ TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
                                        .binding  = 0u,
                                        .format   = vk::Format::eR32G32B32A32Sfloat,
                                        .offset   = 16u}}},
-        .rasterizer    = {.cullMode = CullMode::eNone},
-        .viewportState = {.viewportCount = 1u, .scissorCount = 1u},
-        .depthStencil  = {},
-        .blending = {.attachments = {{.blendEnable    = 0u,
-                                      .colorWriteMask = ColorComponent::eR | ColorComponent::eG |
-                                                        ColorComponent::eB | ColorComponent::eA}}},
+        .rasterizer     = {.cullMode = CullMode::eNone},
+        .viewportState  = {.viewportCount = 1u, .scissorCount = 1u},
+        .depthStencil   = {},
+        .blending       = {.attachments = {{.blendEnable = 0u, .colorWriteMask = colorWriteMask}}},
         .multisample    = {},
         .dynamicStates  = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
         .pipelineLayout = *pipelineLayout,
-        .renderPass     = *renderPass};
+        .renderpassDescription = {.colorAttachmentFormats = {vk::Format::eR32G32B32A32Sfloat}}};
 
     {
         SCOPED_TRACE("correct pipeline compiles");

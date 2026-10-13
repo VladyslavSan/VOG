@@ -4,7 +4,6 @@
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Common.hpp>
 #include <VOG/Graphics/Vulkan/Limits.hpp>
-#include <VOG/Graphics/Vulkan/RenderPass.hpp>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -43,22 +42,6 @@ public:
         StaticVector<vk::PipelineColorBlendAttachmentState, Limits::gMaxNumAttachments> attachments;
     };
 
-    struct ParametersLegacy
-    {
-        vk::Optional<const vk::raii::PipelineCache> cache;
-        ShaderProgramPtr                            shading;
-        VertexLayout                                vertexLayout;
-        RasterizationOptions                        rasterizer;
-        ViewportState                               viewportState;
-        DepthStencilState                           depthStencil;
-        ColorBlendState                             blending;
-        MultisampleState                            multisample;
-        DynamicStates                               dynamicStates;
-        const vk::PipelineLayout&                   pipelineLayout;
-        const RenderPass&                           renderPass;
-        std::uint32_t                               subpass;
-    };
-
     struct Parameters
     {
         vk::Optional<const vk::raii::PipelineCache> cache;
@@ -76,8 +59,6 @@ public:
 
 private:
     friend class Device;
-
-    explicit GraphicsPipeline(DevicePtr device, ParametersLegacy createInfo);
 
     explicit GraphicsPipeline(DevicePtr device, Parameters createInfo);
 

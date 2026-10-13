@@ -33,8 +33,8 @@ public:
      * @param threadId Index of the thread requesting the command buffer pool.
      * Id is simply an index from 0 to @p mCommandBufferPools size.
      *
-     * @note for a thread pool thread ids should be unique as access to thread objects is not
-     * guarded.
+     * @note Access is not guarded. Engine currently uses threadCount = 1
+     * (threadId 0 only); multi-threaded recording is reserved.
      */
     const vk::raii::Semaphore& getRenderFinishedSemaphore() const;
 

@@ -54,7 +54,7 @@ public:
         commandBuffersTmp.reserve(commandBuffers.size());
         for (CommandBufferHandle& handle : commandBuffers)
         {
-            commandBuffersTmp.push_back(handle.consumeForSubmission(fence));
+            commandBuffersTmp.push_back(handle.vkHandle());
         }
 
         vk::SubmitInfo submitInfo{
@@ -68,6 +68,11 @@ public:
         };
 
         vk::raii::Queue::submit(submitInfo, **fence->useFence());
+
+        for (CommandBufferHandle& handle : commandBuffers)
+        {
+            handle.consumeForSubmission(fence);
+        }
 
         return Submission{.fence = std::move(fence)};
     }

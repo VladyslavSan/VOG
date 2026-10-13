@@ -5,7 +5,6 @@
 #include <VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
 #include <VOG/Graphics/Vulkan/Containers.hpp>
-#include <VOG/Graphics/Vulkan/DescriptorAllocator.hpp>
 #include <VOG/Graphics/Vulkan/Fence.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/Limits.hpp>
@@ -19,9 +18,7 @@ namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Buffer);
 VOG_DECLARE_PTR(CommandBufferPool);
-VOG_DECLARE_PTR(Framebuffer);
 VOG_DECLARE_PTR(RenderBuffer);
-VOG_DECLARE_PTR(RenderPass);
 VOG_DECLARE_PTR(Instance);
 
 class PhysicalDevice : public vk::raii::PhysicalDevice
@@ -86,16 +83,6 @@ public:
     std::shared_ptr<ShaderProgram> createShaderProgram(ShaderProgram::ShadingStages stages);
 
     /**
-     * Creates a graphics pipeline using a legacy render-pass-based description.
-     *
-     * @param createInfo  Pipeline parameters including the render pass object.
-     *
-     * @return Compiled graphics pipeline.
-     */
-    std::shared_ptr<GraphicsPipeline>
-    createGraphicsPipeline(GraphicsPipeline::ParametersLegacy createInfo);
-
-    /**
      * Creates a graphics pipeline from a renderpass description.
      *
      * @param createInfo  Pipeline parameters with a renderpass description.
@@ -104,33 +91,6 @@ public:
      */
     std::shared_ptr<GraphicsPipeline>
     createGraphicsPipeline(GraphicsPipeline::Parameters createInfo);
-
-    /**
-     * Creates a render pass from attachment descriptions.
-     *
-     * @param colorAttachments  Descriptions of color attachments.
-     * @param depthStencil      Description of the depth/stencil attachment.
-     *
-     * @return Render pass object.
-     */
-    std::shared_ptr<RenderPass>
-    createRenderPass(const StaticVector<vk::AttachmentDescription, Limits::gMaxNumAttachments - 1u>&
-                                                      colorAttachments,
-                     const vk::AttachmentDescription& depthStencil);
-
-    /**
-     * Creates a framebuffer by binding attachments to a render pass.
-     *
-     * @param renderPass              Render pass the framebuffer is compatible with.
-     * @param colorAttachments        Color attachment views.
-     * @param depthStencilAttachment  Depth/stencil attachment view.
-     *
-     * @return Framebuffer object.
-     */
-    std::shared_ptr<Framebuffer> createFramebuffer(
-        std::shared_ptr<RenderPass>                                           renderPass,
-        StaticVector<AttachmentInterfacePtr, Limits::gMaxNumAttachments - 1u> colorAttachments,
-        AttachmentInterfacePtr depthStencilAttachment);
 
     /**
      * Creates a command buffer pool for recording GPU commands.
@@ -174,16 +134,6 @@ public:
                                                      vk::ImageTiling         imageTiling,
                                                      vk::ImageLayout         initialLayout,
                                                      vk::MemoryPropertyFlags memoryProperties);
-
-    /**
-     * Creates a descriptor allocator pre-configured with the given pool sizes.
-     *
-     * @param params  Pool sizes and max set count.
-     *
-     * @return Descriptor allocator.
-     */
-    std::unique_ptr<DescriptorAllocator>
-    createDescriptorAllocator(const DescriptorAllocator::ConstructionParameters& params);
 
     /**
      * Allocates a GPU buffer with the specified usage and memory properties.

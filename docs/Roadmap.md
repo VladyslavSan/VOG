@@ -25,33 +25,41 @@ step builds on the previous. Completed work is kept for context.
   clamped against `surfaceCapabilities.min/maxImageCount` (maxImageCount==0 =
   unlimited, handled explicitly); `recreate()` updates `mExtent` from surface
   capabilities before rebuilding.
-
-## Phase 4: Vulkan 1.3 + dynamic rendering
-
-- Bump `VK_API_VERSION_1_2` → `1_3` (Instance.cpp). MoltenVK and Mesa
-  lavapipe both support 1.3.
-- Enable `vk::PhysicalDeviceVulkan13Features{ .synchronization2, .dynamicRendering }`;
-  drop the `VK_KHR_synchronization2` extension entry (core in 1.3).
-- Add `CommandBufferRecorder::beginRendering()/endRendering()` built from
-  `AttachmentInterface` (the non-legacy `GraphicsPipeline::Parameters` path
-  already emits `vk::PipelineRenderingCreateInfo`).
-- Delete the legacy path: `RenderPass`, `Framebuffer`,
+- **Vulkan 1.3 + dynamic rendering** (Phase 4): instance API version bumped to
+  1.3 and `vk::PhysicalDeviceVulkan13Features{ .synchronization2,
+  .dynamicRendering }` enabled, so the `VK_KHR_synchronization2` extension entry
+  is gone (core in 1.3). `CommandBufferRecorder::beginRendering()/endRendering()`
+  build `vk::RenderingInfo` from `AttachmentInterface` attachments carrying their
+  own load/store ops and clear values, retaining each one. The legacy path is
+  deleted: `RenderPass`, `Framebuffer`,
   `Device::createRenderPass/createFramebuffer`,
-  `GraphicsPipeline::ParametersLegacy`, `beginRenderPass/endRenderPass`.
+  `GraphicsPipeline::ParametersLegacy` and `beginRenderPass/endRenderPass` are
+  gone; `GraphicsPipeline::Parameters` with its `RenderpassDescription` is the
+  only pipeline path.
+- **Typed config + RenderItem seam + demo extraction** (Phase 5): the renderer
+  takes a `Renderer::Config` struct (app/engine name, layers, extensions,
+  frames in flight, shader source path) instead of round-tripping through
+  `JSONContainer`, so JSON stays at the file-loading edge. Draws are described
+  as data: a `RenderItem` POD (pipeline, vertex buffer, vertex count,
+  push-constant blob) produced by `Renderable::prepare(ResourceContext&)`
+  (once, on the render thread) and `Renderable::collect(const FrameContext&,
+  vector<RenderItem>&)` (per frame) — the renderer is the only place that
+  records commands. The quad demo moved to
+  `Examples/ApplicationExample/SpinningQuadsRenderable`, which builds its
+  buffer and pipeline once in `prepare()`, ending the per-frame pipeline
+  creation; renderables are registered through `Application::addRenderable`.
+  The unused `VOG::Scene` API (`Scene`, `SceneObject`) is deleted — scene
+  representation is deferred until materials/meshes exist. Engine links the
+  `VOG::Math` alias.
 
-## Phase 5: typed config + RenderItem seam + demo extraction
-
-- `Renderer::Config` struct instead of round-tripping through
-  `JSONContainer` (JSON stays at the file-loading edge only).
-- Minimal data-driven scene seam: `RenderItem` POD (pipeline, vertex buffer,
-  vertex count, push-constant blob); `Renderable` interface with
-  `prepare(ResourceContext&)` (once) and `collect(const FrameContext&, vector<RenderItem>&)`
-  (per frame). Scene aggregates items; only the Renderer records commands.
-- Move the triangle demo into `Examples/ApplicationExample` as a
-  `Renderable`; pipeline/buffer created once in `prepare()` — ends the
-  per-frame pipeline creation.
-- Cleanups: `VOG::Scene` namespace → `VOG::Engine`, `m_` → `m` member naming,
-  Engine links the `VOG::Math` alias.
+- **Ownership / sync hygiene**: Bugbot fixes (JSONContainer index bounds, FIFO
+  present-mode fallback, `framesInFlight` clamped to swapchain `imageCount`,
+  frame-slot advance only after successful acquire); Device no longer cycles
+  with FencePool/MemoryAllocator via `DevicePtr` backrefs; `Queue::submit` parks
+  CBs only after success; closed `CommandBufferRecorder` (private `vk::raii::CommandBuffer` inheritance);
+  `AcquiredSwapchainImage` for stable attachment identity; Linux Wayland/X11
+  WSI; unfinished `DescriptorAllocator` removed from the public Device/CMake
+  surface.
 
 ## Later milestones (in rough order)
 

@@ -33,6 +33,7 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Frame/FrameObjectManager.hpp
             include/VOG/Graphics/Frame/FrameObjects.hpp
             include/VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp
+            include/VOG/Graphics/Vulkan/Attachment/AcquiredSwapchainImage.hpp
             include/VOG/Graphics/Vulkan/Attachment/RenderBuffer.hpp
             include/VOG/Graphics/Vulkan/Attachment/Swapchain.hpp
             include/VOG/Graphics/Vulkan/Buffer.hpp
@@ -41,17 +42,14 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Vulkan/CommandBufferRecorder.hpp
             include/VOG/Graphics/Vulkan/Common.hpp
             include/VOG/Graphics/Vulkan/Containers.hpp
-            include/VOG/Graphics/Vulkan/DescriptorAllocator.hpp
             include/VOG/Graphics/Vulkan/Device.hpp
             include/VOG/Graphics/Vulkan/Fence.hpp
             include/VOG/Graphics/Vulkan/FencePool.hpp
-            include/VOG/Graphics/Vulkan/FrameBuffer.hpp
             include/VOG/Graphics/Vulkan/GraphicsPipeline.hpp
             include/VOG/Graphics/Vulkan/Instance.hpp
             include/VOG/Graphics/Vulkan/Limits.hpp
             include/VOG/Graphics/Vulkan/MemoryAllocator.hpp
             include/VOG/Graphics/Vulkan/Queue.hpp
-            include/VOG/Graphics/Vulkan/RenderPass.hpp
             include/VOG/Graphics/Vulkan/GLSLCompiler.hpp
             include/VOG/Graphics/Vulkan/Shader.hpp
             include/VOG/Graphics/Vulkan/ShaderProgram.hpp
@@ -65,6 +63,7 @@ target_sources(VOG.Graphics
         src/VOG/Graphics/Vulkan/Attachment/Converters.hpp
         src/VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.hpp
         src/VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.cpp
+        src/VOG/Graphics/Vulkan/Attachment/AcquiredSwapchainImage.cpp
         src/VOG/Graphics/Vulkan/Attachment/RenderBuffer.cpp
         src/VOG/Graphics/Vulkan/Attachment/Swapchain.cpp
         src/VOG/Graphics/Vulkan/Buffer.cpp
@@ -72,17 +71,14 @@ target_sources(VOG.Graphics
         src/VOG/Graphics/Vulkan/CommandBufferPool.cpp
         src/VOG/Graphics/Vulkan/CommandBufferRecorder.cpp
         src/VOG/Graphics/Vulkan/Common.cpp
-        src/VOG/Graphics/Vulkan/DescriptorAllocator.cpp
         src/VOG/Graphics/Vulkan/Device.cpp
         src/VOG/Graphics/Vulkan/Fence.cpp
         src/VOG/Graphics/Vulkan/FencePool.cpp
-        src/VOG/Graphics/Vulkan/Framebuffer.cpp
         src/VOG/Graphics/Vulkan/GraphicsPipeline.cpp
         src/VOG/Graphics/Vulkan/Instance.cpp
         src/VOG/Graphics/Vulkan/MemoryAllocator.cpp
         src/VOG/Graphics/Vulkan/MemoryAllocatorVmaImpl.cpp
         src/VOG/Graphics/Vulkan/Queue.cpp
-        src/VOG/Graphics/Vulkan/RenderPass.cpp
         src/VOG/Graphics/Vulkan/GLSLCompiler.cpp
         src/VOG/Graphics/Vulkan/Shader.cpp
         src/VOG/Graphics/Vulkan/ShaderProgram.cpp

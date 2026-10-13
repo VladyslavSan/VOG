@@ -4,11 +4,8 @@
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/CommandBuffer.hpp>
 #include <VOG/Graphics/Vulkan/FencePool.hpp>
-#include <VOG/Graphics/Vulkan/TimelineSemaphore.hpp>
 
 #include <memory>
-#include <optional>
-#include <unordered_map>
 #include <vector>
 
 namespace VOG::Graphics::Vulkan
@@ -35,6 +32,11 @@ public:
     vk::CommandBuffer consumeForSubmission(std::shared_ptr<FencePool::FenceHandle> fence);
 
     /**
+     * Raw Vulkan handle for peeking before submit (does not transfer ownership).
+     */
+    vk::CommandBuffer vkHandle() const;
+
+    /**
      * Allows usage of the handle as if it's an instance of the CommandBuffer.
      * @return CommandBuffer handle.
      */
@@ -52,12 +54,11 @@ protected:
 };
 
 /**
- * Manages a pool of command buffers.
+ * Manages a pool of command buffers for a single recording thread.
  *
- * @note
- * Should be used by only a one thread at a time as pool manages growth of the space for command
- * buffers allocated from it and if multiple thead record command buffers allocated from one pool
- * internally it will result in race condition.
+ * @note One pool must be used by only one thread at a time. FrameObjects can
+ * allocate several pools (threadCount), but the engine currently hardcodes
+ * threadCount = 1 until a second recorder thread exists.
  */
 class CommandBufferPool : public std::enable_shared_from_this<CommandBufferPool>
 {
@@ -81,7 +82,7 @@ public:
      *
      * @param type Type of the command buffer to return - primary or secondary.
      *
-     * @returns CommandBufferRecorder instance.
+     * @returns A lease on a pooled CommandBuffer (record via CommandBufferRecorder).
      */
     CommandBufferHandle get(CommandBufferType type);
 

@@ -7,7 +7,6 @@
 #include <VOG/Graphics/Vulkan/Containers.hpp>
 
 #include <memory>
-#include <ranges>
 #include <unordered_set>
 #include <vector>
 
@@ -15,31 +14,15 @@ namespace VOG::Graphics::Vulkan
 {
 using CommandBufferType = vk::CommandBufferLevel;
 
-class CommandBufferState
-{
-public:
-    enum class State : std::uint8_t
-    {
-        eEmpty,
-        eRecording,
-        eRecordingEnded,
-        eSubmitted,
-        // eFinishedExecution
-    };
-
-    State
-    getState() const
-    {
-        return mState;
-    }
-
-protected:
-    State mState = State::eEmpty;
-};
-
-class CommandBuffer : public vk::raii::CommandBuffer
+/**
+ * Tracked Vulkan command buffer. Inherits vk::raii::CommandBuffer privately so recording
+ * that needs retention goes through CommandBufferRecorder (or the few public begin/end APIs).
+ */
+class CommandBuffer : private vk::raii::CommandBuffer
 {
     friend class CommandBufferPool;
+    friend class CommandBufferRecorder;
+    friend class CommandBufferHandle;
 
     CommandBuffer(vk::raii::CommandBuffer commandBuffer, CommandBufferType type);
 
@@ -55,26 +38,13 @@ public:
     CommandBuffer(const CommandBuffer&) = delete;
     CommandBuffer(CommandBuffer&&)      = default;
 
-    operator bool() const;
+    explicit operator bool() const;
 
-    void
-    bindVertexBuffers(std::uint32_t                                              firstBinding,
-                      StaticVectorStrict<BufferBinding, kMaxNumVertexBufferBind> bindings)
-    {
-        std::array<vk::Buffer, kMaxNumVertexBufferBind>     bufferHandles;
-        std::array<vk::DeviceSize, kMaxNumVertexBufferBind> offsets;
-        for (std::size_t i = 0; i < bindings.size(); ++i)
-        {
-            bufferHandles[i] = **bindings[i].buffer;
-            offsets[i]       = bindings[i].offset;
-            mBoundVertexBuffers.insert(std::move(bindings[i].buffer));
-        }
+    void begin(const vk::CommandBufferBeginInfo& beginInfo);
+    void end();
 
-        vk::raii::CommandBuffer::bindVertexBuffers(
-            firstBinding,
-            {static_cast<std::uint32_t>(bindings.size()), bufferHandles.data()},
-            {static_cast<std::uint32_t>(bindings.size()), offsets.data()});
-    }
+    /** Raw Vulkan handle for submit; does not bypass retention on recording paths. */
+    vk::CommandBuffer vkHandle() const;
 
     void addBoundResource(const std::shared_ptr<void>& resource);
 

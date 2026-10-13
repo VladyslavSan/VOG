@@ -4,11 +4,8 @@
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
-#include <VOG/Graphics/Vulkan/DescriptorAllocator.hpp>
-#include <VOG/Graphics/Vulkan/FrameBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
 #include <VOG/Graphics/Vulkan/MemoryAllocator.hpp>
-#include <VOG/Graphics/Vulkan/RenderPass.hpp>
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 
@@ -23,8 +20,8 @@ const char* gPortabilityExtensionName = "VK_KHR_portability_subset";
 constexpr std::vector<const char*>
 getDeviceRequiredExtensions()
 {
-    std::vector<const char*> requiredExtensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-                                                VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME};
+    // synchronization2 and dynamicRendering are core in Vulkan 1.3, no extension entries needed.
+    std::vector<const char*> requiredExtensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
     return requiredExtensions;
 }
@@ -156,9 +153,9 @@ makeDevice(const vk::raii::PhysicalDevice& physicalDevice, const PhysicalDevice:
         vk::PhysicalDeviceVulkan12Features{
             .timelineSemaphore = 1u,
         },
-        // Need this to make it work on macOS.
-        vk::PhysicalDeviceSynchronization2Features{
+        vk::PhysicalDeviceVulkan13Features{
             .synchronization2 = 1u,
+            .dynamicRendering = 1u,
         },
     };
 
@@ -203,31 +200,10 @@ Device::createTimelineSemaphore()
     return TimelineSemaphore{shared_from_this()};
 }
 
-std::shared_ptr<RenderPass>
-Device::createRenderPass(const StaticVector<vk::AttachmentDescription,
-                                            Limits::gMaxNumAttachments - 1u>& colorAttachments,
-                         const vk::AttachmentDescription&                     depthStencil)
-{
-    return std::shared_ptr<RenderPass>(
-        new RenderPass{shared_from_this(), colorAttachments, depthStencil});
-}
-
 std::shared_ptr<CommandBufferPool>
 Device::createCommandBufferPool()
 {
     return std::shared_ptr<CommandBufferPool>(new CommandBufferPool{shared_from_this()});
-}
-
-std::shared_ptr<Framebuffer>
-Device::createFramebuffer(
-    std::shared_ptr<RenderPass>                                           renderPass,
-    StaticVector<AttachmentInterfacePtr, Limits::gMaxNumAttachments - 1u> colorAttachments,
-    AttachmentInterfacePtr                                                depthStencilAttachment)
-{
-    return std::shared_ptr<Framebuffer>(new Framebuffer{shared_from_this(),
-                                                        std::move(renderPass),
-                                                        std::move(colorAttachments),
-                                                        std::move(depthStencilAttachment)});
 }
 
 std::shared_ptr<ShaderProgram>
@@ -235,13 +211,6 @@ Device::createShaderProgram(ShaderProgram::ShadingStages stages)
 {
     return std::shared_ptr<ShaderProgram>(new ShaderProgram{
         shared_from_this(), ShaderProgram::ShadingStagesChecked{std::move(stages)}});
-}
-
-std::shared_ptr<GraphicsPipeline>
-Device::createGraphicsPipeline(GraphicsPipeline::ParametersLegacy createInfo)
-{
-    return std::shared_ptr<GraphicsPipeline>(
-        new GraphicsPipeline{shared_from_this(), std::move(createInfo)});
 }
 
 std::shared_ptr<GraphicsPipeline>
@@ -278,13 +247,6 @@ Device::createRenderBuffer(AttachmentUsage         usage,
                                                           imageTiling,
                                                           initialLayout,
                                                           memoryProperties});
-}
-
-std::unique_ptr<DescriptorAllocator>
-Device::createDescriptorAllocator(const DescriptorAllocator::ConstructionParameters& params)
-{
-    return std::unique_ptr<DescriptorAllocator>(
-        new DescriptorAllocator{shared_from_this(), params});
 }
 
 std::unique_ptr<Buffer>
