@@ -70,7 +70,9 @@ Application::run()
     {
         SDL_Event  event;
         const bool waitEventSuccess = SDL_WaitEventTimeout(&event, 100);
-        if (waitEventSuccess && event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED)
+        // SDL_EVENT_QUIT is Cmd+Q, Dock "Quit" and SIGTERM/SIGINT.
+        if (waitEventSuccess &&
+            (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED || event.type == SDL_EVENT_QUIT))
         {
             mRenderer->requestRenderChangeState(VOG::Engine::Renderer::RenderJobState::eInactive);
             mRenderer.reset();
