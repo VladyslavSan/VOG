@@ -38,6 +38,12 @@ static_assert(std::is_nothrow_destructible_v<Graphics::Vulkan::CommandBufferReco
 static_assert(std::is_nothrow_destructible_v<Graphics::Vulkan::ExecutableCommandBuffer>);
 static_assert(std::is_nothrow_destructible_v<Graphics::Vulkan::AcquiredSwapchainImage>);
 static_assert(std::is_nothrow_destructible_v<Graphics::Vulkan::Swapchain::Presentation>);
+// Without the defaulted moves a Presentation would copy on every move, and each copy would wait
+// the present fence when dropped.
+static_assert(std::is_nothrow_move_constructible_v<Graphics::Vulkan::Swapchain::Presentation>);
+static_assert(!std::is_copy_constructible_v<Graphics::Vulkan::Swapchain::Presentation>);
+// Assigning over a live one would drop its generation before its fence is waited.
+static_assert(!std::is_move_assignable_v<Graphics::Vulkan::Swapchain::Presentation>);
 static_assert(std::is_nothrow_destructible_v<Graphics::Frame::FrameObjects>);
 // The slot owns a presentation and command buffer pools; a moved-from one has nothing to wait on.
 static_assert(!std::is_move_constructible_v<Graphics::Frame::FrameObjects>);
@@ -237,9 +243,10 @@ TEST_F(DeviceLifetime, timelineSemaphoreKeepsDeviceAlive)
 /**
  * The queue is owned by the device; the handle it hands out shares ownership of the device. The
  * transfer queue is kept for future uploads, and no Vulkan call can reach it yet because there is
- * no transfer-family command buffer pool. Like Semaphore, the call under test is its destruction:
- * the graphics handle goes first, so the transfer handle alone must keep the device alive. A real
- * submit through the graphics handle is covered by submittedCommandBufferKeepsDeviceAlive.
+ * no transfer-family command buffer pool. The test checks ownership only; no Vulkan call is
+ * involved: the graphics handle goes first, so the transfer handle alone must keep the device
+ * alive. A real submit through the graphics handle is covered by
+ * submittedCommandBufferKeepsDeviceAlive.
  */
 TEST_F(DeviceLifetime, queueKeepsDeviceAlive)
 {

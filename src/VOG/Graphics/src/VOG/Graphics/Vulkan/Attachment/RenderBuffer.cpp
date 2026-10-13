@@ -67,9 +67,9 @@ RenderBuffer::getImage() const
     return **mImage;
 }
 
-const std::shared_ptr<vk::raii::ImageView>&
+const vk::raii::ImageView&
 RenderBuffer::getImageView() const
 {
-    return mImageView;
+    return *mImageView;
 }
 } // namespace VOG::Graphics::Vulkan

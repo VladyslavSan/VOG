@@ -41,8 +41,8 @@ public:
     /**
      * Keeps @p presentation until this frame slot starts again. The slot's render-finished
      * semaphore is waited by that presentation, so the slot must not signal it again before the
-     * presentation fence signalled; onFrameStart() drops the presentation, which waits for the
-     * fence.
+     * presentation fence signalled; onFrameStart() drops the presentation, and
+     * ~Presentation waits for the fence.
      *
      * @note Render thread only: dropping a Presentation returns its fence to the pool.
      */
@@ -62,7 +62,8 @@ public:
 protected:
     /**
      * Frame cleanups from previous usage like resetting the command buffers and command pools, and
-     * waiting for the previous presentation of this slot.
+     * dropping the previous presentation of this slot, whose destructor waits for its present
+     * fence.
      */
     void onFrameStart();
 
@@ -76,7 +77,8 @@ protected:
 
     /** Signaled by the graphics submit; waited by vkQueuePresentKHR. The submit fence does not
      *  prove the presentation engine consumed the wait, so the semaphore is safe to signal again
-     *  only after mPresentation (and its present fence) was dropped in onFrameStart(). */
+     *  only after mPresentation was dropped in onFrameStart(), which waits for its present fence.
+     */
     Vulkan::SemaphorePtr mRenderFinishedSemaphore;
 
     /** Per working thread command buffer pools */

@@ -12,8 +12,9 @@ A Vulkan frame involves three independent indices that are easy to conflate:
 1. **Frame slot** (`FrameObjectManager::mRenderFrame % framesInFlight`) — CPU-side ring
    for recycling command pools. Advanced by the renderer only when an image was acquired
    and a submit will follow (skip / out-of-date paths do not advance). Gated by the
-   per-slot submit fence (waited in `CommandBufferPool::reset`, and in `~CommandBufferPool`) and by the slot's present
-   fence (waited when `FrameObjects::onFrameStart` drops the slot's `Presentation`).
+   per-slot submit fence (waited in `CommandBufferPool::reset`, and in `~CommandBufferPool`)
+   and by the slot's present fence (waited by `~Presentation`, when
+   `FrameObjects::onFrameStart` drops the slot's `Presentation`).
 
 2. **Swapchain image index** — returned by `vkAcquireNextImageKHR`. The driver picks
    from images the presentation engine has released. Uncorrelated with the frame slot:
@@ -28,7 +29,10 @@ It says nothing about the **presentation engine's** own activity.
 
 ## Semaphore ownership: per image vs per frame slot
 
-`imageAvailableSemaphore` lives in `SwapchainImage`, keyed by image index.
+`imageAvailableSemaphore` lives in the `SwapchainGeneration` (its private
+`mAcquireSemaphores`: one per image, keyed by image index, plus the spare as the last entry).
+`AcquiredSwapchainImage::imageAvailableSemaphore()` hands it out, kept by value from the
+acquire, because the swap trick below rotates the list.
 `renderFinishedSemaphore` lives in `FrameObjects`, keyed by frame-in-flight slot.
 
 ### `imageAvailableSemaphore`
@@ -56,7 +60,7 @@ images the swapchain has. So `Swapchain::present()` chains a
 `VkSwapchainPresentFenceInfoKHR`: its fence does not signal until the presentation engine
 reset the payload of every wait semaphore. The slot keeps the `Presentation` (fence,
 semaphore, swapchain generation) and drops it in `onFrameStart`, before the next submit
-signals the semaphore again; dropping it waits for the fence. Conceptually the semaphore
+signals the semaphore again; `~Presentation` waits for the fence. Conceptually the semaphore
 belongs with the frame because it tracks a submission's render-completion state, not the
 image's identity.
 
@@ -64,28 +68,28 @@ image's identity.
 
 **The chicken-and-egg problem:** you must pass the acquire semaphore *into*
 `vkAcquireNextImageKHR` before you know which image index comes back.  You cannot
-pre-select `images[K].imageAvailableSemaphore` because K is unknown.
+pre-select `mAcquireSemaphores[K]` because K is unknown.
 
-**Solution:** maintain one spare semaphore (`spareAcquireSemaphore`) that is always
+**Solution:** keep one spare semaphore (the last entry of `mAcquireSemaphores`) that is always
 unsignaled and ready to pass. After the call returns K, swap the spare with
-`images[K].imageAvailableSemaphore`:
+`mAcquireSemaphores[K]`:
 
 ```
-vkAcquireNextImageKHR(spareAcquireSemaphore) → K
-std::swap(spareAcquireSemaphore, images[K].imageAvailableSemaphore)
+vkAcquireNextImageKHR(mAcquireSemaphores.back()) → K
+std::swap(mAcquireSemaphores.back(), mAcquireSemaphores[K])
 ```
 
 After the swap:
 
 | Slot | Contents | State | Used by |
 |---|---|---|---|
-| `images[K].imageAvailableSemaphore` | freshly-signaled spare | signaled | submit waits it |
-| `spareAcquireSemaphore` | evicted K-slot semaphore | unsignaled | next acquire |
+| `mAcquireSemaphores[K]` | freshly-signaled spare | signaled | submit waits it |
+| `mAcquireSemaphores.back()` | evicted K-slot semaphore | unsignaled | next acquire |
 
 **Why the evicted semaphore is safely unsignaled:** The driver returning K means the PE
 finished displaying image K and released it. That can only happen after:
 
-1. The prior `images[K].imageAvailableSemaphore` was signaled (when K was last acquired).
+1. The prior `mAcquireSemaphores[K]` was signaled (when K was last acquired).
 2. The graphics submit waited it (consuming the signal → semaphore goes unsignaled).
 3. Rendering completed and the submitting slot's `renderFinishedSemaphore` was signaled.
 4. `vkQueuePresentKHR` waited that `renderFinishedSemaphore`.
@@ -124,13 +128,16 @@ presentation when its fence signalled, and can destroy a swapchain when the fenc
 past presentations that refer to it signalled.
 
 Everything one `vkCreateSwapchainKHR` produces lives in a `SwapchainGeneration`: surface
-reference, swapchain, image views, the per-image acquire semaphores and the spare. Two kinds
-of holder keep a generation alive:
+reference, swapchain, image views and the acquire semaphores (one per image plus the spare).
+It is private to the Graphics library and constant after construction, except for the
+acquire semaphores, which only `acquireNextImage()` rotates. Two kinds of holder keep a
+generation alive:
 
 - a `Presentation` (returned by `Swapchain::present()`, kept by the frame slot until the
   slot restarts): holds the generation, the semaphore the present waits, and the present
-  fence. Members are destroyed in reverse, so the fence — and with it the wait for the
-  presentation engine — goes first;
+  fence, all private. `~Presentation` waits for the fence explicitly (a moved-from
+  `Presentation` has none), and only then are the generation and the semaphore released.
+  It is move-only: a copy would be a second owner that waits again;
 - an `AcquiredSwapchainImage`, which command buffers retain like any recorded resource, so
   the generation outlives the last command buffer that recorded one of its images.
 

@@ -30,6 +30,8 @@ namespace VOG::Engine
 namespace
 {
 constexpr std::chrono::milliseconds gZeroExtentBackoff{16};
+/** Long enough that a hidden window does not spin, short enough that quitting stays responsive. */
+constexpr std::chrono::milliseconds gAcquireTimeout{100};
 constexpr std::array                gClearColor = {0.0f, 0.0f, 0.0f, 1.0f};
 } // namespace
 
@@ -47,6 +49,7 @@ Renderer::~Renderer()
 Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& config)
     : mCurrentState{RenderJobState::eInactive}
     , mMaxFramesInFlight{std::clamp(config.framesInFlight, std::uint8_t{1}, kMaxFramesInFlight)}
+    , mExtent{config.extent}
     , mVulkanInstance{Graphics::Vulkan::Instance::create({
           .appName    = config.appName,
           .engineName = config.engineName,
@@ -61,6 +64,7 @@ Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& con
     , mSwapchain{mVulkanDevice->createSwapchain(Graphics::Vulkan::Swapchain::SwapchainParameters{
           .framesInFlight = mMaxFramesInFlight,
           .surface        = surfaceHandle,
+          .extent         = mExtent,
       })}
     , mFrameObjectManager{std::make_shared<Graphics::Frame::FrameObjectManager>(
           mVulkanDevice,
@@ -135,10 +139,10 @@ Renderer::render()
 
     prepareRenderables();
 
-    const auto acquireResult = mSwapchain->acquireNextImage();
+    const auto acquireResult = mSwapchain->acquireNextImage(gAcquireTimeout);
     if (acquireResult.status == Swapchain::AcquireStatus::eOutOfDate)
     {
-        if (!mSwapchain->recreate())
+        if (!mSwapchain->recreate(mExtent))
         {
             // Surface is zero-sized (minimized); back off instead of spinning.
             std::this_thread::sleep_for(gZeroExtentBackoff);
@@ -258,17 +262,18 @@ Renderer::render()
 
     mGraphicsQueue->submit(*mFencePool,
                            std::array{Queue::SemaphoreWait{
-                               .semaphore = acquireResult.imageAvailableSemaphore,
+                               .semaphore = acquired->imageAvailableSemaphore(),
                                .stage     = vk::PipelineStageFlagBits2::eColorAttachmentOutput}},
                            std::span{&executable, 1u},
                            std::array{frame->getRenderFinishedSemaphore()});
 
-    auto presented = mSwapchain->present(acquired, frame->getRenderFinishedSemaphore(), mFencePool);
+    auto presented =
+        mSwapchain->present(acquired, frame->getRenderFinishedSemaphore(), *mFencePool);
     frame->retainUntilPresented(std::move(presented.presentation));
 
     if (presented.status == Swapchain::PresentStatus::eOutOfDate)
     {
-        if (!mSwapchain->recreate())
+        if (!mSwapchain->recreate(mExtent))
         {
             std::this_thread::sleep_for(gZeroExtentBackoff);
         }

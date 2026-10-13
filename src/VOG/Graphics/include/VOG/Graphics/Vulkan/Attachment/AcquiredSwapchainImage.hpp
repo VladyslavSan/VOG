@@ -3,12 +3,14 @@
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp>
-#include <VOG/Graphics/Vulkan/Attachment/SwapchainGeneration.hpp>
+#include <VOG/Graphics/Vulkan/Semaphore.hpp>
 
 #include <memory>
 
 namespace VOG::Graphics::Vulkan
 {
+VOG_DECLARE_PTR(SwapchainGeneration);
+
 /**
  * Attachment for one acquired swapchain image. It shares ownership of the swapchain generation the
  * image belongs to, so the image, its view and the swapchain stay valid for as long as anything
@@ -29,26 +31,31 @@ public:
     AcquiredSwapchainImage(const AcquiredSwapchainImage&) = delete;
     AcquiredSwapchainImage(AcquiredSwapchainImage&&)      = delete;
 
-    const vk::Image&                            getImage() const override;
-    const std::shared_ptr<vk::raii::ImageView>& getImageView() const override;
+    /**
+     * Signaled by the presentation engine once the image is free; the submit that renders into the
+     * image waits it. Kept by value from the acquire: the swapchain rotates its own list.
+     */
+    const SemaphorePtr& imageAvailableSemaphore() const;
+
+    const vk::Image&           getImage() const override;
+    const vk::raii::ImageView& getImageView() const override;
 
 private:
     friend class Swapchain;
 
     AcquiredSwapchainImage(SwapchainGenerationPtr generation,
                            std::uint32_t          imageIndex,
-                           vk::Format             format);
+                           SemaphorePtr           imageAvailable);
 
     /** Called by Swapchain::present(): the presentation released the acquisition. */
     void markPresented();
 
-    /** Declared first, so it is destroyed last: everything below lives inside it. */
+    /** Declared first, so it is destroyed last: the image and its view live inside it. */
     SwapchainGenerationPtr mGeneration;
 
-    std::uint32_t                        mImageIndex;
-    bool                                 mPresented = false;
-    vk::Image                            mImage;
-    std::shared_ptr<vk::raii::ImageView> mImageView;
+    std::uint32_t mImageIndex;
+    SemaphorePtr  mImageAvailable;
+    bool          mPresented = false;
 };
 
 VOG_DECLARE_PTR(AcquiredSwapchainImage);

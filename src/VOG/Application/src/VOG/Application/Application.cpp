@@ -45,6 +45,7 @@ Application::Application(const ApplicationConfig& config)
                                                        .extensions       = config.extensions,
                                                        .framesInFlight   = config.framesInFlight,
                                                        .shaderSourcePath = config.shaderStoragePath,
+                                                       .extent           = mWindow->sizeInPixels(),
                                                    });
 }
 

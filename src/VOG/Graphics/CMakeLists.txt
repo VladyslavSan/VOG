@@ -70,6 +70,8 @@ target_sources(VOG.Graphics
         src/VOG/Graphics/Vulkan/Attachment/AcquiredSwapchainImage.cpp
         src/VOG/Graphics/Vulkan/Attachment/RenderBuffer.cpp
         src/VOG/Graphics/Vulkan/Attachment/Swapchain.cpp
+        src/VOG/Graphics/Vulkan/Attachment/SwapchainGeneration.cpp
+        src/VOG/Graphics/Vulkan/Attachment/SwapchainGeneration.hpp
         src/VOG/Graphics/Vulkan/Buffer.cpp
         src/VOG/Graphics/Vulkan/CommandBuffer.cpp
         src/VOG/Graphics/Vulkan/CommandBufferPool.cpp

@@ -142,13 +142,14 @@ public:
      */
     void setBufferBarrier(const std::shared_ptr<Buffer>& buffer, vk::BufferMemoryBarrier2 barrier);
 
-    /** Raw barriers with no retention — prefer setImageBarrier / setBufferBarrier. */
+private:
+    friend class CommandBufferPool;
+
+    /** Raw barriers with no retention; setImageBarrier and setBufferBarrier retain, then call it.
+     */
     void unsafeSetBarriers(vk::ArrayProxy<vk::MemoryBarrier2>       memoryBarriers,
                            vk::ArrayProxy<vk::BufferMemoryBarrier2> bufferBarriers,
                            vk::ArrayProxy<vk::ImageMemoryBarrier2>  imageBarriers);
-
-private:
-    friend class CommandBufferPool;
 
     /** Begins @p commandBuffer, which the pool leased for this recorder. */
     CommandBufferRecorder(CommandBufferPoolPtr pool, std::unique_ptr<CommandBuffer> commandBuffer);

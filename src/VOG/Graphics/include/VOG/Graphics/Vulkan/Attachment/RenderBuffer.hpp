@@ -25,8 +25,8 @@ private:
                  vk::MemoryPropertyFlags memoryProperties);
 
 public:
-    const vk::Image&                            getImage() const override;
-    const std::shared_ptr<vk::raii::ImageView>& getImageView() const override;
+    const vk::Image&           getImage() const override;
+    const vk::raii::ImageView& getImageView() const override;
 
 protected:
     DevicePtr                               mDevice;

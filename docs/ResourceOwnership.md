@@ -15,7 +15,7 @@ anything that flows through the tracked APIs.
 ## How the chain works
 
 1. **Recording retains.** Recording APIs accept `shared_ptr`s and store them on
-   the command buffer, through its one private entry point,
+   the command buffer, through its one entry point,
    `CommandBuffer::retain` (`Graphics/Vulkan/CommandBuffer.hpp`), which is private:
    `CommandBufferRecorder` (recording) and `Queue::submit` (semaphores) call it.
    The command buffer keeps them
@@ -26,8 +26,7 @@ anything that flows through the tracked APIs.
    - `CommandBufferRecorder::beginRendering` retains every color and depth
      attachment.
    - `setImageBarrier` / `setBufferBarrier` retain the passed attachment or
-     buffer; prefer these over `unsafeSetBarriers` (raw Vulkan barriers with no
-     retention). `setImageBarrier` fills `barrier.image` from the attachment.
+     buffer. `setImageBarrier` fills `barrier.image` from the attachment.
 
 2. **Submission retains the command buffer.** `Queue::submit` consumes
    `ExecutableCommandBuffer`s (what `CommandBufferRecorder::finish()` returns).
@@ -55,11 +54,12 @@ after the fence of the frame that referenced the resource has signaled.
    presentation engine. `Swapchain::present` chains a present fence
    (`VK_EXT_swapchain_maintenance1`, required) and returns a `Presentation`:
    the swapchain generation, the semaphore the present waits, and the fence.
-   The frame slot keeps it and drops it in `FrameObjects::onFrameStart`, which
-   waits the fence — before the slot signals that semaphore again. A
+   The frame slot keeps it and drops it in `FrameObjects::onFrameStart`;
+   `~Presentation` waits the fence — before the slot signals that semaphore
+   again. A
    `FenceHandle` waits for its fence in its destructor if the GPU may still
    signal it, as a safety net; the owners that release guarded resources
-   (`CommandBufferPool::reset` and `~CommandBufferPool`, `FrameObjects::onFrameStart`) wait
+   (`CommandBufferPool::reset` and `~CommandBufferPool`, `~Presentation`) wait
    for their fences explicitly. Swapchain recreation needs
    no `waitIdle`: the old generation is retired by reference count.
    Details: `SwapchainSync.md`.
@@ -174,8 +174,10 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    `TimelineSemaphore`, `Queue`,
    `RenderBuffer`, `Shader`, `ShaderProgram`, `GraphicsPipeline`,
    `FrameObjects`, `FrameObjectManager`, `ShaderProgramCache`, `Swapchain`,
-   `SwapchainGeneration` and `AcquiredSwapchainImage` (`SwapchainTest.cpp`, on a
-   headless surface via `VK_EXT_headless_surface`; the generation is covered by
+   `SwapchainGeneration` (private to the library, reached through the
+   `AcquiredSwapchainImage` and `Presentation` that hold it) and
+   `AcquiredSwapchainImage` (`SwapchainTest.cpp`, on a headless surface via
+   `VK_EXT_headless_surface`; the generation is covered by
    `acquiredImageKeepsSwapchainAlive`, which holds nothing else). `Shader`, `ShaderProgram`, `RenderBuffer` and
    `Semaphore` expose no Vulkan call, so their destruction is the call under
    test; for `ShaderProgramCache` it is the lookup.

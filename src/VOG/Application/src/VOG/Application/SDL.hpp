@@ -2,9 +2,12 @@
 
 #include <VOG/Common/Assert.hpp>
 #include <VOG/Common/SurfaceHandle.hpp>
+#include <VOG/Graphics/Config/VulkanConfig.hpp>
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
+#include <cstdint>
 #include <memory>
 
 namespace VOG::Application
@@ -36,6 +39,9 @@ public:
 
     const Common::SurfaceHandle& getSurfaceHandle() const;
 
+    /** Size of the window in physical pixels. Main thread only, like every SDL window call. */
+    vk::Extent2D sizeInPixels() const;
+
 protected:
     Handle mWindowHandle;
     Uint32 mWindowId;
@@ -62,5 +68,16 @@ inline const Common::SurfaceHandle&
 SDLWindow::getSurfaceHandle() const
 {
     return mSurfaceHandles;
+}
+
+inline vk::Extent2D
+SDLWindow::sizeInPixels() const
+{
+    int width  = 0;
+    int height = 0;
+    SDL_GetWindowSizeInPixels(mWindowHandle.get(), &width, &height);
+
+    return {.width  = static_cast<std::uint32_t>(std::max(width, 0)),
+            .height = static_cast<std::uint32_t>(std::max(height, 0))};
 }
 } // namespace VOG::Application

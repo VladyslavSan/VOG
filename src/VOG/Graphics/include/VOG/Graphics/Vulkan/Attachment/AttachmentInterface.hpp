@@ -39,8 +39,8 @@ public:
 
     SampleCount getNumSamples() const;
 
-    virtual const vk::Image&                            getImage() const     = 0;
-    virtual const std::shared_ptr<vk::raii::ImageView>& getImageView() const = 0;
+    virtual const vk::Image&           getImage() const     = 0;
+    virtual const vk::raii::ImageView& getImageView() const = 0;
 
 protected:
     AttachmentUsage mUsage  = AttachmentUsage::eColor;

@@ -4,7 +4,6 @@
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 
-#include <limits>
 #include <ranges>
 #include <vector>
 
@@ -34,7 +33,9 @@ FrameObjects::retainUntilPresented(Vulkan::Swapchain::Presentation presentation)
 {
     VOG_ASSERT_MSG(!mPresentation, "The previous presentation of this slot was not dropped.");
 
-    mPresentation = std::move(presentation);
+    // emplace destroys the old presentation, waiting for its fence, before it builds the new one;
+    // an assignment would replace the generation first.
+    mPresentation.emplace(std::move(presentation));
 }
 
 Vulkan::CommandBufferPoolPtr
@@ -51,15 +52,8 @@ FrameObjects::onFrameStart()
     resetPools();
 
     // The presentation engine must be done with the render-finished semaphore before the next
-    // submit signals it again, so wait for the present fence here, not in a destructor.
-    if (mPresentation)
-    {
-        [[maybe_unused]] const vk::Result waitResult =
-            mPresentation->fence->wait(std::numeric_limits<std::uint64_t>::max());
-        VOG_ASSERT(waitResult == vk::Result::eSuccess);
-
-        mPresentation.reset();
-    }
+    // submit signals it again. Dropping the presentation waits for its present fence.
+    mPresentation.reset();
 }
 
 void

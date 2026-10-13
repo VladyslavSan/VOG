@@ -3,6 +3,7 @@
 #include <VOG/Common/NoCopyable.hpp>
 #include <VOG/Common/SurfaceHandle.hpp>
 #include <VOG/Engine/Renderer/Renderable.hpp>
+#include <VOG/Graphics/Config/VulkanConfig.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -54,6 +55,12 @@ public:
         std::uint8_t framesInFlight = 1u;
 
         std::filesystem::path shaderSourcePath;
+
+        /**
+         * Size of the window in pixels at startup. It sizes the swapchain where the surface
+         * leaves that to the application (Wayland, headless): required there, 0x0 throws.
+         */
+        vk::Extent2D extent;
     };
 
     enum class RenderJobState : uint8_t
@@ -102,6 +109,9 @@ protected:
     std::atomic<RenderJobState> mCurrentState;
 
     std::uint8_t mMaxFramesInFlight;
+
+    /** Passed to the swapchain at creation and at every recreation. */
+    vk::Extent2D mExtent;
 
     std::shared_ptr<Graphics::Vulkan::Instance>          mVulkanInstance;
     std::shared_ptr<Graphics::Vulkan::Device>            mVulkanDevice;

@@ -1,5 +1,6 @@
 #include "VOG/Graphics/Vulkan/Attachment/AcquiredSwapchainImage.hpp"
 
+#include <VOG/Graphics/Vulkan/Attachment/SwapchainGeneration.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/InDestructor.hpp>
 
@@ -7,13 +8,16 @@ namespace VOG::Graphics::Vulkan
 {
 AcquiredSwapchainImage::AcquiredSwapchainImage(SwapchainGenerationPtr generation,
                                                std::uint32_t          imageIndex,
-                                               vk::Format             format)
-    : AttachmentInterface{AttachmentUsage::eColor, format, generation->extent, SampleCount::e1}
+                                               SemaphorePtr           imageAvailable)
+    : AttachmentInterface{AttachmentUsage::eColor,
+                          generation->format,
+                          vk::Extent3D{.width  = generation->extent.width,
+                                       .height = generation->extent.height,
+                                       .depth  = 1u},
+                          SampleCount::e1}
     , mGeneration{std::move(generation)}
     , mImageIndex{imageIndex}
-    , mImage{mGeneration->images.at(imageIndex).image}
-    // Aliasing: the view is owned by the generation, and this pointer keeps the generation alive.
-    , mImageView{mGeneration, &mGeneration->images.at(imageIndex).imageView}
+    , mImageAvailable{std::move(imageAvailable)}
 {
 }
 
@@ -43,16 +47,21 @@ AcquiredSwapchainImage::markPresented()
     mPresented = true;
 }
 
+const SemaphorePtr&
+AcquiredSwapchainImage::imageAvailableSemaphore() const
+{
+    return mImageAvailable;
+}
+
 const vk::Image&
 AcquiredSwapchainImage::getImage() const
 {
-    return mImage;
+    return mGeneration->images.at(mImageIndex).image;
 }
 
-const std::shared_ptr<vk::raii::ImageView>&
+const vk::raii::ImageView&
 AcquiredSwapchainImage::getImageView() const
 {
-    return mImageView;
+    return mGeneration->images.at(mImageIndex).view;
 }
-
 } // namespace VOG::Graphics::Vulkan

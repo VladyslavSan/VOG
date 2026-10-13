@@ -1,14 +1,13 @@
 #pragma once
 
-#include <VOG/Common/JSONContainer.hpp>
 #include <VOG/Common/SurfaceHandle.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/AcquiredSwapchainImage.hpp>
-#include <VOG/Graphics/Vulkan/Attachment/SwapchainGeneration.hpp>
 #include <VOG/Graphics/Vulkan/FencePool.hpp>
 #include <VOG/Graphics/Vulkan/Semaphore.hpp>
 
+#include <chrono>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -16,6 +15,7 @@
 namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Device);
+VOG_DECLARE_PTR(SwapchainGeneration);
 
 class Swapchain final
 {
@@ -52,36 +52,54 @@ public:
         Common::SurfaceHandle surface;
 
         /**
-         * Size to use when the surface lets the application choose it (the surface reports
-         * currentExtent as 0xFFFFFFFF, as a headless surface does). Ignored otherwise.
+         * Size in pixels, used only where the surface leaves the image size to the application
+         * (it reports currentExtent as 0xFFFFFFFF, as Wayland and a headless surface do), and
+         * required there: construction throws if it is 0x0. Ignored elsewhere.
          */
-        vk::Extent2D fallbackExtent = {.width = 0u, .height = 0u};
+        vk::Extent2D extent = {.width = 0u, .height = 0u};
     };
 
     struct ImageAcquireResult
     {
         AcquireStatus status;
-        /** Valid when eReady. */
+        /** Valid when eReady. Its imageAvailableSemaphore() is what the submit waits. */
         AcquiredSwapchainImagePtr acquired;
-        /** Valid when eReady; submit waits this. */
-        SemaphorePtr imageAvailableSemaphore;
     };
 
     /**
      * What one vkQueuePresentKHR still uses after it returned. Hold it until the presentation is
-     * over: dropping it waits for the present fence, and only then lets go of the swapchain
+     * over. Dropping it waits for the present fence, and only then lets go of the swapchain
      * generation and the semaphore the presentation waited.
      *
-     * Members are destroyed in reverse order, so the fence goes first.
+     * Move-only: a copy would be a second owner that waits the fence again.
      *
      * @note Render thread only. Dropping it returns the fence to its pool.
      */
-    struct Presentation
+    class Presentation
     {
-        SwapchainGenerationPtr generation;
-        SemaphorePtr           waitSemaphore;
+        friend class Swapchain;
+
+        Presentation(SwapchainGenerationPtr    generation,
+                     SemaphorePtr              waitSemaphore,
+                     FencePool::FenceHandlePtr fence);
+
+    public:
+        Presentation(Presentation&&) noexcept = default;
+
+        /** Deleted: assigning would release the old generation before the old fence waited. */
+        Presentation& operator=(Presentation&&) = delete;
+
+        Presentation(const Presentation&)            = delete;
+        Presentation& operator=(const Presentation&) = delete;
+
+        /** Waits for the present fence (a moved-from Presentation has none), then lets go. */
+        ~Presentation() noexcept;
+
+    private:
+        SwapchainGenerationPtr mGeneration;
+        SemaphorePtr           mWaitSemaphore;
         /** Signals once the presentation engine is done with the semaphore and the swapchain. */
-        std::shared_ptr<FencePool::FenceHandle> fence;
+        FencePool::FenceHandlePtr mFence;
     };
 
     struct PresentResult
@@ -98,14 +116,18 @@ private:
     Swapchain(DevicePtr device, const SwapchainParameters& parameters);
 
     /**
-     * Creates a swapchain, its image views and per-image sync data for the given extent.
+     * Creates a swapchain, its image views and acquire semaphores for the given extent.
      *
      * @param oldSwapchain  Previous swapchain handle for driver resource reuse (may be null).
      */
     SwapchainGenerationPtr makeGeneration(vk::SwapchainKHR oldSwapchain, vk::Extent2D extent);
 
 public:
-    ImageAcquireResult acquireNextImage();
+    /**
+     * @param timeout  How long to wait for a free image; negative values count as zero. A timeout
+     *                 gives eSkip, so a hidden window does not block the caller for good.
+     */
+    ImageAcquireResult acquireNextImage(std::chrono::nanoseconds timeout);
 
     /**
      * Presents @p acquired, which releases its acquisition. The presentation waits
@@ -117,25 +139,29 @@ public:
      */
     PresentResult present(const AcquiredSwapchainImagePtr& acquired,
                           SemaphorePtr                     waitSemaphore,
-                          const FencePoolPtr&              fencePool);
+                          FencePool&                       fencePool);
 
     /**
      * Recreates the swapchain to match the current surface size. The old swapchain is not
      * waited for: it dies once the last presentation and the last command buffer that use it
      * are done (see SwapchainGeneration).
      *
-     * @return true if the swapchain was rebuilt; false if skipped because the surface is currently
-     *         zero-sized (e.g. the window is minimized).
+     * @param requested  Size in pixels, used only where the surface leaves the image size to the
+     *                application, like SwapchainParameters::extent.
+     *
+     * @return true if the swapchain was rebuilt; false if skipped because the size is zero, from
+     *         the surface or from @p requested (e.g. the window is minimized). It never throws for
+     *         that, because the caller backs off on false.
      */
-    bool recreate();
+    bool recreate(vk::Extent2D requested);
 
-    /** Number of images currently owned by the swapchain (after the last build). */
+    /** Number of images in the current swapchain. */
     std::size_t getImageCount() const;
 
     /** Format of the swapchain images; pipelines that render into them must be built against it. */
     vk::Format getFormat() const;
 
-protected:
+private:
     DevicePtr                             mDevice;
     std::shared_ptr<vk::raii::SurfaceKHR> mSurface;
 

@@ -18,7 +18,7 @@ toAttachmentInfo(const CommandBufferRecorder::ColorAttachment& color)
     VOG_ASSERT_MSG(color.attachment, "Color attachment must not be null.");
 
     return {
-        .imageView   = **color.attachment->getImageView(),
+        .imageView   = *color.attachment->getImageView(),
         .imageLayout = color.layout,
         .loadOp      = color.loadOp,
         .storeOp     = color.storeOp,
@@ -35,7 +35,7 @@ toAttachmentInfo(const CommandBufferRecorder::DepthAttachment& depth)
                    "Only depth-only formats are supported: no stencil attachment is set.");
 
     return {
-        .imageView   = **depth.attachment->getImageView(),
+        .imageView   = *depth.attachment->getImageView(),
         .imageLayout = depth.layout,
         .loadOp      = depth.loadOp,
         .storeOp     = depth.storeOp,
