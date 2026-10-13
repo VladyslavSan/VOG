@@ -1,6 +1,5 @@
 #pragma once
 
-#include <VOG/Common/NoCopyable.hpp>
 #include <VOG/Common/SurfaceHandle.hpp>
 #include <VOG/Engine/Renderer/Renderable.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
@@ -8,7 +7,10 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <deque>
+#include <exception>
 #include <filesystem>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -36,9 +38,17 @@ class Swapchain;
 
 namespace VOG::Engine
 {
-class Renderer
-    : public std::enable_shared_from_this<Renderer>
-    , public VOG::Common::NoCopyable
+/**
+ * Owns the Vulkan objects of one window and the thread that renders into it.
+ *
+ * The render thread owns nothing: it captures `this`, is the last member and is joined before
+ * anything it uses is destroyed. Nothing reachable from it holds a pointer to the Renderer, so
+ * `~Renderer` cannot run on the render thread. Calling stop() or getState() from the render
+ * thread (a Renderable that captured `Renderer&`) is not supported: stop() would join itself and
+ * terminate, and getState() would wait for the lock that stop() holds across the join, a
+ * deadlock.
+ */
+class Renderer final
 {
 public:
     static constexpr std::uint8_t kMaxFramesInFlight = 3;
@@ -63,55 +73,70 @@ public:
         vk::Extent2D extent;
     };
 
-    enum class RenderJobState : uint8_t
+    enum class State : std::uint8_t
     {
-        eInactive = 0,
-        eActive
+        /** No render thread: not started, or stopped. */
+        eStopped,
+        eRunning,
+        /** The render thread ended with an exception; stop() returns it. */
+        eFailed
     };
-
-    virtual ~Renderer();
 
     Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& config);
 
-    Renderer(const Renderer&)  = delete;
-    Renderer(Renderer&& other) = delete;
+    /** Stops the render thread. A failure nobody collected with stop() is logged. */
+    ~Renderer();
 
-    void render();
+    Renderer(const Renderer&)            = delete;
+    Renderer& operator=(const Renderer&) = delete;
 
     /**
-     * Registers @p renderable; its prepare() runs on the render thread before its first draw.
-     *
-     * @note Do not call from inside Renderable::prepare() or Renderable::collect(): the renderer
-     * holds the registration lock while it runs them, so the call deadlocks.
+     * Queues @p renderable; its prepare() runs on the render thread before its first collect().
+     * Any thread, including a Renderable callback: no callback runs under a lock, and a
+     * renderable queued while another one prepares is prepared in the same frame.
      */
     void addRenderable(std::shared_ptr<Renderable> renderable);
 
-    RenderJobState getRenderJobState() const;
+    /**
+     * New window size in pixels. Any thread; the render thread recreates the swapchain at that
+     * size before its next frame. Surfaces that report their own size (macOS, Windows, X11) ignore
+     * it; Wayland and headless surfaces take it as given.
+     */
+    void resize(vk::Extent2D extent);
 
-    bool requestRenderChangeState(RenderJobState newState);
+    /** Starts the render thread. @throws std::logic_error unless getState() is eStopped. */
+    void start();
 
-protected:
-    struct RenderableEntry
-    {
-        std::shared_ptr<Renderable> renderable;
-        bool                        prepared = false;
-    };
+    /**
+     * Requests stop, joins the render thread and returns its failure, or null if it ended
+     * normally or was not running. The Renderer can be started again afterwards. The stop is
+     * observed within one acquire timeout and one frame.
+     */
+    [[nodiscard]] std::exception_ptr stop() noexcept;
 
-    /** Runs prepare() on renderables registered since the last call. */
+    State getState() const;
+
+private:
+    /** min(framesInFlight, imageCount); logs when it clamps. */
+    static std::uint8_t frameSlotCount(std::uint8_t framesInFlight, std::size_t imageCount);
+
+    /** Locks mPendingMutex only. */
+    std::shared_ptr<Renderable> takePendingRenderable();
+
+    /** Render thread. Drains the pending queue one renderable at a time; no lock is held while a
+     *  renderable prepares, and one whose prepare() throws is dropped. */
     void prepareRenderables();
 
-    /** Refills mRenderItems with the draws of this frame. */
+    /** Render thread. Refills mRenderItems and checks every item. */
     void collectRenderItems(const FrameContext& frameContext);
 
-    /** Serializes state transitions and render thread start/stop. */
-    std::mutex                  mStateMutex;
-    std::jthread                mRenderThread;
-    std::atomic<RenderJobState> mCurrentState;
+    /** Render thread. Rebuilds the swapchain for @p requested; false if it is zero-sized. */
+    bool applyExtent(vk::Extent2D requested);
 
-    std::uint8_t mMaxFramesInFlight;
+    /** Render thread. One frame; an exception ends the thread. */
+    void renderFrame();
 
-    /** Passed to the swapchain at creation and at every recreation. */
-    vk::Extent2D mExtent;
+    const std::uint8_t mFramesInFlight;
 
     std::shared_ptr<Graphics::Vulkan::Instance>          mVulkanInstance;
     std::shared_ptr<Graphics::Vulkan::Device>            mVulkanDevice;
@@ -119,15 +144,35 @@ protected:
     std::shared_ptr<Graphics::Vulkan::FencePool>         mFencePool;
     std::shared_ptr<Graphics::ShaderProgramCache>        mShaderProgramCache;
     std::unique_ptr<Graphics::Vulkan::Swapchain>         mSwapchain;
-    std::shared_ptr<Graphics::Frame::FrameObjectManager> mFrameObjectManager;
+    std::unique_ptr<Graphics::Frame::FrameObjectManager> mFrameObjectManager;
 
-    /** Guards mRenderables against registration from other threads. */
-    std::mutex                   mRenderablesMutex;
-    std::vector<RenderableEntry> mRenderables;
+    std::chrono::steady_clock::time_point mStartTime;
+
+    /** Written by resize() on any thread; vk::Extent2D is trivially copyable, so this is lock-free.
+     */
+    std::atomic<vk::Extent2D> mRequestedExtent;
+
+    /** Render thread only: the last requested extent that was applied. Surfaces that report their
+     *  own size ignore the request, so this is not necessarily the size of the images. */
+    vk::Extent2D mAppliedExtent;
+
+    /** Written by any thread, drained by the render thread. No callback runs under it. */
+    std::mutex                              mPendingMutex;
+    std::deque<std::shared_ptr<Renderable>> mPending;
+
+    /** Render thread only; everything in it has been prepared. */
+    std::vector<std::shared_ptr<Renderable>> mRenderables;
 
     /** Render-thread scratch space, kept to reuse its capacity across frames. */
     std::vector<RenderItem> mRenderItems;
 
-    std::chrono::steady_clock::time_point mStartTime;
+    /** Serializes start, stop and getState. */
+    mutable std::mutex mStateMutex;
+
+    /** Fulfilled by the render thread when it exits; get() rethrows its failure. */
+    std::future<void> mExit;
+
+    /** Last member: joined before anything above is destroyed. */
+    std::jthread mRenderThread;
 };
 } // namespace VOG::Engine

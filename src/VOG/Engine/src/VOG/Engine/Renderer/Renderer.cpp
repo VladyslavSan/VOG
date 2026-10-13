@@ -21,8 +21,11 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <format>
 #include <span>
+#include <stdexcept>
 #include <thread>
+#include <typeinfo>
 #include <utility>
 
 namespace VOG::Engine
@@ -30,26 +33,14 @@ namespace VOG::Engine
 namespace
 {
 constexpr std::chrono::milliseconds gZeroExtentBackoff{16};
-/** Long enough that a hidden window does not spin, short enough that quitting stays responsive. */
+/** Upper bound on one wait for a free image, and so on stop latency (plus one frame). */
 constexpr std::chrono::milliseconds gAcquireTimeout{100};
+constexpr std::size_t               gThreadId   = 0u;
 constexpr std::array                gClearColor = {0.0f, 0.0f, 0.0f, 1.0f};
 } // namespace
 
-Renderer::~Renderer()
-{
-    try
-    {
-        requestRenderChangeState(RenderJobState::eInactive);
-    }
-    catch (...) // NOLINT(bugprone-empty-catch)
-    {
-    }
-}
-
 Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& config)
-    : mCurrentState{RenderJobState::eInactive}
-    , mMaxFramesInFlight{std::clamp(config.framesInFlight, std::uint8_t{1}, kMaxFramesInFlight)}
-    , mExtent{config.extent}
+    : mFramesInFlight{std::clamp(config.framesInFlight, std::uint8_t{1}, kMaxFramesInFlight)}
     , mVulkanInstance{Graphics::Vulkan::Instance::create({
           .appName    = config.appName,
           .engineName = config.engineName,
@@ -62,26 +53,51 @@ Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& con
     , mShaderProgramCache{std::make_shared<Graphics::ShaderProgramCache>(mVulkanDevice,
                                                                          config.shaderSourcePath)}
     , mSwapchain{mVulkanDevice->createSwapchain(Graphics::Vulkan::Swapchain::SwapchainParameters{
-          .framesInFlight = mMaxFramesInFlight,
+          .framesInFlight = mFramesInFlight,
           .surface        = surfaceHandle,
-          .extent         = mExtent,
+          .extent         = config.extent,
       })}
-    , mFrameObjectManager{std::make_shared<Graphics::Frame::FrameObjectManager>(
-          mVulkanDevice,
-          std::min<std::size_t>(mMaxFramesInFlight, mSwapchain->getImageCount()),
-          1u)}
+    , mFrameObjectManager{std::make_unique<Graphics::Frame::FrameObjectManager>(
+          mVulkanDevice, frameSlotCount(mFramesInFlight, mSwapchain->getImageCount()), 1u)}
     , mStartTime{std::chrono::steady_clock::now()}
+    , mRequestedExtent{config.extent}
+    , mAppliedExtent{config.extent}
 {
-    const std::size_t imageCount = mSwapchain->getImageCount();
-    if (mMaxFramesInFlight > imageCount)
+}
+
+Renderer::~Renderer()
+{
+    // stop() is noexcept and joins the thread; the members below are destroyed after it.
+    if (const std::exception_ptr failure = stop())
+    {
+        try
+        {
+            std::rethrow_exception(failure);
+        }
+        catch (const std::exception& exception)
+        {
+            spdlog::error("The render thread failed and nobody collected it: {}", exception.what());
+        }
+        catch (...)
+        {
+            spdlog::error("The render thread failed with an unknown exception.");
+        }
+    }
+}
+
+std::uint8_t
+Renderer::frameSlotCount(std::uint8_t framesInFlight, std::size_t imageCount)
+{
+    if (framesInFlight > imageCount)
     {
         spdlog::warn(
             "frames_in_flight ({}) exceeds swapchain image count ({}), clamping frame slots to {}",
-            mMaxFramesInFlight,
+            framesInFlight,
             imageCount,
             imageCount);
-        mMaxFramesInFlight = static_cast<std::uint8_t>(imageCount);
     }
+
+    return static_cast<std::uint8_t>(std::min<std::size_t>(framesInFlight, imageCount));
 }
 
 void
@@ -92,24 +108,51 @@ Renderer::addRenderable(std::shared_ptr<Renderable> renderable)
         return;
     }
 
-    const std::scoped_lock lock{mRenderablesMutex};
-    mRenderables.push_back({.renderable = std::move(renderable)});
+    const std::scoped_lock lock{mPendingMutex};
+    mPending.push_back(std::move(renderable));
+}
+
+void
+Renderer::resize(vk::Extent2D extent)
+{
+    mRequestedExtent.store(extent);
+}
+
+std::shared_ptr<Renderable>
+Renderer::takePendingRenderable()
+{
+    const std::scoped_lock lock{mPendingMutex};
+    if (mPending.empty())
+    {
+        return nullptr;
+    }
+
+    std::shared_ptr<Renderable> renderable = std::move(mPending.front());
+    mPending.pop_front();
+
+    return renderable;
 }
 
 void
 Renderer::prepareRenderables()
 {
-    const std::scoped_lock lock{mRenderablesMutex};
-
-    ResourceContext resourceContext{mVulkanDevice, mShaderProgramCache, mSwapchain->getFormat()};
-
-    for (RenderableEntry& entry : mRenderables)
+    std::shared_ptr<Renderable> renderable = takePendingRenderable();
+    if (!renderable)
     {
-        if (!entry.prepared)
-        {
-            entry.renderable->prepare(resourceContext);
-            entry.prepared = true;
-        }
+        return;
+    }
+
+    const ResourceContext resourceContext{
+        mVulkanDevice, mShaderProgramCache, mSwapchain->getFormat()};
+
+    // One at a time and without a lock: prepare() may call addRenderable(), and the child is
+    // taken by this same loop. A prepare() that throws drops only its own renderable; the rest
+    // stay pending.
+    while (renderable)
+    {
+        renderable->prepare(resourceContext);
+        mRenderables.push_back(std::move(renderable));
+        renderable = takePendingRenderable();
     }
 }
 
@@ -118,57 +161,86 @@ Renderer::collectRenderItems(const FrameContext& frameContext)
 {
     mRenderItems.clear();
 
-    const std::scoped_lock lock{mRenderablesMutex};
-    for (const RenderableEntry& entry : mRenderables)
+    for (const std::shared_ptr<Renderable>& renderable : mRenderables)
     {
-        // addRenderable() from another thread can land between prepareRenderables() and here.
-        if (!entry.prepared)
-        {
-            continue;
-        }
+        Renderable&       current = *renderable;
+        const std::size_t before  = mRenderItems.size();
+        current.collect(frameContext, mRenderItems);
 
-        entry.renderable->collect(frameContext, mRenderItems);
+        for (std::size_t i = before; i < mRenderItems.size(); ++i)
+        {
+            const RenderItem& item = mRenderItems[i];
+            if (!item.pipeline || !item.vertexBuffer || item.vertexCount == 0u)
+            {
+                throw std::invalid_argument{
+                    std::format("{} produced a RenderItem without a pipeline, a vertex buffer or "
+                                "a vertex count.",
+                                typeid(current).name())};
+            }
+        }
     }
 }
 
+bool
+Renderer::applyExtent(vk::Extent2D requested)
+{
+    if (!mSwapchain->recreate(requested))
+    {
+        return false;
+    }
+
+    mAppliedExtent = requested;
+
+    return true;
+}
+
 void
-Renderer::render()
+Renderer::renderFrame()
 {
     using namespace VOG::Graphics::Vulkan;
-    constexpr std::size_t threadId = 0u;
 
     prepareRenderables();
 
-    const auto acquireResult = mSwapchain->acquireNextImage(gAcquireTimeout);
-    if (acquireResult.status == Swapchain::AcquireStatus::eOutOfDate)
+    const vk::Extent2D requested = mRequestedExtent.load();
+    if (requested != mAppliedExtent && !applyExtent(requested))
     {
-        if (!mSwapchain->recreate(mExtent))
-        {
-            // Surface is zero-sized (minimized); back off instead of spinning.
-            std::this_thread::sleep_for(gZeroExtentBackoff);
-        }
-        return;
-    }
-    if (acquireResult.status == Swapchain::AcquireStatus::eSkip)
-    {
+        // Zero-sized (minimized); back off instead of spinning.
+        std::this_thread::sleep_for(gZeroExtentBackoff);
         return;
     }
 
-    const auto& acquired = acquireResult.acquired;
-    VOG_ASSERT_MSG(acquired, "eReady acquire must provide AcquiredSwapchainImage.");
-
-    const auto extent = acquired->getExtent2D();
-
+    // Collect and check before acquiring: a renderable that throws, or hands back a malformed
+    // item, must do so while no image is acquired. The frame's extent is the size of every image
+    // acquired from here on, because an out-of-date acquire drops the frame.
+    const vk::Extent2D extent = mSwapchain->getExtent();
     collectRenderItems({
         .timeSeconds =
             std::chrono::duration<double>{std::chrono::steady_clock::now() - mStartTime}.count(),
         .extent = extent,
     });
 
+    const auto acquireResult = mSwapchain->acquireNextImage(gAcquireTimeout);
+    if (acquireResult.status == Swapchain::AcquireStatus::eOutOfDate)
+    {
+        if (!applyExtent(mRequestedExtent.load()))
+        {
+            std::this_thread::sleep_for(gZeroExtentBackoff);
+        }
+        return;
+    }
+    if (acquireResult.status == Swapchain::AcquireStatus::eSkip)
+    {
+        // The acquire waited up to gAcquireTimeout, so this does not spin.
+        return;
+    }
+
+    const auto& acquired = acquireResult.acquired;
+    VOG_ASSERT_MSG(acquired, "eReady acquire must provide AcquiredSwapchainImage.");
+
     // Advance the frame slot only when we will actually submit — skip/out-of-date must not
     // burn a fence-keyed release slot.
     auto frame = mFrameObjectManager->acquireNextFrame();
-    auto pool  = frame->getCommandBufferPoolForThread(threadId);
+    auto pool  = frame->getCommandBufferPoolForThread(gThreadId);
 
     auto recorder = pool->record();
 
@@ -217,11 +289,6 @@ Renderer::render()
 
             for (const RenderItem& item : mRenderItems)
             {
-                if (!item.pipeline || !item.vertexBuffer || item.vertexCount == 0u)
-                {
-                    continue;
-                }
-
                 pass.bindPipeline(item.pipeline);
                 pass.bindVertexBuffers(0u, {{.buffer = item.vertexBuffer, .offset = 0u}});
 
@@ -271,77 +338,78 @@ Renderer::render()
         mSwapchain->present(acquired, frame->getRenderFinishedSemaphore(), *mFencePool);
     frame->retainUntilPresented(std::move(presented.presentation));
 
-    if (presented.status == Swapchain::PresentStatus::eOutOfDate)
+    if (presented.status == Swapchain::PresentStatus::eOutOfDate &&
+        !applyExtent(mRequestedExtent.load()))
     {
-        if (!mSwapchain->recreate(mExtent))
-        {
-            std::this_thread::sleep_for(gZeroExtentBackoff);
-        }
+        std::this_thread::sleep_for(gZeroExtentBackoff);
     }
 }
 
-Renderer::RenderJobState
-Renderer::getRenderJobState() const
-{
-    return mCurrentState.load();
-}
-
-bool
-Renderer::requestRenderChangeState(RenderJobState newState)
+void
+Renderer::start()
 {
     const std::scoped_lock lock{mStateMutex};
-
-    if (newState == mCurrentState.load())
+    if (mRenderThread.joinable())
     {
-        return false;
+        throw std::logic_error{"Renderer::start() needs a stopped renderer."};
     }
 
-    switch (newState)
-    {
-    case RenderJobState::eActive:
-    {
-        mRenderThread = std::jthread{
-            [renderer = weak_from_this()](
-                std::stop_token stopToken) // NOLINT(performance-unnecessary-value-param)
-            {
-                try
-                {
-                    while (!stopToken.stop_requested())
-                    {
-                        auto locked = renderer.lock();
-                        if (!locked)
-                        {
-                            break;
-                        }
-                        locked->render();
-                    }
-                }
-                catch (const std::exception& exception)
-                {
-                    spdlog::error("Render thread stopped due to exception: {}", exception.what());
-                }
-                catch (...)
-                {
-                    spdlog::error("Render thread stopped due to an unknown exception.");
-                }
+    std::promise<void> exit;
+    mExit = exit.get_future();
+    mRenderThread =
+        std::jthread{[this, exit = std::move(exit)](const std::stop_token& stopToken) mutable
+                     {
+                         try
+                         {
+                             while (!stopToken.stop_requested())
+                             {
+                                 renderFrame();
+                             }
+                             exit.set_value();
+                         }
+                         catch (...)
+                         {
+                             exit.set_exception(std::current_exception());
+                         }
+                     }};
+}
 
-                if (auto locked = renderer.lock())
-                {
-                    locked->mCurrentState.store(RenderJobState::eInactive);
-                }
-            }};
-        break;
-    }
-    case RenderJobState::eInactive:
+std::exception_ptr
+Renderer::stop() noexcept
+{
+    const std::scoped_lock lock{mStateMutex};
+    if (!mRenderThread.joinable())
     {
-        // Move-assigning an empty thread requests stop on the old one and joins it.
-        mRenderThread = std::jthread{};
-        break;
-    }
+        return nullptr;
     }
 
-    mCurrentState.store(newState);
+    mRenderThread.request_stop();
+    mRenderThread.join();
 
-    return true;
+    try
+    {
+        mExit.get();
+    }
+    catch (...)
+    {
+        return std::current_exception();
+    }
+
+    return nullptr;
+}
+
+Renderer::State
+Renderer::getState() const
+{
+    const std::scoped_lock lock{mStateMutex};
+    if (!mRenderThread.joinable())
+    {
+        return State::eStopped;
+    }
+
+    // A thread only ends normally after stop() asked for it, and stop() holds the lock until the
+    // join is done, so a ready future seen here is a failure.
+    return mExit.wait_for(std::chrono::seconds{0}) == std::future_status::ready ? State::eFailed
+                                                                                : State::eRunning;
 }
 } // namespace VOG::Engine

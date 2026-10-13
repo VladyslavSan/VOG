@@ -39,5 +39,4 @@ if(APPLE)
     set_property(SOURCE src/VOG/Application/SDL.cpp PROPERTY LANGUAGE OBJCXX)
 endif()
 
-
-
+add_subdirectory(Test)

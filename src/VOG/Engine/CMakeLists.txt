@@ -44,3 +44,5 @@ target_link_libraries(Engine
 install(TARGETS Engine
         FILE_SET public_headers
 )
+
+add_subdirectory(Test)

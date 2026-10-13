@@ -158,6 +158,9 @@ public:
     /** Number of images in the current swapchain. */
     std::size_t getImageCount() const;
 
+    /** Size of the images the next acquire hands out: the extent of the current swapchain. */
+    vk::Extent2D getExtent() const;
+
     /** Format of the swapchain images; pipelines that render into them must be built against it. */
     vk::Format getFormat() const;
 

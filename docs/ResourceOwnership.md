@@ -156,6 +156,9 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    `Swapchain::present`, dropping a `Swapchain::Presentation` (it holds a
    `FenceHandle`), `AcquiredSwapchainImage` (its destructor releases an
    unpresented image on the swapchain) and `FrameObjects::retainUntilPresented`.
+   The `Renderer` makes this hold by ownership: it owns the frame slots, the
+   fence pool and the swapchain, only its render thread uses them while it
+   runs, and `~Renderer` joins that thread before it destroys them.
 
    All destructors are `noexcept`. A Vulkan call that can fail in a destructor goes through
    `inDestructor` (`Graphics/Vulkan/InDestructor.hpp`), which logs a
@@ -201,7 +204,8 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
   presenting it releases the image but leaves its acquire semaphore signaled or
   pending. The next acquire's swap trick can then get a signaled spare, and the
   generation destroys a semaphore with a signal pending. Only an exception
-  between acquire and present reaches it; see `SwapchainSync.md`.
+  between acquire and present (a Vulkan error, or out of memory) reaches it; see
+  `SwapchainSync.md`.
 
 - **Descriptor-set-referenced resources** (future textures/UBOs): tracking must
   be extended to descriptor set binding when those appear.

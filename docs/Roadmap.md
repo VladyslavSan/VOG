@@ -79,6 +79,18 @@ step builds on the previous. Completed work is kept for context.
   three shutdown validation errors (`vkDestroySemaphore-05149` x2,
   `vkDestroySwapchainKHR-01282`) are gone. See `SwapchainSync.md`.
 
+- **Renderer lifecycle**: `Renderer` is a `final` leaf in a `unique_ptr`. The render thread
+  captures `this`, owns nothing and is the last member, so `~Renderer` joins it before any GPU
+  state dies and cannot run on it. `start()`, `stop()` (returns the thread's failure as an
+  `exception_ptr`) and `getState()` replace `requestRenderChangeState`; `Application::run()`
+  polls the state, rethrows a render-thread failure on the main thread and can be called again.
+  Renderables are queued in a pending list that no callback runs under, so `prepare()` and
+  `collect()` may call `addRenderable()`; a malformed `RenderItem` fails the render thread. A frame
+  collects its draws before it acquires an image. `Renderer::resize()` (fed by
+  `SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED`) and one `applyExtent` path size the swapchain, so Wayland
+  and headless surfaces resize; the acquire waits 100 ms, so a hidden window neither spins nor
+  blocks quitting. Engine and Application have unit tests. See `SwapchainSync.md`.
+
 ## Later milestones (in rough order)
 
 1. **Render graph**: declared passes with reads/writes; derives barriers,

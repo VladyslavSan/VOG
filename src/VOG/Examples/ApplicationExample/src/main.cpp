@@ -2,6 +2,7 @@
 
 #include <boost/program_options.hpp>
 
+#include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -100,6 +101,7 @@ main(int argc, const char** argv) // NOLINT(bugprone-exception-escape)
     catch (const std::exception& ex)
     {
         printException(std::cerr, ex);
+        return EXIT_FAILURE;
     }
 
     return 0;

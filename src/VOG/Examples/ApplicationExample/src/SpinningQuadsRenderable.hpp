@@ -12,7 +12,7 @@
 class SpinningQuadsRenderable final : public VOG::Engine::Renderable
 {
 public:
-    void prepare(VOG::Engine::ResourceContext& resourceContext) override;
+    void prepare(const VOG::Engine::ResourceContext& resourceContext) override;
 
     void collect(const VOG::Engine::FrameContext&      frameContext,
                  std::vector<VOG::Engine::RenderItem>& renderItems) override;

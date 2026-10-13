@@ -209,6 +209,12 @@ Swapchain::getImageCount() const
     return mGeneration->images.size();
 }
 
+vk::Extent2D
+Swapchain::getExtent() const
+{
+    return mGeneration->extent;
+}
+
 vk::Format
 Swapchain::getFormat() const
 {

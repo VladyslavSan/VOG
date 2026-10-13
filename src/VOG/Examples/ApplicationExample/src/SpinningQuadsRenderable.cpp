@@ -56,7 +56,7 @@ constexpr float gMaxRotationDegrees = 90.0f;
 } // namespace
 
 void
-SpinningQuadsRenderable::prepare(VOG::Engine::ResourceContext& resourceContext)
+SpinningQuadsRenderable::prepare(const VOG::Engine::ResourceContext& resourceContext)
 {
     const auto& device = resourceContext.device;
 

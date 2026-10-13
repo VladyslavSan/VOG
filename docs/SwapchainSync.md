@@ -153,13 +153,28 @@ releases the acquisition itself, also when the present reports `eErrorOutOfDateK
 throws `SurfaceLostKHRError` (the queue operations still count as enqueued, the semaphore
 wait still executes and the fence still signals; `present()` settles the fence and the
 acquisition before it rethrows). Any other present error enqueues nothing, so the image
-reaches the destructor, as does an exception between acquire and present. The release is
+reaches the destructor, as does a Vulkan error between acquire and present. The release is
 valid once the image's uses completed, which the command-buffer retention guarantees.
 
 Known gap: an image released unpresented leaves its acquire semaphore signaled or pending.
 The next acquire's swap trick can then hand a signaled semaphore to `vkAcquireNextImageKHR`
 (`VUID-vkAcquireNextImageKHR-semaphore-01286`), and the generation destroys a semaphore
-with a signal pending (MoltenVK can crash there). Only the exception path reaches it.
+with a signal pending (MoltenVK can crash there). Only an exception between acquire and
+present reaches it (a Vulkan error, or out of memory in a retain, a submit or a fence take):
+the renderer collects and checks the frame's draws before it acquires, so a renderable that
+throws cannot.
+
+## Resizing
+
+A surface that reports `currentExtent` (macOS, Windows, X11) goes out of date or suboptimal when
+its window changes size. Wayland and headless surfaces do not report a window resize, and leave the size to the
+application. Both are covered by one path on the render thread. `Application` turns
+`SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED` into `Renderer::resize(extent)`, which stores the size in an
+atomic. Once per frame the render thread reads it; if it differs from the last size applied, or an
+acquire or a present reports out of date, `Renderer::applyExtent` calls
+`Swapchain::recreate(extent)`, the only place that does, and remembers the size. Surfaces that
+report their own size ignore the requested one. A zero size, from either source, makes `recreate`
+return false: the renderer backs off and tries again next frame.
 
 The extension is required: device selection rejects devices without
 `VK_EXT_swapchain_maintenance1` (the EXT name, because the KHR promotion is not exposed
