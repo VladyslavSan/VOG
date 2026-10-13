@@ -28,7 +28,6 @@ target_sources(VOG.Graphics
         BASE_DIRS
             include/
         FILES
-            include/VOG/Graphics/Config/VmaConfig.hpp
             include/VOG/Graphics/Config/VulkanConfig.hpp
             include/VOG/Graphics/Frame/FrameObjectManager.hpp
             include/VOG/Graphics/Frame/FrameObjects.hpp
@@ -92,16 +91,30 @@ target_sources(VOG.Graphics
         src/VOG/Graphics/Vulkan/Shader.cpp
         src/VOG/Graphics/Vulkan/ShaderProgram.cpp
         src/VOG/Graphics/Vulkan/TimelineSemaphore.cpp
+        src/VOG/Graphics/Vulkan/VmaConfig.hpp
         src/VOG/Graphics/ShaderProgramCache.cpp
 )
+
+# Every header under include/ must be in the public header set: PublicHeadersTest is generated from
+# the set, so a header left out of it would escape the check that no public header pulls in VMA.
+file(GLOB_RECURSE onDiskHeaders CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+    include/*.hpp)
+get_target_property(setHeaders VOG.Graphics HEADER_SET_public_headers)
+foreach(header IN LISTS onDiskHeaders)
+    cmake_path(ABSOLUTE_PATH header BASE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} OUTPUT_VARIABLE headerPath)
+    if(NOT headerPath IN_LIST setHeaders)
+        message(FATAL_ERROR "${header} is not in the public_headers FILE_SET of VOG.Graphics; "
+                            "add it, or it escapes PublicHeadersTest.")
+    endif()
+endforeach()
 
 target_link_libraries(VOG.Graphics
     PUBLIC
         VOG.Common
         Vulkan::Headers
-        GPUOpen::VulkanMemoryAllocator
         Boost::container
     PRIVATE
+        GPUOpen::VulkanMemoryAllocator
         nlohmann_json::nlohmann_json                                                                                
         spirv-cross::spirv-cross
         spdlog::spdlog

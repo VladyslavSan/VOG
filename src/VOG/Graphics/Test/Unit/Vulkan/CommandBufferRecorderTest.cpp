@@ -86,8 +86,7 @@ vertexBufferBarrier()
 TEST_F(VulkanFixture, CommandBufferRecorder_barrierRetainsBufferUntilPoolReset)
 {
     std::shared_ptr<Buffer> buffer = mDevice->createBuffer(
-        {.size = gBufferSize, .usage = vk::BufferUsageFlagBits::eVertexBuffer},
-        {.usage = VMA_MEMORY_USAGE_AUTO});
+        {.size = gBufferSize, .usage = vk::BufferUsageFlagBits::eVertexBuffer}, {});
     const std::weak_ptr<Buffer> weakBuffer = buffer;
 
     auto fencePool = FencePool::create(mDevice);
@@ -205,8 +204,7 @@ TEST_F(VulkanValidationFixture, CommandBufferPool_dropWaitsForFenceSharedWithAno
 TEST_F(VulkanValidationFixture, CommandBufferPool_droppedRecorderReleasesAndIsNotReused)
 {
     std::shared_ptr<Buffer> buffer = mDevice->createBuffer(
-        {.size = gBufferSize, .usage = vk::BufferUsageFlagBits::eVertexBuffer},
-        {.usage = VMA_MEMORY_USAGE_AUTO});
+        {.size = gBufferSize, .usage = vk::BufferUsageFlagBits::eVertexBuffer}, {});
     const std::weak_ptr<Buffer> weakBuffer = buffer;
 
     auto fencePool = FencePool::create(mDevice);

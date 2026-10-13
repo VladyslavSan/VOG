@@ -2,7 +2,6 @@
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
-#include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/Containers.hpp>
 
 #include <memory>
@@ -10,6 +9,8 @@
 
 namespace VOG::Graphics::Vulkan
 {
+VOG_DECLARE_PTR(Buffer);
+
 /**
  * Vulkan command buffer that keeps everything recorded into it alive. Inherits
  * vk::raii::CommandBuffer privately: recording goes through CommandBufferRecorder, which retains

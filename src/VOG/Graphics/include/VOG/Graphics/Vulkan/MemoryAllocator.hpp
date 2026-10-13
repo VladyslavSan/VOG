@@ -1,16 +1,41 @@
 #pragma once
 
-#include <VOG/Graphics/Config/VmaConfig.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 
+#include <cstdint>
 #include <memory>
+
+// VMA's own handle types, declared here so that no public header includes vk_mem_alloc.h.
+struct VmaAllocator_T;
+struct VmaAllocation_T;
 
 namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Buffer);
-VOG_DECLARE_PTR(MemoryAllocator);
 VOG_DECLARE_PTR(Device);
+
+enum class AllocationFlag : std::uint8_t
+{
+    /** The CPU writes the memory in order and never reads it: map with Buffer::mapForWrite(). */
+    eHostSequentialWrite = 1u << 0u,
+};
+} // namespace VOG::Graphics::Vulkan
+
+namespace vk
+{
+template <>
+struct FlagTraits<VOG::Graphics::Vulkan::AllocationFlag>
+{
+    static constexpr bool                                             isBitmask = true;
+    static constexpr vk::Flags<VOG::Graphics::Vulkan::AllocationFlag> allFlags =
+        VOG::Graphics::Vulkan::AllocationFlag::eHostSequentialWrite;
+};
+} // namespace vk
+
+namespace VOG::Graphics::Vulkan
+{
+using AllocationFlags = vk::Flags<AllocationFlag>;
 
 class MemoryAllocator
 {
@@ -28,27 +53,21 @@ public:
 
     ~MemoryAllocator();
 
-    operator VmaAllocator() const;
-
-    Device& mDevice;
-
-protected:
-    VmaAllocator mAllocator;
+    MemoryAllocator(const MemoryAllocator&)            = delete;
+    MemoryAllocator& operator=(const MemoryAllocator&) = delete;
 
 private:
     std::unique_ptr<Buffer> makeBuffer(const vk::BufferCreateInfo& createInfo,
                                        const AllocationParameters& allocationCreateInfo);
+
+    Device&         mDevice;
+    VmaAllocator_T* mAllocator;
 };
 
 struct MemoryAllocator::AllocationParameters
 {
-    VmaAllocationCreateFlags flags;
-    VmaMemoryUsage           usage = VMA_MEMORY_USAGE_AUTO;
-    vk::MemoryPropertyFlags  requiredFlags;
-    vk::MemoryPropertyFlags  preferredFlags;
-    const char*              tag = nullptr;
-
-    operator VmaAllocationCreateInfo() const noexcept;
+    /** The memory type is always picked by VMA for the buffer's usage. */
+    AllocationFlags flags;
 };
 
 class MemoryAllocator::Allocation
@@ -56,11 +75,12 @@ class MemoryAllocator::Allocation
 public:
     ~Allocation();
 
-    Allocation(DevicePtr            device,
-               VmaAllocator         allocator,
-               VmaAllocation        allocation,
-               VmaAllocationInfo    info,
-               AllocationParameters createInfo);
+    Allocation(DevicePtr               device,
+               VmaAllocator_T*         allocator,
+               VmaAllocation_T*        allocation,
+               vk::DeviceSize          size,
+               vk::MemoryPropertyFlags memoryFlags,
+               AllocationFlags         flags);
 
     Allocation(Allocation&& other) noexcept;
 
@@ -74,19 +94,16 @@ protected:
     DevicePtr device;
 
     /** Allocator that created allocation; owned by @var device */
-    VmaAllocator allocator;
+    VmaAllocator_T* allocator;
 
     /** Allocation struct */
-    VmaAllocation allocation;
+    VmaAllocation_T* allocation;
 
-    /** Allocation info */
-    const VmaAllocationInfo info;
+    /** Size of the allocation in bytes. */
+    const vk::DeviceSize size;
 
-    /** Creation info*/
-    const AllocationParameters createInfo;
-
-    /** Is this allocation is mapped persistently. If yes there - no need to call map/unmap */
-    const bool isPersistentlyMapped;
+    /** What the allocation was created with. */
+    const AllocationFlags flags;
 
     /** Vulkan memory property flags */
     const vk::MemoryPropertyFlags memoryFlags;

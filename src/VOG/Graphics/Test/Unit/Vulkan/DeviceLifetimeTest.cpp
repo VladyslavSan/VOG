@@ -68,8 +68,7 @@ makeBuffer(Graphics::Vulkan::Device& device)
 {
     return device.createBuffer(
         {.size = gBufferSize, .usage = vk::BufferUsageFlagBits::eTransferSrc},
-        {.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
-         .usage = VMA_MEMORY_USAGE_AUTO});
+        {.flags = Graphics::Vulkan::AllocationFlag::eHostSequentialWrite});
 }
 } // namespace
 

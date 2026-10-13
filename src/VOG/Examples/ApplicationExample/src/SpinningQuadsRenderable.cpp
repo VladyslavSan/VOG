@@ -62,7 +62,7 @@ SpinningQuadsRenderable::prepare(const VOG::Engine::ResourceContext& resourceCon
 
     mVertexBuffer = device->createBuffer(
         {.size = gVertexDataSize, .usage = vk::BufferUsageFlagBits::eVertexBuffer},
-        {.usage = VMA_MEMORY_USAGE_CPU_TO_GPU});
+        {.flags = AllocationFlag::eHostSequentialWrite});
     {
         auto mapping = mVertexBuffer->mapForWrite();
         std::memcpy(mapping.data, gVertexData, gVertexDataSize);

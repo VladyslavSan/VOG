@@ -3,6 +3,7 @@
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
+#include <VOG/Graphics/Vulkan/VmaConfig.hpp>
 
 #include <stdexcept>
 
@@ -18,7 +19,7 @@ static_assert(VK_API_VERSION_MAJOR(gRequiredApiVersion) * gVmaMajorScale +
                       VK_API_VERSION_MINOR(gRequiredApiVersion) * gVmaMinorScale <=
                   VMA_VULKAN_VERSION,
               "VMA is compiled for an older Vulkan than the instance requests; raise "
-              "VMA_VULKAN_VERSION in VmaConfig.hpp.");
+              "VMA_VULKAN_VERSION in Vulkan/VmaConfig.hpp.");
 
 vk::MemoryPropertyFlags
 getMemoryFlags(VmaAllocator allocator, std::uint32_t memoryIndex)
@@ -28,32 +29,32 @@ getMemoryFlags(VmaAllocator allocator, std::uint32_t memoryIndex)
 
     return vk::MemoryPropertyFlags{flags};
 }
+
+VmaAllocationCreateInfo
+toVma(const MemoryAllocator::AllocationParameters& parameters)
+{
+    VmaAllocationCreateFlags flags = 0u;
+    if (parameters.flags & AllocationFlag::eHostSequentialWrite)
+    {
+        flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+    }
+
+    return {.flags = flags, .usage = VMA_MEMORY_USAGE_AUTO};
+}
 } // namespace
 
-MemoryAllocator::AllocationParameters::
-operator VmaAllocationCreateInfo() const noexcept
-{
-    return {
-        .flags          = flags,
-        .usage          = usage,
-        .requiredFlags  = static_cast<VkMemoryPropertyFlags>(requiredFlags),
-        .preferredFlags = static_cast<VkMemoryPropertyFlags>(preferredFlags),
-        .pUserData      = const_cast<char*>(tag),
-    };
-}
-
-MemoryAllocator::Allocation::Allocation(DevicePtr                  _device,
-                                        const VmaAllocator         _allocator,
-                                        const VmaAllocation        _allocation,
-                                        const VmaAllocationInfo    _info,
-                                        const AllocationParameters _createInfo)
+MemoryAllocator::Allocation::Allocation(DevicePtr               _device,
+                                        VmaAllocator_T*         _allocator,
+                                        VmaAllocation_T*        _allocation,
+                                        const vk::DeviceSize    _size,
+                                        vk::MemoryPropertyFlags _memoryFlags,
+                                        const AllocationFlags   _flags)
     : device{std::move(_device)}
     , allocator{_allocator}
     , allocation{_allocation}
-    , info{_info}
-    , createInfo{_createInfo}
-    , isPersistentlyMapped{(_createInfo.flags & VMA_ALLOCATION_CREATE_MAPPED_BIT) != 0}
-    , memoryFlags{getMemoryFlags(allocator, info.memoryType)}
+    , size{_size}
+    , flags{_flags}
+    , memoryFlags{_memoryFlags}
 {
 }
 
@@ -69,9 +70,8 @@ MemoryAllocator::Allocation::Allocation(MemoryAllocator::Allocation&& other) noe
     : device{std::move(other.device)}
     , allocator{other.allocator}
     , allocation{std::exchange(other.allocation, nullptr)}
-    , info{other.info}
-    , createInfo{other.createInfo}
-    , isPersistentlyMapped{other.isPersistentlyMapped}
+    , size{other.size}
+    , flags{other.flags}
     , memoryFlags{other.memoryFlags}
 {
 }
@@ -131,10 +131,14 @@ std::unique_ptr<Buffer>
 MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
                             const AllocationParameters& allocationCreateInfo)
 {
+    // Taken before vmaCreateBuffer, so nothing between the creation and the wrapping below can
+    // throw.
+    DevicePtr device = mDevice.shared_from_this();
+
     VkBuffer                buffer;
     VmaAllocation           allocation;
     VmaAllocationInfo       allocationInfo;
-    VmaAllocationCreateInfo vmaAllocationCreateInfo = allocationCreateInfo;
+    VmaAllocationCreateInfo vmaAllocationCreateInfo = toVma(allocationCreateInfo);
 
     vk::Result result =
         static_cast<vk::Result>(vmaCreateBuffer(mAllocator,
@@ -149,17 +153,18 @@ MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
         throw std::runtime_error{"Buffer creation failed."};
     }
 
-    return std::unique_ptr<Buffer>(new Buffer{Allocation{mDevice.shared_from_this(),
-                                                         mAllocator,
-                                                         allocation,
-                                                         allocationInfo,
-                                                         allocationCreateInfo},
-                                              vk::raii::Buffer{mDevice.raii(), buffer}});
-}
+    // Own both handles before anything else can throw: the buffer first, then the allocation. If
+    // `new Buffer` throws (out of memory), the locals destroy the buffer and free the allocation
+    // instead of leaking the VkBuffer. Untested: only an allocation failure reaches it.
+    vk::raii::Buffer owningBuffer{mDevice.raii(), buffer};
+    Allocation       owningAllocation{std::move(device),
+                                      mAllocator,
+                                      allocation,
+                                      allocationInfo.size,
+                                      getMemoryFlags(mAllocator, allocationInfo.memoryType),
+                                      allocationCreateInfo.flags};
 
-MemoryAllocator::
-operator VmaAllocator() const
-{
-    return mAllocator;
+    return std::unique_ptr<Buffer>(
+        new Buffer{std::move(owningAllocation), std::move(owningBuffer)});
 }
 } // namespace VOG::Graphics::Vulkan

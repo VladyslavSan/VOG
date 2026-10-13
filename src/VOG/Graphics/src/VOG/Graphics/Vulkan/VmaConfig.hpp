@@ -24,13 +24,6 @@
 // there).
 #define VMA_VULKAN_VERSION 1003000 // Vulkan 1.3
 
-#ifdef _WIN32
-    #define NOMINMAX
-    #define WIN32_LEAN_AND_MEAN
-    #include <Windows.h>
-    #define VK_USE_PLATFORM_WIN32_KHR
-#endif
-
 #ifdef _MSVC_LANG
     #pragma warning(push, 4)
     #pragma warning(disable : 4127) // conditional expression is constant

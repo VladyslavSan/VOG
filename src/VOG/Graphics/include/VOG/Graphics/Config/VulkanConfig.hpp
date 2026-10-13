@@ -65,7 +65,7 @@ namespace VOG::Graphics::Vulkan
 {
 /**
  * Vulkan version the instance requests and the device must support: core synchronization2 and
- * dynamic rendering. VMA is told the same version at runtime; see VmaConfig.hpp.
+ * dynamic rendering. VMA is told the same version at runtime; see Vulkan/VmaConfig.hpp.
  */
 inline constexpr std::uint32_t gRequiredApiVersion = VK_API_VERSION_1_3;
 } // namespace VOG::Graphics::Vulkan

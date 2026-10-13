@@ -158,10 +158,11 @@ public:
                                                      vk::MemoryPropertyFlags memoryProperties);
 
     /**
-     * Allocates a GPU buffer with the specified usage and memory properties.
+     * Allocates a GPU buffer. The allocator picks the memory type for the buffer's usage.
      *
      * @param createInfo      Buffer size, usage flags, and sharing mode.
-     * @param allocationInfo  VMA memory usage and required/preferred memory flags.
+     * @param allocationInfo  Allocation flags; pass AllocationFlag::eHostSequentialWrite to be
+     *                        able to map the buffer with Buffer::mapForWrite().
      *
      * @return Allocated buffer.
      */
