@@ -254,7 +254,7 @@ TEST_F(SwapchainTest, recreateUsesTheRequestedExtentAndSkipsAZeroOne)
 TEST_F(SwapchainTest, constructionNeedsAnExtentWhereTheApplicationChooses)
 {
     auto parameters   = headlessSwapchainParameters();
-    parameters.extent = {.width = 0u, .height = 0u};
+    parameters.extent = vk::Extent2D{.width = 0u, .height = 0u};
 
     try
     {

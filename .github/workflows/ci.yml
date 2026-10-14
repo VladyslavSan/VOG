@@ -51,7 +51,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew install molten-vk vulkan-loader vulkan-validationlayers
-          echo "VK_ICD_FILENAMES=$(brew --prefix molten-vk)/share/vulkan/icd.d/MoltenVK_icd.json" >> "$GITHUB_ENV"
+          echo "VK_ICD_FILENAMES=$(brew --prefix molten-vk)/etc/vulkan/icd.d/MoltenVK_icd.json" >> "$GITHUB_ENV"
           echo "VK_ADD_LAYER_PATH=$(brew --prefix vulkan-validationlayers)/share/vulkan/explicit_layer.d" >> "$GITHUB_ENV"
 
       - name: Set up Conan

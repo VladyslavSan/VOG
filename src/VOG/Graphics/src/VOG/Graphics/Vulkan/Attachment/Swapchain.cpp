@@ -65,12 +65,12 @@ chooseExtent(const vk::SurfaceCapabilitiesKHR& capabilities, vk::Extent2D reques
     vk::Extent2D extent = capabilities.currentExtent;
     if (appChoosesExtent(capabilities))
     {
-        extent = {.width  = std::clamp(requested.width,
-                                       capabilities.minImageExtent.width,
-                                       capabilities.maxImageExtent.width),
-                  .height = std::clamp(requested.height,
-                                       capabilities.minImageExtent.height,
-                                       capabilities.maxImageExtent.height)};
+        extent = vk::Extent2D{.width  = std::clamp(requested.width,
+                                                   capabilities.minImageExtent.width,
+                                                   capabilities.maxImageExtent.width),
+                              .height = std::clamp(requested.height,
+                                                   capabilities.minImageExtent.height,
+                                                   capabilities.maxImageExtent.height)};
         // Clamping would turn a zero request into the minimum extent; zero means "no window".
         if (requested.width == 0u || requested.height == 0u)
         {
