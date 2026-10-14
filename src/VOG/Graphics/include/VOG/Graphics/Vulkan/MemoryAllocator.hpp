@@ -27,9 +27,12 @@ namespace vk
 template <>
 struct FlagTraits<VOG::Graphics::Vulkan::AllocationFlag>
 {
+    // The names are required by vk::FlagTraits.
+    // NOLINTBEGIN(readability-identifier-naming)
     static constexpr bool                                             isBitmask = true;
     static constexpr vk::Flags<VOG::Graphics::Vulkan::AllocationFlag> allFlags =
         VOG::Graphics::Vulkan::AllocationFlag::eHostSequentialWrite;
+    // NOLINTEND(readability-identifier-naming)
 };
 } // namespace vk
 

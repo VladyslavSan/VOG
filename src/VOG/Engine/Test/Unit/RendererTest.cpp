@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <cstdint>
 #include <exception>
 #include <latch>
 #include <memory>
@@ -19,7 +20,8 @@ namespace VOG::Tests
 {
 namespace
 {
-constexpr vk::Extent2D gStartExtent{.width = 64u, .height = 64u};
+constexpr vk::Extent2D  gStartExtent{.width = 64u, .height = 64u};
+constexpr std::uint32_t gResizedExtent = 32u;
 
 /** Renders into a headless surface, with the validation layer when it is installed. */
 class RendererTest : public testing::Test
@@ -73,12 +75,12 @@ public:
     }
 
     void
-    prepare(const ResourceContext&) override
+    prepare(const ResourceContext& /*context*/) override
     {
     }
 
     void
-    collect(const FrameContext&, std::vector<RenderItem>&) override
+    collect(const FrameContext& /*frameContext*/, std::vector<RenderItem>& /*renderItems*/) override
     {
         // count_down() past zero is undefined, and collect() runs every frame.
         if (!mCounted)
@@ -92,6 +94,178 @@ private:
     std::latch& mFirstFrame;
     bool        mCounted = false;
 };
+
+struct Blocking : Renderable
+{
+    /** One parameter: three references of two types would be easy to swap. */
+    struct Signals
+    {
+        std::latch&      entered;
+        std::latch&      release;
+        std::thread::id& destroyedOn;
+    };
+
+    explicit Blocking(const Signals& signals)
+        : entered{signals.entered}
+        , release{signals.release}
+        , destroyedOn{signals.destroyedOn}
+    {
+    }
+
+    ~Blocking() override { destroyedOn = std::this_thread::get_id(); }
+
+    void
+    prepare(const ResourceContext& /*context*/) override
+    {
+    }
+
+    void
+    collect(const FrameContext& /*frameContext*/, std::vector<RenderItem>& /*renderItems*/) override
+    {
+        // Only the first frame signals and blocks: count_down() past zero is undefined, and
+        // a second frame can run before the dropper requests the stop.
+        if (!blocked)
+        {
+            blocked = true;
+            entered.count_down();
+            release.wait();
+        }
+    }
+
+    bool             blocked = false;
+    std::latch&      entered;
+    std::latch&      release;
+    std::thread::id& destroyedOn;
+};
+
+struct Failing : Renderable
+{
+    explicit Failing(std::latch& entered)
+        : entered{entered}
+    {
+    }
+
+    void
+    prepare(const ResourceContext& /*context*/) override
+    {
+        // Before the throw, so stop() cannot win the race against the first frame.
+        entered.count_down();
+        throw std::runtime_error{"prepare failed"};
+    }
+
+    void
+    collect(const FrameContext& /*frameContext*/, std::vector<RenderItem>& /*renderItems*/) override
+    {
+    }
+
+    std::latch& entered;
+};
+
+struct Child : Renderable
+{
+    explicit Child(std::vector<std::string>& log)
+        : log{log}
+    {
+    }
+
+    void
+    prepare(const ResourceContext& /*context*/) override
+    {
+        log.emplace_back("child.prepare");
+    }
+
+    void
+    collect(const FrameContext& /*frameContext*/, std::vector<RenderItem>& /*renderItems*/) override
+    {
+    }
+
+    std::vector<std::string>& log;
+};
+
+struct Parent : Renderable
+{
+    Parent(Renderer& renderer, std::vector<std::string>& log, std::latch& firstCollect)
+        : renderer{renderer}
+        , log{log}
+        , firstCollect{firstCollect}
+    {
+    }
+
+    void
+    prepare(const ResourceContext& /*context*/) override
+    {
+        log.emplace_back("parent.prepare");
+        renderer.addRenderable(std::make_shared<Child>(log));
+    }
+
+    void
+    collect(const FrameContext& /*frameContext*/, std::vector<RenderItem>& /*renderItems*/) override
+    {
+        // Only the first frame logs and counts down: count_down() past zero is undefined.
+        if (!collected)
+        {
+            collected = true;
+            log.emplace_back("parent.collect");
+            firstCollect.count_down();
+        }
+    }
+
+    bool                      collected = false;
+    Renderer&                 renderer;
+    std::vector<std::string>& log;
+    std::latch&               firstCollect;
+};
+
+struct Malformed : Renderable
+{
+    explicit Malformed(std::latch& entered)
+        : entered{entered}
+    {
+    }
+
+    void
+    prepare(const ResourceContext& /*context*/) override
+    {
+    }
+
+    void
+    collect(const FrameContext& /*frameContext*/, std::vector<RenderItem>& renderItems) override
+    {
+        // Before the push, so stop() cannot win the race against the first frame.
+        entered.count_down();
+        renderItems.push_back(RenderItem{});
+    }
+
+    std::latch& entered;
+};
+
+struct Probe : Renderable
+{
+    void
+    prepare(const ResourceContext& /*context*/) override
+    {
+    }
+
+    void
+    collect(const FrameContext& frameContext, std::vector<RenderItem>& /*renderItems*/) override
+    {
+        extents.push_back(frameContext.extent);
+        if (extents.size() == 1u)
+        {
+            entered.count_down();
+            release.wait();
+        }
+        else if (extents.size() == 2u)
+        {
+            second.count_down();
+        }
+    }
+
+    std::vector<vk::Extent2D> extents;
+    std::latch                entered{1};
+    std::latch                release{1};
+    std::latch                second{1};
+};
 } // namespace
 
 /**
@@ -104,46 +278,12 @@ private:
  */
 TEST_F(RendererTest, destroyWhileFrameInFlightJoins)
 {
-    struct Blocking : Renderable
-    {
-        Blocking(std::latch& entered, std::latch& release, std::thread::id& destroyedOn)
-            : entered{entered}
-            , release{release}
-            , destroyedOn{destroyedOn}
-        {
-        }
-
-        ~Blocking() override { destroyedOn = std::this_thread::get_id(); }
-
-        void
-        prepare(const ResourceContext&) override
-        {
-        }
-
-        void
-        collect(const FrameContext&, std::vector<RenderItem>&) override
-        {
-            // Only the first frame signals and blocks: count_down() past zero is undefined, and
-            // a second frame can run before the dropper requests the stop.
-            if (!blocked)
-            {
-                blocked = true;
-                entered.count_down();
-                release.wait();
-            }
-        }
-
-        bool             blocked = false;
-        std::latch&      entered;
-        std::latch&      release;
-        std::thread::id& destroyedOn;
-    };
-
     std::latch      entered{1};
     std::latch      release{1};
     std::thread::id destroyedOn;
 
-    auto renderable = std::make_shared<Blocking>(entered, release, destroyedOn);
+    auto renderable = std::make_shared<Blocking>(
+        Blocking::Signals{.entered = entered, .release = release, .destroyedOn = destroyedOn});
     const std::weak_ptr<Renderable> weak = renderable;
 
     auto renderer = makeRenderer();
@@ -167,31 +307,10 @@ TEST_F(RendererTest, destroyWhileFrameInFlightJoins)
  * A prepare() that throws ends the render thread, and stop() hands the exception to the caller.
  * Only the renderable that threw is lost: the one queued behind it is prepared after a restart.
  */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST_F(RendererTest, failingPrepareIsReportedAndRestartable)
 {
-    struct Failing : Renderable
-    {
-        explicit Failing(std::latch& entered)
-            : entered{entered}
-        {
-        }
-
-        void
-        prepare(const ResourceContext&) override
-        {
-            // Before the throw, so stop() cannot win the race against the first frame.
-            entered.count_down();
-            throw std::runtime_error{"prepare failed"};
-        }
-
-        void
-        collect(const FrameContext&, std::vector<RenderItem>&) override
-        {
-        }
-
-        std::latch& entered;
-    };
-
     std::latch entered{1};
     std::latch firstFrame{1};
 
@@ -227,61 +346,6 @@ TEST_F(RendererTest, addRenderableFromPrepareIsPreparedInTheSameFrame)
     std::vector<std::string> log;
     std::latch               firstCollect{1};
 
-    struct Child : Renderable
-    {
-        explicit Child(std::vector<std::string>& log)
-            : log{log}
-        {
-        }
-
-        void
-        prepare(const ResourceContext&) override
-        {
-            log.emplace_back("child.prepare");
-        }
-
-        void
-        collect(const FrameContext&, std::vector<RenderItem>&) override
-        {
-        }
-
-        std::vector<std::string>& log;
-    };
-
-    struct Parent : Renderable
-    {
-        Parent(Renderer& renderer, std::vector<std::string>& log, std::latch& firstCollect)
-            : renderer{renderer}
-            , log{log}
-            , firstCollect{firstCollect}
-        {
-        }
-
-        void
-        prepare(const ResourceContext&) override
-        {
-            log.emplace_back("parent.prepare");
-            renderer.addRenderable(std::make_shared<Child>(log));
-        }
-
-        void
-        collect(const FrameContext&, std::vector<RenderItem>&) override
-        {
-            // Only the first frame logs and counts down: count_down() past zero is undefined.
-            if (!collected)
-            {
-                collected = true;
-                log.emplace_back("parent.collect");
-                firstCollect.count_down();
-            }
-        }
-
-        bool                      collected = false;
-        Renderer&                 renderer;
-        std::vector<std::string>& log;
-        std::latch&               firstCollect;
-    };
-
     auto renderer = makeRenderer();
     renderer->addRenderable(std::make_shared<Parent>(*renderer, log, firstCollect));
     renderer->start();
@@ -301,29 +365,6 @@ TEST_F(RendererTest, addRenderableFromPrepareIsPreparedInTheSameFrame)
  */
 TEST_F(RendererTest, malformedRenderItemFailsRenderThread)
 {
-    struct Malformed : Renderable
-    {
-        explicit Malformed(std::latch& entered)
-            : entered{entered}
-        {
-        }
-
-        void
-        prepare(const ResourceContext&) override
-        {
-        }
-
-        void
-        collect(const FrameContext&, std::vector<RenderItem>& renderItems) override
-        {
-            // Before the push, so stop() cannot win the race against the first frame.
-            entered.count_down();
-            renderItems.push_back(RenderItem{});
-        }
-
-        std::latch& entered;
-    };
-
     std::latch entered{1};
 
     auto renderer = makeRenderer();
@@ -351,41 +392,13 @@ TEST_F(RendererTest, startTwiceThrows)
  */
 TEST_F(RendererTest, resizeRecreatesAtRequestedExtent)
 {
-    struct Probe : Renderable
-    {
-        void
-        prepare(const ResourceContext&) override
-        {
-        }
-
-        void
-        collect(const FrameContext& frameContext, std::vector<RenderItem>&) override
-        {
-            extents.push_back(frameContext.extent);
-            if (extents.size() == 1u)
-            {
-                entered.count_down();
-                release.wait();
-            }
-            else if (extents.size() == 2u)
-            {
-                second.count_down();
-            }
-        }
-
-        std::vector<vk::Extent2D> extents;
-        std::latch                entered{1};
-        std::latch                release{1};
-        std::latch                second{1};
-    };
-
     auto probe    = std::make_shared<Probe>();
     auto renderer = makeRenderer();
     renderer->addRenderable(probe);
     renderer->start();
 
     probe->entered.wait();
-    renderer->resize({.width = 32u, .height = 32u});
+    renderer->resize({.width = gResizedExtent, .height = gResizedExtent});
     probe->release.count_down();
     probe->second.wait();
     EXPECT_FALSE(renderer->stop());
@@ -394,7 +407,7 @@ TEST_F(RendererTest, resizeRecreatesAtRequestedExtent)
     ASSERT_GE(probe->extents.size(), 2u);
     EXPECT_EQ(probe->extents[0].width, 64u);
     EXPECT_EQ(probe->extents[0].height, 64u);
-    EXPECT_EQ(probe->extents[1].width, 32u);
-    EXPECT_EQ(probe->extents[1].height, 32u);
+    EXPECT_EQ(probe->extents[1].width, gResizedExtent);
+    EXPECT_EQ(probe->extents[1].height, gResizedExtent);
 }
 } // namespace VOG::Tests

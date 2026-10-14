@@ -33,7 +33,7 @@ class SDLWindow
 public:
     static Common::SurfaceHandle makeSurfaceHandles(const SDLWindow::Handle& window);
 
-    SDLWindow(const char* title, int w, int h, SDL_WindowFlags flags);
+    SDLWindow(const char* title, int width, int height, SDL_WindowFlags flags);
 
     Uint32 getWindowId() const;
 
@@ -49,8 +49,8 @@ protected:
     Common::SurfaceHandle mSurfaceHandles;
 };
 
-inline SDLWindow::SDLWindow(const char* title, int w, int h, const SDL_WindowFlags flags)
-    : mWindowHandle{SDL_CreateWindow(title, w, h, flags), SDL_DestroyWindow}
+inline SDLWindow::SDLWindow(const char* title, int width, int height, const SDL_WindowFlags flags)
+    : mWindowHandle{SDL_CreateWindow(title, width, height, flags), SDL_DestroyWindow}
     , mWindowId{SDL_GetWindowID(mWindowHandle.get())}
 {
     VOG_ASSERT_MSG(mWindowHandle, "Window handle should not be null.");
