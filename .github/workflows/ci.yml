@@ -52,7 +52,14 @@ jobs:
         run: |
           brew install molten-vk vulkan-loader vulkan-validationlayers
           echo "VK_ICD_FILENAMES=$(brew --prefix molten-vk)/etc/vulkan/icd.d/MoltenVK_icd.json" >> "$GITHUB_ENV"
-          echo "VK_ADD_LAYER_PATH=$(brew --prefix vulkan-validationlayers)/share/vulkan/explicit_layer.d" >> "$GITHUB_ENV"
+          # The bottle's manifest names the layer dylib without a directory, and dyld never
+          # searches /opt/homebrew/lib for a bare name: createInstance fails with ErrorLayerNotPresent.
+          vvl="$(brew --prefix vulkan-validationlayers)"
+          manifest="$vvl/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json"
+          test -f "$vvl/lib/libVkLayer_khronos_validation.dylib"
+          sed -i '' "s|\"libVkLayer_khronos_validation.dylib\"|\"$vvl/lib/libVkLayer_khronos_validation.dylib\"|" "$manifest"
+          grep -q '"library_path": "/' "$manifest"
+          echo "VK_ADD_LAYER_PATH=$vvl/share/vulkan/explicit_layer.d" >> "$GITHUB_ENV"
 
       - name: Set up Conan
         uses: ./.github/actions/setup-conan
@@ -83,6 +90,8 @@ jobs:
       - name: Test (macOS)
         if: runner.os == 'macOS'
         continue-on-error: true
+        env:
+          VK_LOADER_DEBUG: error
         run: |
           ctest --test-dir build/build/${{ matrix.build_type }} --output-on-failure
 
