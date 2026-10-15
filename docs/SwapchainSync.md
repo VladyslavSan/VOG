@@ -165,8 +165,9 @@ The next acquire's swap trick can then hand a signaled semaphore to `vkAcquireNe
 (`VUID-vkAcquireNextImageKHR-semaphore-01286`), and the generation destroys a semaphore
 with a signal pending (MoltenVK can crash there). Only an exception between acquire and
 present reaches it (a Vulkan error, or out of memory in a retain, a submit or a fence take):
-the renderer collects and checks the frame's draws before it acquires, so a renderable that
-throws cannot.
+`Renderer::submitFrame` runs the renderables on the main thread, and the render thread looks up
+the pipelines of a frame before it acquires, so a renderable that throws and a vertex layout the
+shader cannot read both fail while no image is acquired.
 
 ## Resizing
 
@@ -174,11 +175,44 @@ A surface that reports `currentExtent` (macOS, Windows, X11) goes out of date or
 its window changes size. Wayland and headless surfaces do not report a window resize, and leave the size to the
 application. Both are covered by one path on the render thread. `Application` turns
 `SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED` into `Renderer::resize(extent)`, which stores the size in an
-atomic. Once per frame the render thread reads it; if it differs from the last size applied, or an
+atomic. For each packet it takes, the render thread reads it; if it differs from the last size applied, or an
 acquire or a present reports out of date, `Renderer::applyExtent` calls
 `Swapchain::recreate(extent)`, the only place that does, and remembers the size. Surfaces that
 report their own size ignore the requested one. A zero size, from either source, makes `recreate`
-return false: the renderer backs off and tries again next frame.
+return false: the renderer drops the packet, backs off for 16 ms and tries again with the next one.
+A minimized window therefore still drains the packets, and the main thread keeps running its
+simulation.
+
+## Threads
+
+The main thread runs `Renderable::onDraw` and queues one packet per frame; the render thread takes
+the packets, acquires, records and presents. The queue has one slot, and `Renderer::submitFrame`
+waits while it is full, so the render thread paces the main thread. If an occluded window reports
+no free image, the acquire waits up to its timeout (100 ms) per frame and the simulation runs at
+that rate; the main thread still pumps events between frames, so it can quit. On macOS with
+MoltenVK, a fully covered window kept presenting at about 60 frames per second, after one stall of
+about a second when the window became covered.
+
+**The render thread never needs the main thread.** The main thread can be parked in `submitFrame`
+while the render thread acquires and presents, so a driver call that waits for the main thread
+would deadlock. In MoltenVK's `libMoltenVK.dylib`, `mvkDispatchToMainAndWait` has two callers: the
+`MVKSurface` constructor (main thread) and `screenMVK`. `initSurfaceImages` guards `screenMVK` with
+an `isMainThread` check; `getRefreshCycleDuration` does not. Do not use `VK_GOOGLE_display_timing`
+on the render thread, and check this again when MoltenVK is upgraded. KosmicKrisp imports no
+`dispatch_sync`.
+
+### Live resize
+
+macOS (while a window edge is dragged) and Windows (during the size and move loop) keep the main
+thread in the OS loop and do not return to `Application::run`. SDL calls its event watches from
+that loop, synchronously, for every event pushed there: the 60 Hz tick as
+`SDL_EVENT_WINDOW_EXPOSED` with `data1 == 1`, and `SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED`. `Application`
+installs one watch for the duration of `run()`. It passes the size to `Renderer::resize` and, on
+the tick, calls `Renderer::trySubmitFrame`, which skips the frame (and its `onDraw` calls) if the
+render thread has not taken the previous one. A tick never waits. A watch frame runs
+`Renderable::onDraw` under SDL's watch-list lock, so `onDraw` must not wait for a thread that
+pushes SDL events. An exception from a watch frame is kept and rethrown by `run()`, because SDL
+cannot unwind. Wayland and X11 have no such loop and need no watch for the tick.
 
 The extension is required: device selection rejects devices without
 `VK_EXT_swapchain_maintenance1` (the EXT name, because the KHR promotion is not exposed

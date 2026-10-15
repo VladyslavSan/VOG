@@ -8,7 +8,6 @@
 #include <VOG/Engine/Renderer/Renderable.hpp>
 
 #include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <exception>
@@ -42,17 +41,20 @@ class Swapchain;
 
 namespace VOG::Engine
 {
+class FramePacketQueue;
 class PipelineCache;
+struct FramePacket;
 
 /**
  * Owns the Vulkan objects of one window and the thread that renders into it.
  *
+ * Two threads work with it. The main thread, or whichever thread calls submitFrame(), runs the
+ * Renderables: it calls onDraw() for each frame and queues the result as a packet. The render
+ * thread takes the packets and records and presents them; it runs no user code.
+ *
  * The render thread owns nothing: it captures `this`, is the last member and is joined before
  * anything it uses is destroyed. Nothing reachable from it owns the Renderer, so
- * `~Renderer` cannot run on the render thread. Calling stop() or getState() from the render
- * thread (a Renderable that captured `Renderer&`) is not supported: stop() would join itself and
- * terminate, and getState() would wait for the lock that stop() holds across the join, a
- * deadlock.
+ * `~Renderer` cannot run on the render thread.
  */
 class Renderer final
 {
@@ -97,8 +99,8 @@ public:
     Renderer& operator=(const Renderer&) = delete;
 
     /**
-     * Queues @p renderable; the render thread collects from it from the next frame on. Any
-     * thread, including a Renderable callback: no callback runs under a lock.
+     * Queues @p renderable; the next submitFrame() adopts it. Any thread, including a Renderable
+     * callback: no callback runs under a lock.
      */
     void addRenderable(std::shared_ptr<Renderable> renderable);
 
@@ -118,7 +120,8 @@ public:
      */
     MaterialPtr createMaterial(MaterialDescription description);
 
-    /** Any thread. A default Camera is used until this is called. */
+    /** Any thread. A default Camera is used until this is called. Each frame takes the camera
+     *  that was set when it was submitted. */
     void setCamera(const Camera& camera);
 
     /**
@@ -132,32 +135,58 @@ public:
     void start();
 
     /**
+     * Calls Renderable::onDraw() of every renderable on the calling thread and queues the draws
+     * with the current camera as one frame. Waits while the render thread still holds the
+     * previous frame, so this paces the caller to the render thread. Does nothing when the
+     * renderer is stopped. When the render thread has failed it still calls onDraw(), and the frame
+     * is dropped; check getState().
+     *
+     * One thread at a time, and not from onDraw(). An exception from onDraw() reaches the caller;
+     * the renderer keeps running. stop() from another thread wakes a call that waits.
+     */
+    void submitFrame(const FrameContext& frameContext);
+
+    /**
+     * Like submitFrame(), but never waits for the render thread: if it still holds the previous
+     * frame, returns at once without calling onDraw(). It may wait for a start() or stop() in
+     * progress on another thread. For callers that must not block on the render thread, like an
+     * event watch.
+     */
+    void trySubmitFrame(const FrameContext& frameContext);
+
+    /**
      * Requests stop, joins the render thread and returns its failure, or null if it ended
      * normally or was not running. The Renderer can be started again afterwards. The stop is
-     * observed within one acquire timeout and one frame.
+     * observed within one acquire timeout and one frame. A packet still queued at stop() is
+     * rendered first after the next start().
      */
     [[nodiscard]] std::exception_ptr stop() noexcept;
 
     State getState() const;
 
 private:
-    /** Lets RendererTest read the swapchain; nothing else uses it. */
+    /** Lets RendererTest read the swapchain, the packet queue and the pipeline cache; nothing else
+     *  uses it. */
     friend struct RendererTestAccess;
 
     /** min(framesInFlight, imageCount); logs when it clamps. */
     static std::uint8_t frameSlotCount(std::uint8_t framesInFlight, std::size_t imageCount);
 
-    /** Render thread. Moves the pending renderables into mRenderables. */
+    /** Submitting thread. Moves the pending renderables into mRenderables. */
     void adoptPendingRenderables();
 
-    /** Render thread. Refills mDraws, checks every draw and finds its pipeline in mPipelines. */
-    void collectDraws(const FrameContext& frameContext);
+    /** Submitting thread. Calls onDraw() of every renderable and copies the camera into a packet.
+     */
+    FramePacket makePacket(const FrameContext& frameContext);
+
+    /** Render thread. Finds the pipeline of each draw of @p draws in mPipelines. */
+    void resolvePipelines(const RenderQueue& draws);
 
     /** Render thread. Rebuilds the swapchain for @p requested; false if it is zero-sized. */
     bool applyExtent(Extent requested);
 
     /** Render thread. One frame; an exception ends the thread. */
-    void renderFrame();
+    void renderFrame(FramePacket packet);
 
     const std::uint8_t mFramesInFlight;
 
@@ -169,8 +198,6 @@ private:
     std::unique_ptr<Graphics::Vulkan::Swapchain>         mSwapchain;
     std::unique_ptr<Graphics::Frame::FrameObjectManager> mFrameObjectManager;
 
-    std::chrono::steady_clock::time_point mStartTime;
-
     /** Written by resize() on any thread. Extent is trivially copyable and 8 bytes, so the atomic
      * is lock-free (Renderer.cpp asserts it). */
     std::atomic<Extent> mRequestedExtent;
@@ -179,11 +206,11 @@ private:
      *  own size ignore the request, so this is not necessarily the size of the images. */
     Extent mAppliedExtent;
 
-    /** Written by any thread, drained by the render thread. No callback runs under it. */
+    /** Written by any thread, drained by the submitting thread. No callback runs under it. */
     std::mutex                              mPendingMutex;
     std::deque<std::shared_ptr<Renderable>> mPending;
 
-    /** Render thread only. */
+    /** Submitting thread only. */
     std::vector<std::shared_ptr<Renderable>> mRenderables;
 
     /** A mutex, not an atomic: Camera is too big to be lock-free without libatomic. */
@@ -193,11 +220,13 @@ private:
     /** Render thread only. */
     std::unique_ptr<PipelineCache> mPipelineCache;
 
-    /** Render-thread scratch space, kept to reuse its capacity across frames. The draws, and so
-     *  the meshes, stay alive until the next frame's collect clears them. */
-    DrawList mDraws;
-    /** The pipeline of each draw in mDraws, at the same index. */
+    /** The pipeline of each draw of the frame being rendered, at the same index. Render-thread
+     *  scratch space, kept to reuse its capacity across frames. */
     std::vector<std::shared_ptr<Graphics::Vulkan::GraphicsPipeline>> mPipelines;
+
+    /** The frames between the submitting thread and the render thread. Declared above
+     *  mRenderThread, which is joined before it is destroyed. */
+    std::unique_ptr<FramePacketQueue> mPackets;
 
     /** Serializes start, stop and getState. */
     mutable std::mutex mStateMutex;

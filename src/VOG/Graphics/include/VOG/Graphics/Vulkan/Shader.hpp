@@ -68,6 +68,11 @@ public:
             std::uint8_t location;
             std::string  name;
             BaseType     format;
+            /**
+             * Consecutive locations the input covers, from #location: the array sizes multiplied,
+             * times one location per matrix column.
+             */
+            std::uint32_t locationCount = 1u;
         };
 
         struct StructMember
@@ -112,7 +117,9 @@ public:
 
     /**
      * Utility function used for validation whether @p provided vertex format is compatible with
-     * @p shaderVertexFormat.
+     * @p shaderVertexFormat. Only the numeric type is compared (float, signed or unsigned
+     * integer); the component counts may differ. 64-bit types are never compatible: VOG binds
+     * no 64-bit vertex formats, and they take two locations.
      *
      * @param shaderVertexFormat Vertex attribute format in the shader.
      * @param provided Vertex attribute bound from vertex buffer.

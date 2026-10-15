@@ -32,6 +32,7 @@ target_sources(Engine
             include/VOG/Engine/Renderer/Renderer.hpp
     PRIVATE
         src/VOG/Engine/Renderer/Camera.cpp
+        src/VOG/Engine/Renderer/FramePacketQueue.hpp
         src/VOG/Engine/Renderer/MaterialDefinition.hpp
         src/VOG/Engine/Renderer/MeshDefinition.hpp
         src/VOG/Engine/Renderer/PipelineCache.cpp

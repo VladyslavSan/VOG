@@ -4,9 +4,11 @@
 #include <VOG/Graphics/Vulkan/Device.hpp>
 
 #include <spirv_reflect.hpp>
+#include <vulkan/vulkan_format_traits.hpp>
 
 #include <format>
 #include <ranges>
+#include <string_view>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -68,9 +70,18 @@ processStageResources(const spirv_cross::Compiler&   compiler,
             compiler.get_decoration(resource.id, spv::Decoration::DecorationLocation);
 
         const auto& resourceType = compiler.get_type(resource.base_type_id);
-        result.push_back({.location = static_cast<std::uint8_t>(location),
-                          .name     = resource.name,
-                          .format   = attributeSpirVTypeToVulkanType(resourceType)});
+
+        // The base type has no array dimensions; the variable's own type does.
+        std::uint32_t locationCount = std::max<std::uint32_t>(resourceType.columns, 1u);
+        for (const std::uint32_t size : compiler.get_type(resource.type_id).array)
+        {
+            locationCount *= size;
+        }
+
+        result.push_back({.location      = static_cast<std::uint8_t>(location),
+                          .name          = resource.name,
+                          .format        = attributeSpirVTypeToVulkanType(resourceType),
+                          .locationCount = locationCount});
     }
 
     std::ranges::sort(result,
@@ -190,8 +201,26 @@ reflect(std::span<const std::uint32_t> binary)
 bool
 Shader::vertexFormatCompatible(Shader::Reflection::BaseType shaderVertexFormat, vk::Format provided)
 {
-    // Todo: implement compatibility checking.
-    return true;
+    using Type = Shader::Reflection::BaseType::Type;
+
+    constexpr std::uint8_t kDoubleBits = 64u;
+    if (shaderVertexFormat.type == Type::eDouble || provided == vk::Format::eUndefined ||
+        vk::componentBits(provided, 0u) == kDoubleBits)
+    {
+        return false;
+    }
+
+    // The same split as the numeric type of a format: only SINT and UINT are integers.
+    const std::string_view numeric = vk::componentNumericFormat(provided, 0u);
+    switch (shaderVertexFormat.type)
+    {
+    case Type::eInt:
+        return numeric == "SINT";
+    case Type::eUInt:
+        return numeric == "UINT";
+    default:
+        return numeric != "SINT" && numeric != "UINT";
+    }
 }
 
 Shader::Shader(DevicePtr _device, Shader::ShadingStage stage, std::span<const std::uint32_t> binary)

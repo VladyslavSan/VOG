@@ -6,6 +6,7 @@ set_target_properties(VOG.Engine.Unit PROPERTIES FOLDER "VOG/Tests")
 target_sources(VOG.Engine.Unit
     PRIVATE
         CameraTest.cpp
+        FramePacketQueueTest.cpp
         PipelineCacheTest.cpp
         RendererTest.cpp
 )
