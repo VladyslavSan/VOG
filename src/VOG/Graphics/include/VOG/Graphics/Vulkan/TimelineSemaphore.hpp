@@ -1,18 +1,21 @@
 #pragma once
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
+#include <VOG/Graphics/Vulkan/DeviceChild.hpp>
 
 namespace VOG::Graphics::Vulkan
 {
-class Device;
-
 /**
  * Timeline semaphore's main perk is that it allows very easy mechanism for chaining synchronization
  * using the counter.
  */
-class TimelineSemaphore : public vk::raii::Semaphore
+class TimelineSemaphore
+    : public DeviceChild
+    , private vk::raii::Semaphore
 {
 public:
+    using vk::raii::Semaphore::operator*;
+
     /** Describes wait operation on timeline semaphore. */
     struct WaitRequest
     {
@@ -30,7 +33,7 @@ public:
 private:
     friend class Device;
 
-    TimelineSemaphore(std::shared_ptr<Device> device);
+    TimelineSemaphore(DevicePtr device);
 
 public:
     [[nodiscard("Wait result can end with success, fail and timeout.")]]
@@ -59,7 +62,6 @@ public:
     operator SignalRequest() const;
 
 protected:
-    std::shared_ptr<Device> mDevice;
-    std::uint64_t           mCurrentValue = 0u;
+    std::uint64_t mCurrentValue = 0u;
 };
 } // namespace VOG::Graphics::Vulkan

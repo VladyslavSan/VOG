@@ -1,18 +1,24 @@
 #include "VOG/Graphics/Vulkan/Instance.hpp"
 
 #include <VOG/Graphics/Vulkan/Device.hpp>
+#include <VOG/Graphics/Vulkan/DeviceRequirements.hpp>
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <atomic>
+#include <format>
 #include <ranges>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace VOG::Graphics::Vulkan
 {
 namespace
 {
 const char* gPortabilityEnumerationExtension = "VK_KHR_portability_enumeration";
-const char* gSynchronizationLayer2Name       = "VK_LAYER_KHRONOS_synchronization2";
 
 constexpr std::vector<const char*>
 getInstanceRequiredExtensions()
@@ -20,7 +26,10 @@ getInstanceRequiredExtensions()
     // clang-format off
     std::vector<const char*> requiredExtensions{
         VK_KHR_SURFACE_EXTENSION_NAME,
-        VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME
+        VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
+        // Instance half of VK_EXT_swapchain_maintenance1, which the device requires.
+        VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME,
+        VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME
     };
     // clang-format on
 
@@ -29,6 +38,8 @@ getInstanceRequiredExtensions()
 #elif defined(PLATFORM_VIDEO_APPLE)
     requiredExtensions.push_back(VK_EXT_METAL_SURFACE_EXTENSION_NAME);
 #endif
+    // Linux WSI extensions are added opportunistically in makeInstance when present,
+    // so headless CI (lavapipe without WSI) can still create an instance.
 
     return requiredExtensions;
 }
@@ -59,7 +70,7 @@ makeInstance(const vk::raii::Context& context, const Instance::InstanceParameter
         .applicationVersion = 1u,
         .pEngineName        = parameters.engineName.c_str(),
         .engineVersion      = 1u,
-        .apiVersion         = VK_API_VERSION_1_2,
+        .apiVersion         = gRequiredApiVersion,
     };
 
     const auto&              layers = parameters.layers;
@@ -72,20 +83,29 @@ makeInstance(const vk::raii::Context& context, const Instance::InstanceParameter
                        return extension.data();
                    });
 
-#ifdef PLATFORM_VIDEO_APPLE
-    layersAll.push_back(gSynchronizationLayer2Name);
-#endif
-
     auto requiredExtensions = getInstanceRequiredExtensions();
-    if (std::ranges::find_if(availableInstanceExtensions,
-                             [](const vk::ExtensionProperties& prop)
-                             {
-                                 return std::strcmp(prop.extensionName,
-                                                    gPortabilityEnumerationExtension) == 0;
-                             }) != availableInstanceExtensions.end())
+    if (hasExtension(availableInstanceExtensions, gPortabilityEnumerationExtension))
     {
         requiredExtensions.push_back(gPortabilityEnumerationExtension);
     }
+
+#ifdef PLATFORM_LINUX
+    {
+        auto addIfPresent = [&](const char* name)
+        {
+            if (hasExtension(availableInstanceExtensions, name))
+            {
+                requiredExtensions.push_back(name);
+            }
+        };
+    #ifdef PLATFORM_VIDEO_LINUX_WAYLAND
+        addIfPresent(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);
+    #endif
+    #ifdef PLATFORM_VIDEO_LINUX_XLIB
+        addIfPresent(VK_KHR_XLIB_SURFACE_EXTENSION_NAME);
+    #endif
+    }
+#endif
 
     const auto&              extensions = parameters.extensions;
     std::vector<const char*> extensionsAll(extensions.size());
@@ -104,13 +124,16 @@ makeInstance(const vk::raii::Context& context, const Instance::InstanceParameter
                        return extension;
                    });
 
-    [[maybe_unused]] const auto unique = std::unique(extensionsAll.begin(),
-                                                     extensionsAll.end(),
-                                                     [](const auto& first, const auto& second)
-                                                     {
-                                                         return std::strcmp(first, second) == 0;
-                                                     });
-    vk::InstanceCreateInfo      instanceCreateInfo{
+    // The caller's list and the required list can name the same extension; Vulkan wants each once.
+    const auto byName = [](const char* name)
+    {
+        return std::string_view{name};
+    };
+    std::ranges::sort(extensionsAll, {}, byName);
+    extensionsAll.erase(std::ranges::unique(extensionsAll, {}, byName).begin(),
+                        extensionsAll.end());
+
+    vk::InstanceCreateInfo instanceCreateInfo{
         .flags                   = vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR,
         .pApplicationInfo        = &appInfo,
         .enabledLayerCount       = static_cast<std::uint32_t>(layersAll.size()),
@@ -214,12 +237,42 @@ makePhysicalDevice(const vk::raii::Instance& instance)
                        {
                            const auto& device     = physicalDevices[i];
                            const auto  properties = device.getProperties();
-                           spdlog::info(
-                               "[{}] {}", i, static_cast<std::string_view>(properties.deviceName));
+                           const auto  apiVersion = properties.apiVersion;
+                           spdlog::info("[{}] {} (Vulkan {}.{}.{})",
+                                        i,
+                                        static_cast<std::string_view>(properties.deviceName),
+                                        VK_API_VERSION_MAJOR(apiVersion),
+                                        VK_API_VERSION_MINOR(apiVersion),
+                                        VK_API_VERSION_PATCH(apiVersion));
                        }
                    });
 
-    vk::raii::PhysicalDevice physicalDevice = std::move(physicalDevices[0]);
+    // The first device that offers everything VOG needs; otherwise report every device's gaps.
+    std::string gaps;
+    auto        selected = physicalDevices.begin();
+    for (; selected != physicalDevices.end(); ++selected)
+    {
+        const std::vector<std::string> missing = DeviceRequirements::missing(*selected);
+        if (missing.empty())
+        {
+            break;
+        }
+
+        gaps += std::format("\n  {} lacks:", selected->getProperties().deviceName.data());
+        for (const std::string& item : missing)
+        {
+            gaps += ' ' + item + ';';
+        }
+    }
+    if (selected == physicalDevices.end())
+    {
+        throw std::runtime_error{
+            std::format("No physical device meets VOG's requirements ({} device(s) found).{}",
+                        physicalDevices.size(),
+                        gaps)};
+    }
+
+    vk::raii::PhysicalDevice physicalDevice = std::move(*selected);
 
     // Log device info.
     {
@@ -253,15 +306,17 @@ Instance::Instance(const InstanceParameters& parameters)
 {
 }
 
+const vk::raii::Instance&
+Instance::raii() const noexcept
+{
+    return *this;
+}
+
 DevicePtr
 Instance::makeDevice()
 {
     vk::raii::PhysicalDevice physicalDevice = makePhysicalDevice(*this);
 
-    auto device =
-        std::shared_ptr<Device>{new Device{shared_from_this(), std::move(physicalDevice)}};
-    device->init();
-
-    return device;
+    return std::shared_ptr<Device>{new Device{shared_from_this(), std::move(physicalDevice)}};
 }
 } // namespace VOG::Graphics::Vulkan

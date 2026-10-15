@@ -1,5 +1,4 @@
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
-#include <VOG/Graphics/Vulkan/RenderPass.hpp>
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 
@@ -41,18 +40,10 @@ TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
 {
     using namespace VOG::Graphics::Vulkan;
 
-    auto renderPass =
-        VulkanDevice->createRenderPass({{.format        = vk::Format::eR32G32B32A32Sfloat,
-                                         .loadOp        = vk::AttachmentLoadOp::eClear,
-                                         .storeOp       = vk::AttachmentStoreOp::eStore,
-                                         .initialLayout = vk::ImageLayout::eUndefined,
-                                         .finalLayout = vk::ImageLayout::eColorAttachmentOptimal}},
-                                       {});
+    constexpr auto colorWriteMask =
+        ColorComponent::eR | ColorComponent::eG | ColorComponent::eB | ColorComponent::eA;
 
-    vk::raii::PipelineLayout pipelineLayout{*VulkanDevice, vk::PipelineLayoutCreateInfo{}};
-
-    const GraphicsPipeline::ParametersLegacy createInfoTemplate{
-        .cache   = nullptr,
+    const GraphicsPipeline::Parameters createInfoTemplate{
         .shading = {},
         .vertexLayout =
             {.bindingDescription =
@@ -70,13 +61,10 @@ TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
         .rasterizer    = {.cullMode = CullMode::eNone},
         .viewportState = {.viewportCount = 1u, .scissorCount = 1u},
         .depthStencil  = {},
-        .blending = {.attachments = {{.blendEnable    = 0u,
-                                      .colorWriteMask = ColorComponent::eR | ColorComponent::eG |
-                                                        ColorComponent::eB | ColorComponent::eA}}},
-        .multisample    = {},
-        .dynamicStates  = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
-        .pipelineLayout = *pipelineLayout,
-        .renderPass     = *renderPass};
+        .blending      = {.attachments = {{.blendEnable = 0u, .colorWriteMask = colorWriteMask}}},
+        .multisample   = {},
+        .dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
+        .renderingDescription = {.colorAttachmentFormats = {vk::Format::eR32G32B32A32Sfloat}}};
 
     {
         SCOPED_TRACE("correct pipeline compiles");
@@ -85,11 +73,11 @@ TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
             createShader(Shader::ShadingStage::eFragment, gFragmentShaderGoodString);
 
         auto createInfo    = createInfoTemplate;
-        createInfo.shading = VulkanDevice->createShaderProgram(
+        createInfo.shading = mDevice->createShaderProgram(
             {.vertex   = {.shader = vertexShader, .entryPoint = "main"},
              .fragment = {.shader = fragmentShader, .entryPoint = "main"}});
 
-        EXPECT_NO_THROW(auto pipeline = VulkanDevice->createGraphicsPipeline(createInfo););
+        EXPECT_NO_THROW(auto pipeline = mDevice->createGraphicsPipeline(createInfo););
     }
 }
 } // namespace VOG::Tests

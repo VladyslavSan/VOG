@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include "VulkanFixture.hpp"
+#include "VulkanValidationFixture.hpp"
 
 using namespace VOG::Graphics::Vulkan;
 
@@ -102,5 +103,17 @@ TEST_F(VulkanFixture, Shader_instantiate_fragment_shader)
 {
     EXPECT_NO_THROW(
         { auto shader = createShader(Shader::ShadingStage::eFragment, gFragmentShaderString); });
+}
+
+/**
+ * No Vulkan entry point is reachable through a bare shader, so the call under test is its
+ * destruction (vkDestroyShaderModule on a live device).
+ */
+TEST_F(VulkanValidationFixture, Shader_keepsDeviceAlive)
+{
+    auto       shader   = createShader(Shader::ShadingStage::eFragment, gFragmentShaderString);
+    const auto released = releaseDevice();
+
+    expectDependentHoldsDevice(released, shader);
 }
 } // namespace VOG::Tests

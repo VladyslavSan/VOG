@@ -17,7 +17,9 @@ step builds on the previous. Completed work is kept for context.
 - **Swapchain semaphore correctness**: `imageAvailableSemaphore` is per swapchain
   image (owned by `SwapchainImage`, keyed by the index returned from
   `vkAcquireNextImageKHR`), while `renderFinishedSemaphore` is per
-  frame-in-flight slot (owned by `FrameObjects`, reuse gated by the slot fence).
+  frame-in-flight slot (owned by `FrameObjects`, reuse gated by the slot's submit
+  fence and present fence — the submit fence alone does not prove the presentation
+  engine consumed the wait, see "Present retains" below).
   The swap trick solves the chicken-and-egg for acquire semaphores: one spare is
   passed to acquire, then swapped into `mImages[K]` after K is known — the
   evicted semaphore is provably unsignaled because re-acquiring K proves the
@@ -25,33 +27,94 @@ step builds on the previous. Completed work is kept for context.
   clamped against `surfaceCapabilities.min/maxImageCount` (maxImageCount==0 =
   unlimited, handled explicitly); `recreate()` updates `mExtent` from surface
   capabilities before rebuilding.
-
-## Phase 4: Vulkan 1.3 + dynamic rendering
-
-- Bump `VK_API_VERSION_1_2` → `1_3` (Instance.cpp). MoltenVK and Mesa
-  lavapipe both support 1.3.
-- Enable `vk::PhysicalDeviceVulkan13Features{ .synchronization2, .dynamicRendering }`;
-  drop the `VK_KHR_synchronization2` extension entry (core in 1.3).
-- Add `CommandBufferRecorder::beginRendering()/endRendering()` built from
-  `AttachmentInterface` (the non-legacy `GraphicsPipeline::Parameters` path
-  already emits `vk::PipelineRenderingCreateInfo`).
-- Delete the legacy path: `RenderPass`, `Framebuffer`,
+- **Vulkan 1.3 + dynamic rendering** (Phase 4): instance API version bumped to
+  1.3 and `vk::PhysicalDeviceVulkan13Features{ .synchronization2,
+  .dynamicRendering }` enabled, so the `VK_KHR_synchronization2` extension entry
+  is gone (core in 1.3). `CommandBufferRecorder::beginRendering()/endRendering()`
+  build `vk::RenderingInfo` from `AttachmentInterface` attachments carrying their
+  own load/store ops and clear values, retaining each one. The legacy path is
+  deleted: `RenderPass`, `Framebuffer`,
   `Device::createRenderPass/createFramebuffer`,
-  `GraphicsPipeline::ParametersLegacy`, `beginRenderPass/endRenderPass`.
+  `GraphicsPipeline::ParametersLegacy` and `beginRenderPass/endRenderPass` are
+  gone; `GraphicsPipeline::Parameters` with its `RenderpassDescription` is the
+  only pipeline path.
+- **Typed config + RenderItem seam + demo extraction** (Phase 5): the renderer
+  takes a `Renderer::Config` struct (app/engine name, layers, extensions,
+  frames in flight, shader source path) instead of round-tripping through
+  `JSONContainer`, so JSON stays at the file-loading edge. Draws are described
+  as data: a `RenderItem` value type (pipeline, vertex buffer, vertex count,
+  push-constant blob) produced by `Renderable::prepare(ResourceContext&)`
+  (once, on the render thread) and `Renderable::collect(const FrameContext&,
+  vector<RenderItem>&)` (per frame) — the renderer is the only place that
+  records commands. The quad demo moved to
+  `Examples/ApplicationExample/SpinningQuadsRenderable`, which builds its
+  buffer and pipeline once in `prepare()`, ending the per-frame pipeline
+  creation; renderables are registered through `Application::addRenderable`.
+  The unused `VOG::Scene` API (`Scene`, `SceneObject`) is deleted — scene
+  representation is deferred until materials/meshes exist. Engine links the
+  `VOG::Math` alias.
 
-## Phase 5: typed config + RenderItem seam + demo extraction
+- **Ownership / sync hygiene**: Bugbot fixes (JSONContainer index bounds, FIFO
+  present-mode fallback, `framesInFlight` clamped to swapchain `imageCount`,
+  frame-slot advance only after successful acquire); Device no longer cycles
+  with FencePool/MemoryAllocator via `DevicePtr` backrefs; `Queue::submit` parks
+  CBs only after success; `CommandBufferRecorder` is the only recording surface
+  (private `vk::raii::CommandBuffer` inheritance) and brackets the command
+  buffer and each rendering scope with guards; `AcquiredSwapchainImage` for
+  stable attachment identity; Linux Wayland/X11 WSI; the unfinished
+  `DescriptorAllocator` is deleted (descriptors move to bindless).
+- **Self-sufficient handles**: wrappers around Vulkan objects hold their device (see
+  `ResourceOwnership.md`, "Self-sufficient handles"); `DeviceChild` base for
+  `vk::raii` wrappers, leaf factories return `unique_ptr`, `Queue` is handed
+  out as an aliasing `shared_ptr`, lifetime tests per type.
 
-- `Renderer::Config` struct instead of round-tripping through
-  `JSONContainer` (JSON stays at the file-loading edge only).
-- Minimal data-driven scene seam: `RenderItem` POD (pipeline, vertex buffer,
-  vertex count, push-constant blob); `Renderable` interface with
-  `prepare(ResourceContext&)` (once) and `collect(const FrameContext&, vector<RenderItem>&)`
-  (per frame). Scene aggregates items; only the Renderer records commands.
-- Move the triangle demo into `Examples/ApplicationExample` as a
-  `Renderable`; pipeline/buffer created once in `prepare()` — ends the
-  per-frame pipeline creation.
-- Cleanups: `VOG::Scene` namespace → `VOG::Engine`, `m_` → `m` member naming,
-  Engine links the `VOG::Math` alias.
+- **Foundations** (review stage 1): `VOG_ASSERT` is an abort-only expression; one
+  `DeviceRequirements` table drives device selection and device creation; `inDestructor`
+  logs a Vulkan failure in a destructor and lets teardown continue; test fixtures take
+  options and skip visibly when the validation layer is missing; CI runs a Linux Debug job
+  and the macOS tests.
+- **Wrapper hygiene** (review stage 2): the `vk::raii` base of every wrapper is private (`Fence`, `Queue` and
+  `CommandBuffer` in stage 3), and the roots re-export only the calls that have callers, plus
+  `raii()` accessors; `GraphicsPipeline` is built in one step from its shader program's layout and
+  the device's pipeline cache.
+- **Fences and submission** (review stage 3): a fence is pending only if the submit or
+  present call returned (`FenceHandle::arm`); command buffers move through recorder,
+  `ExecutableCommandBuffer` and submitted, and a dropped one is reset with its pool;
+  `~CommandBufferPool` waits its own fences; `Queue::submit` uses `vkQueueSubmit2` with each
+  wait semaphore paired with its stage; all destructors are `noexcept`.
+
+- **Present retains**: no `waitIdle` anywhere in production code.
+  `Queue::submit` makes the submitted command buffers retain their wait and signal
+  semaphores (binary `Semaphore`); `Swapchain::present` chains a present fence
+  (`VK_EXT_swapchain_maintenance1`, required) and returns a `Presentation` that the
+  frame slot keeps until its next `onFrameStart`; `~FenceHandle` waits for a fence the
+  GPU may still signal, as a safety net; the owners wait explicitly. `recreate()` retires the old
+  `SwapchainGeneration` by reference count (supersedes the swapchain-recreation
+  wait-idle teardown above and the former "stall-free recreation" milestone); the
+  three shutdown validation errors (`vkDestroySemaphore-05149` x2,
+  `vkDestroySwapchainKHR-01282`) are gone. Review stage 4 finished it: `SwapchainGeneration`
+  is private and built in one step, `Presentation` is move-only and its destructor waits the
+  fence, `acquireNextImage` takes a `std::chrono` timeout, and `recreate(extent)` returns
+  false for a zero size. See `SwapchainSync.md`.
+
+- **Renderer lifecycle** (review stage 5): `Renderer` is a `final` leaf in a `unique_ptr`. The render thread
+  captures `this`, owns nothing and is the last member, so `~Renderer` joins it before any GPU
+  state dies and cannot run on it. `start()`, `stop()` (returns the thread's failure as an
+  `exception_ptr`) and `getState()` replace `requestRenderChangeState`; `Application::run()`
+  polls the state, rethrows a render-thread failure on the main thread and can be called again.
+  Renderables are queued in a pending list that no callback runs under, so `prepare()` and
+  `collect()` may call `addRenderable()`; a malformed `RenderItem` fails the render thread. A frame
+  collects its draws before it acquires an image. `Renderer::resize()` (fed by
+  `SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED`) and one `applyExtent` path size the swapchain, so Wayland
+  and headless surfaces resize; the acquire waits 100 ms, so a hidden window neither spins nor
+  blocks quitting. Engine and Application have unit tests. See `SwapchainSync.md`.
+
+- **VMA out of the public headers** (review stage 6): no public header includes
+  `vk_mem_alloc.h`, and `PublicHeadersTest`, generated from the public header set, keeps it
+  that way. `Device::createBuffer` takes `AllocationParameters` with `AllocationFlags`;
+  `eHostSequentialWrite` is what `Buffer::mapForWrite()` needs.
+- **Docs pass** (review stage 7): current-state text checked against the code; the known
+  gaps are listed in `ResourceOwnership.md`.
 
 ## Later milestones (in rough order)
 
@@ -60,22 +123,25 @@ step builds on the previous. Completed work is kept for context.
    barrier blocks in the renderer.
 2. **Images & uploads**: `Image`/texture class, staging-buffer upload path on
    the so-far-unused transfer queue.
-3. **Materials, meshes, descriptor strategy** (extends `RenderItem`).
+3. **Materials and meshes: the Engine-level draw API.** A material is a shader plus its
+   parameters; a draw submits a mesh and a material to the render queue. Pipelines, shader
+   programs, buffers and the device stay in `VOG::Graphics`. This replaces today's stopgap,
+   which hands Graphics types to Engine users: `RenderItem` (pipeline, vertex buffer,
+   push-constant blob), `ResourceContext` (device, shader program cache) and the swapchain
+   extent in `FrameContext`, which a renderable needs only to build its own projection (a
+   camera's job). Material parameters move to bindless descriptors.
 4. **Scene representation** decision (ECS vs scene graph) — deferred until
    materials/meshes exist.
-5. **Stall-free swapchain recreation** (only if resize hitching ever
-   matters): retire old swapchain + views into a graveyard tagged with the
-   current frame counter, drained in `acquireNextFrame()` once
-   `framesInFlight` frames have passed — reuses the existing per-frame-slot
-   fences, no new sync primitives. Not worth the complexity while resize is
-   rare and wait-idle works.
 
 ## Standing decisions
 
 - **Vulkan-only**; an RHI layer can be reintroduced later if a second
   backend is ever wanted.
+- **Layering of the draw API**: `VOG::Graphics` speaks Vulkan (pipelines, shaders, buffers,
+  descriptors); the Engine API speaks meshes and materials and does not expose Graphics types.
+  The `Renderable` interface breaks this until milestone 3.
 - Resource lifetimes follow the recording-retains model
-  (`ResourceOwnership.md`); new recording APIs must retain via
-  `CommandBuffer::addBoundResource`.
+  (`ResourceOwnership.md`); new recording APIs must retain through
+  `CommandBufferRecorder`.
 - Per-command-buffer retention stays the primary lifetime mechanism until
   profiling shows the per-bind cost matters.

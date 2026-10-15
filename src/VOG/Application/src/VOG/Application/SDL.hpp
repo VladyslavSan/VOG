@@ -2,9 +2,12 @@
 
 #include <VOG/Common/Assert.hpp>
 #include <VOG/Common/SurfaceHandle.hpp>
+#include <VOG/Graphics/Config/VulkanConfig.hpp>
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
+#include <cstdint>
 #include <memory>
 
 namespace VOG::Application
@@ -30,11 +33,14 @@ class SDLWindow
 public:
     static Common::SurfaceHandle makeSurfaceHandles(const SDLWindow::Handle& window);
 
-    SDLWindow(const char* title, int w, int h, SDL_WindowFlags flags);
+    SDLWindow(const char* title, int width, int height, SDL_WindowFlags flags);
 
     Uint32 getWindowId() const;
 
     const Common::SurfaceHandle& getSurfaceHandle() const;
+
+    /** Size of the window in physical pixels. Main thread only, like every SDL window call. */
+    vk::Extent2D sizeInPixels() const;
 
 protected:
     Handle mWindowHandle;
@@ -43,8 +49,8 @@ protected:
     Common::SurfaceHandle mSurfaceHandles;
 };
 
-inline SDLWindow::SDLWindow(const char* title, int w, int h, const SDL_WindowFlags flags)
-    : mWindowHandle{SDL_CreateWindow(title, w, h, flags), SDL_DestroyWindow}
+inline SDLWindow::SDLWindow(const char* title, int width, int height, const SDL_WindowFlags flags)
+    : mWindowHandle{SDL_CreateWindow(title, width, height, flags), SDL_DestroyWindow}
     , mWindowId{SDL_GetWindowID(mWindowHandle.get())}
 {
     VOG_ASSERT_MSG(mWindowHandle, "Window handle should not be null.");
@@ -62,5 +68,16 @@ inline const Common::SurfaceHandle&
 SDLWindow::getSurfaceHandle() const
 {
     return mSurfaceHandles;
+}
+
+inline vk::Extent2D
+SDLWindow::sizeInPixels() const
+{
+    int width  = 0;
+    int height = 0;
+    SDL_GetWindowSizeInPixels(mWindowHandle.get(), &width, &height);
+
+    return {.width  = static_cast<std::uint32_t>(std::max(width, 0)),
+            .height = static_cast<std::uint32_t>(std::max(height, 0))};
 }
 } // namespace VOG::Application

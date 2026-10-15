@@ -5,12 +5,11 @@
 #include <VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
 #include <VOG/Graphics/Vulkan/Containers.hpp>
-#include <VOG/Graphics/Vulkan/DescriptorAllocator.hpp>
-#include <VOG/Graphics/Vulkan/Fence.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/Limits.hpp>
 #include <VOG/Graphics/Vulkan/MemoryAllocator.hpp>
 #include <VOG/Graphics/Vulkan/Queue.hpp>
+#include <VOG/Graphics/Vulkan/Semaphore.hpp>
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 #include <VOG/Graphics/Vulkan/TimelineSemaphore.hpp>
@@ -19,13 +18,10 @@ namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Buffer);
 VOG_DECLARE_PTR(CommandBufferPool);
-VOG_DECLARE_PTR(Framebuffer);
 VOG_DECLARE_PTR(RenderBuffer);
-VOG_DECLARE_PTR(RenderPass);
-VOG_DECLARE_PTR(FencePool);
 VOG_DECLARE_PTR(Instance);
 
-class PhysicalDevice : public vk::raii::PhysicalDevice
+class PhysicalDevice : private vk::raii::PhysicalDevice
 {
 public:
     struct QueueFamilyInfo
@@ -40,31 +36,52 @@ public:
         QueueFamilyInfo transfer;
     };
 
-    PhysicalDevice(vk::raii::PhysicalDevice physicalDevice);
+    PhysicalDevice(InstancePtr instance, vk::raii::PhysicalDevice physicalDevice);
+
+    using vk::raii::PhysicalDevice::getMemoryProperties;
+    using vk::raii::PhysicalDevice::getQueueFamilyProperties;
+    using vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR;
+    using vk::raii::PhysicalDevice::getSurfaceFormatsKHR;
+    using vk::raii::PhysicalDevice::getSurfacePresentModesKHR;
+    using vk::raii::PhysicalDevice::getSurfaceSupportKHR;
+    using vk::raii::PhysicalDevice::operator*;
+
+    /** For the raii objects that take a physical device; the base itself stays private. */
+    const vk::raii::PhysicalDevice& raiiPhysicalDevice() const noexcept;
+
+    /**
+     * Instance this physical device was queried from. Held here, in the first base of Device, so
+     * that it outlives the VkDevice and everything the device owns.
+     */
+    const InstancePtr instance;
 
     const QueueInfos queueInfos;
 };
 
 class Device
     : public PhysicalDevice
-    , public vk::raii::Device
+    , private vk::raii::Device
     , public std::enable_shared_from_this<Device>
 {
     friend class Instance;
 
     Device(InstancePtr instance, vk::raii::PhysicalDevice physicalDevice);
-    void init();
 
 public:
+    Device(const Device&) = delete;
+    Device(Device&&)      = delete;
+
     ~Device(); // NOLINT(bugprone-derived-method-shadowing-base-method)
 
-    using vk::raii::Device::operator*;
     using vk::raii::Device::getDispatcher;
+    using vk::raii::Device::operator*;
+    using vk::raii::Device::releaseSwapchainImagesEXT;
+    using vk::raii::Device::resetFences;
+    using vk::raii::Device::waitForFences;
+    using vk::raii::Device::waitSemaphores;
 
-    /**
-     * @return The device's shared fence pool.
-     */
-    const FencePoolPtr& getFencePool() const;
+    /** For the raii objects that take a device; the base itself stays private. */
+    const vk::raii::Device& raii() const noexcept;
 
     /**
      * Compiles a single shader stage from a SPIR-V binary.
@@ -74,7 +91,8 @@ public:
      *
      * @return Compiled shader object.
      */
-    ShaderPtr createShader(Shader::ShadingStage stage, std::span<const std::uint32_t> binary);
+    std::unique_ptr<Shader> createShader(Shader::ShadingStage           stage,
+                                         std::span<const std::uint32_t> binary);
 
     /**
      * Links vertex and fragment shaders into a shader program.
@@ -84,54 +102,18 @@ public:
      *
      * @return Linked shader program with a reflected pipeline layout.
      */
-    std::shared_ptr<ShaderProgram> createShaderProgram(ShaderProgram::ShadingStages stages);
+    std::unique_ptr<ShaderProgram> createShaderProgram(ShaderProgram::ShadingStages stages);
 
     /**
-     * Creates a graphics pipeline using a legacy render-pass-based description.
+     * Creates a graphics pipeline for dynamic rendering into the attachments that
+     * Parameters::renderingDescription describes.
      *
-     * @param createInfo  Pipeline parameters including the render pass object.
+     * @param createInfo  Pipeline parameters; the pipeline layout comes from `shading`.
      *
      * @return Compiled graphics pipeline.
      */
-    std::shared_ptr<GraphicsPipeline>
-    createGraphicsPipeline(GraphicsPipeline::ParametersLegacy createInfo);
-
-    /**
-     * Creates a graphics pipeline from a renderpass description.
-     *
-     * @param createInfo  Pipeline parameters with a renderpass description.
-     *
-     * @return Compiled graphics pipeline.
-     */
-    std::shared_ptr<GraphicsPipeline>
+    std::unique_ptr<GraphicsPipeline>
     createGraphicsPipeline(GraphicsPipeline::Parameters createInfo);
-
-    /**
-     * Creates a render pass from attachment descriptions.
-     *
-     * @param colorAttachments  Descriptions of color attachments.
-     * @param depthStencil      Description of the depth/stencil attachment.
-     *
-     * @return Render pass object.
-     */
-    std::shared_ptr<RenderPass>
-    createRenderPass(const StaticVector<vk::AttachmentDescription, Limits::gMaxNumAttachments - 1u>&
-                                                      colorAttachments,
-                     const vk::AttachmentDescription& depthStencil);
-
-    /**
-     * Creates a framebuffer by binding attachments to a render pass.
-     *
-     * @param renderPass              Render pass the framebuffer is compatible with.
-     * @param colorAttachments        Color attachment views.
-     * @param depthStencilAttachment  Depth/stencil attachment view.
-     *
-     * @return Framebuffer object.
-     */
-    std::shared_ptr<Framebuffer> createFramebuffer(
-        std::shared_ptr<RenderPass>                                           renderPass,
-        StaticVector<AttachmentInterfacePtr, Limits::gMaxNumAttachments - 1u> colorAttachments,
-        AttachmentInterfacePtr depthStencilAttachment);
 
     /**
      * Creates a command buffer pool for recording GPU commands.
@@ -149,7 +131,7 @@ public:
      *
      * @return Swapchain object.
      */
-    std::shared_ptr<Swapchain> createSwapchain(const Swapchain::SwapchainParameters& parameters);
+    std::unique_ptr<Swapchain> createSwapchain(const Swapchain::SwapchainParameters& parameters);
 
     /**
      * Creates an image-backed render attachment (color or depth/stencil).
@@ -166,7 +148,7 @@ public:
      *
      * @return Render buffer object.
      */
-    std::shared_ptr<RenderBuffer> createRenderBuffer(AttachmentUsage         usage,
+    std::unique_ptr<RenderBuffer> createRenderBuffer(AttachmentUsage         usage,
                                                      vk::Format              desiredFormat,
                                                      vk::Extent2D            extent,
                                                      SampleCount             sampleCount,
@@ -177,20 +159,11 @@ public:
                                                      vk::MemoryPropertyFlags memoryProperties);
 
     /**
-     * Creates a descriptor allocator pre-configured with the given pool sizes.
-     *
-     * @param params  Pool sizes and max set count.
-     *
-     * @return Descriptor allocator.
-     */
-    std::unique_ptr<DescriptorAllocator>
-    createDescriptorAllocator(const DescriptorAllocator::ConstructionParameters& params);
-
-    /**
-     * Allocates a GPU buffer with the specified usage and memory properties.
+     * Allocates a GPU buffer. The allocator picks the memory type for the buffer's usage.
      *
      * @param createInfo      Buffer size, usage flags, and sharing mode.
-     * @param allocationInfo  VMA memory usage and required/preferred memory flags.
+     * @param allocationInfo  Allocation flags; pass AllocationFlag::eHostSequentialWrite to be
+     *                        able to map the buffer with Buffer::mapForWrite().
      *
      * @return Allocated buffer.
      */
@@ -199,12 +172,12 @@ public:
                  const MemoryAllocator::AllocationParameters& allocationInfo);
 
     /**
-     * Creates a binary fence for CPU/GPU synchronization.
-     * The fence starts in the unsignaled state.
+     * Creates a binary semaphore. Pass it to Queue::submit and Swapchain::present: the command
+     * buffers and the presentation retain it until the GPU is done with it.
      *
-     * @return Fence object.
+     * @return Binary semaphore.
      */
-    Fence createFence();
+    SemaphorePtr createSemaphore();
 
     /**
      * Creates a timeline semaphore for ordered multi-stage GPU synchronization.
@@ -214,13 +187,35 @@ public:
      */
     TimelineSemaphore createTimelineSemaphore();
 
-    const InstancePtr             instance;
-    const Vulkan::Queue           graphicsQueue;
-    const Vulkan::Queue           transferQueue;
+    /**
+     * Hands out the graphics queue. The returned pointer shares ownership of this Device, so the
+     * queue stays valid for as long as it is held.
+     *
+     * @return Graphics queue.
+     */
+    std::shared_ptr<const Queue> getGraphicsQueue();
+
+    /**
+     * Hands out the transfer queue. The returned pointer shares ownership of this Device, like
+     * getGraphicsQueue().
+     *
+     * @return Transfer queue.
+     */
+    std::shared_ptr<const Queue> getTransferQueue();
+
+private:
+    /** Handed out through getGraphicsQueue() / getTransferQueue(). */
+    const Vulkan::Queue mGraphicsQueue;
+    const Vulkan::Queue mTransferQueue;
+
+public:
     const vk::raii::PipelineCache pipelineCache;
 
 private:
-    FencePoolPtr       mFencePool;
-    MemoryAllocatorPtr mMemoryAllocator;
+    /**
+     * Private VMA wrapper. Holds Device& only so it cannot pin the device. Buffers retain a
+     * DevicePtr and free through this allocator while the device lives.
+     */
+    std::unique_ptr<MemoryAllocator> mMemoryAllocator;
 };
 } // namespace VOG::Graphics::Vulkan

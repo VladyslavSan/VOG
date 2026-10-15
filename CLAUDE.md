@@ -1,7 +1,19 @@
 # VOG
 
 C++20 Vulkan rendering engine. Module layering (each links only downward):
-`Common → Math / CVarSystem → Graphics (Vulkan layer) → Engine (renderer, scene) → Application (SDL3 shell) → Examples`.
+
+```
+Common
+  ├─ Math          (glm wrappers; consumed by Engine)
+  ├─ CVarSystem    (SHARED; parked — only its unit tests link it today)
+  └─ Graphics      (Vulkan wrappers; links Common only)
+       └─ Engine   (Renderer, Renderable / RenderItem)
+            └─ Application (SDL3 shell)
+                 └─ Examples
+```
+
+CVarSystem is built but not part of the product path until something above Common
+consumes it.
 
 ## Critical: automatic resource ownership (Metal-like)
 
@@ -11,21 +23,30 @@ it (fence-keyed release on frame-slot reuse) — the same model the Metal API
 provides. Letting a `shared_ptr` die at scope end is safe even for in-flight
 resources — do NOT diagnose "destroyed while GPU in use" bugs or add deletion
 queues / wait-idle calls before tracing the retention chain. Any new recording
-API must retain its resource via `CommandBuffer::addBoundResource`.
-Details: `docs/ResourceOwnership.md`.
+API must retain its resource through `CommandBufferRecorder`, the only
+recording path (`Queue::submit` retains the semaphores it is given;
+`CommandBuffer` inherits `vk::raii::CommandBuffer` privately).
+Presenting follows the same model: `Swapchain::present` returns a `Presentation`
+(swapchain generation, wait semaphore, present fence) that the frame slot keeps
+until the fence signals; this needs `VK_EXT_swapchain_maintenance1`, which device
+selection requires. There is no `waitIdle` anywhere in production code.
+Details: `docs/ResourceOwnership.md`, `docs/SwapchainSync.md`.
 
 ## Build & test
 
 - Configure once: `cmake --preset debug` (Conan-generated presets; full
   dependency setup is `conan build .`)
 - Build: `cmake --build build/build/Debug`
-- Test: `ctest --test-dir build/build/Debug --output-on-failure` (23+ gtest
-  units; Vulkan tests run headless via `VulkanFixture`)
+- Test: `ctest --test-dir build/build/Debug --output-on-failure` (gtest
+  units per module; the Graphics tests run headless through `VulkanFixture` and the Engine tests
+  render into a headless surface, so both need a Vulkan driver)
 - Run example: `./build/build/Debug/src/VOG/Examples/ApplicationExample/ApplicationExample --shader-storage-path src/VOG/Graphics/resources/shaders`
+  (Windows / macOS / Linux with Wayland or X11; Linux WSI is selected from the SDL window backend)
 
 ## Conventions
 
 - Members `mCamelCase`; constants `kCamelCase`/`gCamelCase`; enums `eValue`.
 - clang-format + clang-tidy enforced by CI (cpp-linter); format before pushing.
+  CI pins clang-format/tidy **22**; local VS-bundled tools may be older.
 - Conventional-commit style subjects (`fix:`, `feat:`, `ci:`, `refactor:`).
 - Tests mirror `<Module>/Test/Unit/`, target name `VOG.<Module>.Unit`.

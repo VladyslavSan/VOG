@@ -1,47 +1,31 @@
 #pragma once
 
-#include <VOG/Common/Concepts.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
-#include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/Containers.hpp>
 
 #include <memory>
-#include <ranges>
 #include <unordered_set>
-#include <vector>
 
 namespace VOG::Graphics::Vulkan
 {
-using CommandBufferType = vk::CommandBufferLevel;
+VOG_DECLARE_PTR(Buffer);
 
-class CommandBufferState
-{
-public:
-    enum class State : std::uint8_t
-    {
-        eEmpty,
-        eRecording,
-        eRecordingEnded,
-        eSubmitted,
-        // eFinishedExecution
-    };
-
-    State
-    getState() const
-    {
-        return mState;
-    }
-
-protected:
-    State mState = State::eEmpty;
-};
-
-class CommandBuffer : public vk::raii::CommandBuffer
+/**
+ * Vulkan command buffer that keeps everything recorded into it alive. Inherits
+ * vk::raii::CommandBuffer privately: recording goes through CommandBufferRecorder, which retains
+ * what it records, and submission goes through Queue.
+ *
+ * Never copied or moved: the pool, the recorder and the executable command buffer pass it around
+ * as unique_ptr<CommandBuffer>.
+ */
+class CommandBuffer : private vk::raii::CommandBuffer
 {
     friend class CommandBufferPool;
+    friend class CommandBufferRecorder;
+    friend class Queue;
 
-    CommandBuffer(vk::raii::CommandBuffer commandBuffer, CommandBufferType type);
+    explicit CommandBuffer(vk::raii::CommandBuffer commandBuffer);
 
 public:
     constexpr static std::size_t kMaxNumVertexBufferBind = 8u;
@@ -53,37 +37,22 @@ public:
     };
 
     CommandBuffer(const CommandBuffer&) = delete;
-    CommandBuffer(CommandBuffer&&)      = default;
+    CommandBuffer(CommandBuffer&&)      = delete;
 
-    operator bool() const;
+private:
+    void begin(const vk::CommandBufferBeginInfo& beginInfo);
+    void end();
 
-    void
-    bindVertexBuffers(std::uint32_t                                              firstBinding,
-                      StaticVectorStrict<BufferBinding, kMaxNumVertexBufferBind> bindings)
-    {
-        std::array<vk::Buffer, kMaxNumVertexBufferBind>     bufferHandles;
-        std::array<vk::DeviceSize, kMaxNumVertexBufferBind> offsets;
-        for (std::size_t i = 0; i < bindings.size(); ++i)
-        {
-            bufferHandles[i] = **bindings[i].buffer;
-            offsets[i]       = bindings[i].offset;
-            mBoundVertexBuffers.insert(std::move(bindings[i].buffer));
-        }
+    /** Raw Vulkan handle for submit. */
+    vk::CommandBuffer vkHandle() const;
 
-        vk::raii::CommandBuffer::bindVertexBuffers(
-            firstBinding,
-            {static_cast<std::uint32_t>(bindings.size()), bufferHandles.data()},
-            {static_cast<std::uint32_t>(bindings.size()), offsets.data()});
-    }
+    /** Keeps @p resource alive until releaseRetained(); the one entry point for retention. */
+    void retain(std::shared_ptr<const void> resource);
 
-    void addBoundResource(const std::shared_ptr<void>& resource);
+    /** Drops everything retained; call once the GPU is done with the command buffer. */
+    void releaseRetained() noexcept;
 
-    void reset();
-
-    const CommandBufferType type;
-
-protected:
-    std::vector<std::shared_ptr<void>>          mBoundResources;
-    std::unordered_set<std::shared_ptr<Buffer>> mBoundVertexBuffers;
+    /** A set: binding the same pipeline 1000 times holds one reference. */
+    std::unordered_set<std::shared_ptr<const void>> mRetained;
 };
 } // namespace VOG::Graphics::Vulkan

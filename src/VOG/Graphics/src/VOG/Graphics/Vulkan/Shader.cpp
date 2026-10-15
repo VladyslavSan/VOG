@@ -197,7 +197,7 @@ Shader::vertexFormatCompatible(Shader::Reflection::BaseType shaderVertexFormat, 
 Shader::Shader(DevicePtr _device, Shader::ShadingStage stage, std::span<const std::uint32_t> binary)
     : device{std::move(_device)}
     , stage{toVulkan(stage)}
-    , module{*device,
+    , module{device->raii(),
              vk::ShaderModuleCreateInfo{.codeSize = binary.size() * sizeof(std::uint32_t),
                                         .pCode    = binary.data()}}
     , reflection{reflect(binary)}

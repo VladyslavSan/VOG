@@ -28,11 +28,11 @@ target_sources(VOG.Graphics
         BASE_DIRS
             include/
         FILES
-            include/VOG/Graphics/Config/VmaConfig.hpp
             include/VOG/Graphics/Config/VulkanConfig.hpp
             include/VOG/Graphics/Frame/FrameObjectManager.hpp
             include/VOG/Graphics/Frame/FrameObjects.hpp
             include/VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp
+            include/VOG/Graphics/Vulkan/Attachment/AcquiredSwapchainImage.hpp
             include/VOG/Graphics/Vulkan/Attachment/RenderBuffer.hpp
             include/VOG/Graphics/Vulkan/Attachment/Swapchain.hpp
             include/VOG/Graphics/Vulkan/Buffer.hpp
@@ -41,17 +41,18 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Vulkan/CommandBufferRecorder.hpp
             include/VOG/Graphics/Vulkan/Common.hpp
             include/VOG/Graphics/Vulkan/Containers.hpp
-            include/VOG/Graphics/Vulkan/DescriptorAllocator.hpp
             include/VOG/Graphics/Vulkan/Device.hpp
+            include/VOG/Graphics/Vulkan/DeviceChild.hpp
+            include/VOG/Graphics/Vulkan/DeviceRequirements.hpp
             include/VOG/Graphics/Vulkan/Fence.hpp
             include/VOG/Graphics/Vulkan/FencePool.hpp
-            include/VOG/Graphics/Vulkan/FrameBuffer.hpp
             include/VOG/Graphics/Vulkan/GraphicsPipeline.hpp
+            include/VOG/Graphics/Vulkan/InDestructor.hpp
             include/VOG/Graphics/Vulkan/Instance.hpp
             include/VOG/Graphics/Vulkan/Limits.hpp
             include/VOG/Graphics/Vulkan/MemoryAllocator.hpp
             include/VOG/Graphics/Vulkan/Queue.hpp
-            include/VOG/Graphics/Vulkan/RenderPass.hpp
+            include/VOG/Graphics/Vulkan/Semaphore.hpp
             include/VOG/Graphics/Vulkan/GLSLCompiler.hpp
             include/VOG/Graphics/Vulkan/Shader.hpp
             include/VOG/Graphics/Vulkan/ShaderProgram.hpp
@@ -65,38 +66,55 @@ target_sources(VOG.Graphics
         src/VOG/Graphics/Vulkan/Attachment/Converters.hpp
         src/VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.hpp
         src/VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.cpp
+        src/VOG/Graphics/Vulkan/Attachment/AcquiredSwapchainImage.cpp
         src/VOG/Graphics/Vulkan/Attachment/RenderBuffer.cpp
         src/VOG/Graphics/Vulkan/Attachment/Swapchain.cpp
+        src/VOG/Graphics/Vulkan/Attachment/SwapchainGeneration.cpp
+        src/VOG/Graphics/Vulkan/Attachment/SwapchainGeneration.hpp
         src/VOG/Graphics/Vulkan/Buffer.cpp
         src/VOG/Graphics/Vulkan/CommandBuffer.cpp
         src/VOG/Graphics/Vulkan/CommandBufferPool.cpp
         src/VOG/Graphics/Vulkan/CommandBufferRecorder.cpp
         src/VOG/Graphics/Vulkan/Common.cpp
-        src/VOG/Graphics/Vulkan/DescriptorAllocator.cpp
         src/VOG/Graphics/Vulkan/Device.cpp
+        src/VOG/Graphics/Vulkan/DeviceRequirements.cpp
         src/VOG/Graphics/Vulkan/Fence.cpp
         src/VOG/Graphics/Vulkan/FencePool.cpp
-        src/VOG/Graphics/Vulkan/Framebuffer.cpp
         src/VOG/Graphics/Vulkan/GraphicsPipeline.cpp
+        src/VOG/Graphics/Vulkan/InDestructor.cpp
         src/VOG/Graphics/Vulkan/Instance.cpp
         src/VOG/Graphics/Vulkan/MemoryAllocator.cpp
         src/VOG/Graphics/Vulkan/MemoryAllocatorVmaImpl.cpp
         src/VOG/Graphics/Vulkan/Queue.cpp
-        src/VOG/Graphics/Vulkan/RenderPass.cpp
+        src/VOG/Graphics/Vulkan/Semaphore.cpp
         src/VOG/Graphics/Vulkan/GLSLCompiler.cpp
         src/VOG/Graphics/Vulkan/Shader.cpp
         src/VOG/Graphics/Vulkan/ShaderProgram.cpp
         src/VOG/Graphics/Vulkan/TimelineSemaphore.cpp
+        src/VOG/Graphics/Vulkan/VmaConfig.hpp
         src/VOG/Graphics/ShaderProgramCache.cpp
 )
+
+# Every header under include/ must be in the public header set: PublicHeadersTest is generated from
+# the set, so a header left out of it would escape the check that no public header pulls in VMA.
+file(GLOB_RECURSE onDiskHeaders CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+    include/*.hpp)
+get_target_property(setHeaders VOG.Graphics HEADER_SET_public_headers)
+foreach(header IN LISTS onDiskHeaders)
+    cmake_path(ABSOLUTE_PATH header BASE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} OUTPUT_VARIABLE headerPath)
+    if(NOT headerPath IN_LIST setHeaders)
+        message(FATAL_ERROR "${header} is not in the public_headers FILE_SET of VOG.Graphics; "
+                            "add it, or it escapes PublicHeadersTest.")
+    endif()
+endforeach()
 
 target_link_libraries(VOG.Graphics
     PUBLIC
         VOG.Common
         Vulkan::Headers
-        GPUOpen::VulkanMemoryAllocator
         Boost::container
     PRIVATE
+        GPUOpen::VulkanMemoryAllocator
         nlohmann_json::nlohmann_json                                                                                
         spirv-cross::spirv-cross
         spdlog::spdlog

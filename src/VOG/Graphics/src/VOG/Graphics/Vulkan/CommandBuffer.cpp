@@ -2,28 +2,38 @@
 
 namespace VOG::Graphics::Vulkan
 {
-CommandBuffer::CommandBuffer(vk::raii::CommandBuffer commandBuffer, CommandBufferType _type)
+CommandBuffer::CommandBuffer(vk::raii::CommandBuffer commandBuffer)
     : vk::raii::CommandBuffer{std::move(commandBuffer)}
-    , type{_type}
 {
-}
-
-CommandBuffer::
-operator bool() const
-{
-    return static_cast<bool>(**this);
 }
 
 void
-CommandBuffer::addBoundResource(const std::shared_ptr<void>& resource)
+CommandBuffer::begin(const vk::CommandBufferBeginInfo& beginInfo)
 {
-    mBoundResources.push_back(resource);
+    vk::raii::CommandBuffer::begin(beginInfo);
 }
 
 void
-CommandBuffer::reset()
+CommandBuffer::end()
 {
-    mBoundResources.clear();
-    mBoundVertexBuffers.clear();
+    vk::raii::CommandBuffer::end();
+}
+
+vk::CommandBuffer
+CommandBuffer::vkHandle() const
+{
+    return *static_cast<const vk::raii::CommandBuffer&>(*this);
+}
+
+void
+CommandBuffer::retain(std::shared_ptr<const void> resource)
+{
+    mRetained.insert(std::move(resource));
+}
+
+void
+CommandBuffer::releaseRetained() noexcept
+{
+    mRetained.clear();
 }
 } // namespace VOG::Graphics::Vulkan

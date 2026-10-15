@@ -18,14 +18,11 @@
 #define VMA_STATIC_VULKAN_FUNCTIONS 0
 #define VMA_DYNAMIC_VULKAN_FUNCTIONS 0
 
+// Compile-time ceiling for the Vulkan version VMA may use; without it VMA derives one from the
+// Vulkan headers and compiles in calls newer than the instance enables. It must not be lower than
+// gRequiredApiVersion, which MemoryAllocator passes to VMA at runtime (checked by a static_assert
+// there).
 #define VMA_VULKAN_VERSION 1003000 // Vulkan 1.3
-
-#ifdef _WIN32
-    #define NOMINMAX
-    #define WIN32_LEAN_AND_MEAN
-    #include <Windows.h>
-    #define VK_USE_PLATFORM_WIN32_KHR
-#endif
 
 #ifdef _MSVC_LANG
     #pragma warning(push, 4)

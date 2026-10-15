@@ -2,7 +2,10 @@
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
+#include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
+#include <VOG/Graphics/Vulkan/Semaphore.hpp>
 
+#include <optional>
 #include <vector>
 
 namespace VOG::Graphics::Vulkan
@@ -22,27 +25,45 @@ class FrameObjects
 public:
     FrameObjects(Vulkan::DevicePtr device, std::size_t threadCount);
 
-    FrameObjects(FrameObjects&&)      = default;
+    FrameObjects(FrameObjects&&)      = delete;
     FrameObjects(const FrameObjects&) = delete;
 
-    ~FrameObjects();
+    /**
+     * Nothing to do by hand: members are destroyed in reverse order, so the presentation goes
+     * first and waits for its present fence, then the pools it last holds wait for their
+     * submitted command buffers (a pool someone else still holds waits in its own destructor).
+     * Every wait is a noexcept inDestructor path.
+     */
+    ~FrameObjects() = default;
+
+    const Vulkan::SemaphorePtr& getRenderFinishedSemaphore() const;
+
+    /**
+     * Keeps @p presentation until this frame slot starts again. The slot's render-finished
+     * semaphore is waited by that presentation, so the slot must not signal it again before the
+     * presentation fence signalled; onFrameStart() drops the presentation, and
+     * ~Presentation waits for the fence.
+     *
+     * @note Render thread only: dropping a Presentation returns its fence to the pool.
+     */
+    void retainUntilPresented(Vulkan::Swapchain::Presentation presentation);
 
     /**
      * Get the command buffer pool by thread id.
      *
      * @param threadId Index of the thread requesting the command buffer pool.
-     * Id is simply an index from 0 to @p mCommandBufferPools size.
+     * Id is simply an index from 0 to `mCommandBufferPools` size.
      *
-     * @note for a thread pool thread ids should be unique as access to thread objects is not
-     * guarded.
+     * @note Access is not guarded. Engine currently uses threadCount = 1
+     * (threadId 0 only); multi-threaded recording is reserved.
      */
-    const vk::raii::Semaphore& getRenderFinishedSemaphore() const;
-
     Vulkan::CommandBufferPoolPtr getCommandBufferPoolForThread(std::size_t threadId);
 
 protected:
     /**
-     * Frame cleanups from previous usage like resetting the command buffers and command pools etc.
+     * Frame cleanups from previous usage like resetting the command buffers and command pools, and
+     * dropping the previous presentation of this slot, whose destructor waits for its present
+     * fence.
      */
     void onFrameStart();
 
@@ -54,12 +75,16 @@ protected:
     /** Vulkan device provider */
     Vulkan::DevicePtr mDevice;
 
-    /** Signaled by the graphics submit; waited by vkQueuePresentKHR. Safe to reuse after the
-     *  frame fence fires — the fence proves the GPU finished the submit, which means the signal
-     *  op completed and the PE's wait has been or will be satisfied before the next submit. */
-    vk::raii::Semaphore mRenderFinishedSemaphore;
+    /** Signaled by the graphics submit; waited by vkQueuePresentKHR. The submit fence does not
+     *  prove the presentation engine consumed the wait, so the semaphore is safe to signal again
+     *  only after mPresentation was dropped in onFrameStart(), which waits for its present fence.
+     */
+    Vulkan::SemaphorePtr mRenderFinishedSemaphore;
 
     /** Per working thread command buffer pools */
     std::vector<Vulkan::CommandBufferPoolPtr> mCommandBufferPools;
+
+    /** The last presentation of this slot; it holds the swapchain the presentation uses. */
+    std::optional<Vulkan::Swapchain::Presentation> mPresentation;
 };
 } // namespace VOG::Graphics::Frame

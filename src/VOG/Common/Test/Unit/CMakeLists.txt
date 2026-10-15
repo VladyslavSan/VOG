@@ -1,4 +1,5 @@
 find_package(GTest REQUIRED)
+find_package(spdlog REQUIRED)
 
 add_executable(VOG.Common.Unit)
 set_target_properties(VOG.Common.Unit PROPERTIES FOLDER "VOG/Tests")
@@ -10,12 +11,14 @@ target_include_directories(VOG.Common.Unit
 
 target_sources(VOG.Common.Unit
     PRIVATE
+        src/AssertTest.cpp
         src/JSONContainerTest.cpp
 )
 
 target_link_libraries(VOG.Common.Unit
     PUBLIC
         ${PROJECT_NAME}::Common
+        spdlog::spdlog
         GTest::gtest
         GTest::gtest_main
 )
