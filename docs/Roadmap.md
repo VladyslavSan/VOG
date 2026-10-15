@@ -134,17 +134,24 @@ step builds on the previous. Completed work is kept for context.
   `GraphicsPipeline` throws `std::invalid_argument` for a location without an attribute or a
   numeric type that does not match. See `ResourceOwnership.md`, "Threads", and `SwapchainSync.md`,
   "Threads".
+- **Engine API S3: ECS and GameObject**: `Scene` (a `Renderable`) holds a homegrown entity-component
+  registry behind a `GameObject` handle: `Transform` (every object has one), `MeshRenderer` and
+  `Camera` components, and `Behaviour` scripts with `start()`, `update()` and `onDestroy()`. A
+  component keeps its address until it is removed. `Application::run` calls `Scene::update` in
+  each frame, also in the frames of the live-resize event watch, and `FrameContext::deltaSeconds`
+  carries the step. `Scene::onDraw` extracts the draws and sets the camera with
+  `RenderQueue::setCamera`; the renderer-side `Camera` is now `CameraView`, and
+  `Renderer::setCamera` is removed. `~Application` clears the scene while the renderer still
+  exists. See `ResourceOwnership.md`, "Threads".
 
 ## Later milestones (in rough order)
 
-1. **Engine API (S3-S7)**: continues S2 (see Done).
-   - S3: homegrown ECS with a GameObject facade.
+1. **Engine API (S4-S7)**: continues S3 (see Done).
    - S4: indexed meshes.
    - S5: textures and parameter blocks on descriptor heaps.
    - S6: device-local uploads through staging on the transfer queue.
    - S7: parallel recording.
-2. **Scene representation: decided, a homegrown ECS (S3).**
-3. **Render graph**: declared passes with reads/writes; derives barriers,
+2. **Render graph**: declared passes with reads/writes; derives barriers,
    layouts and transient attachment lifetimes. Deletes the hand-written
    barrier blocks in the renderer.
 

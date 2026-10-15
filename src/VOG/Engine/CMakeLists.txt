@@ -23,21 +23,25 @@ target_sources(Engine
         BASE_DIRS
             include/
         FILES
-            include/VOG/Engine/Renderer/Camera.hpp
+            include/VOG/Engine/Renderer/CameraView.hpp
             include/VOG/Engine/Renderer/Extent.hpp
             include/VOG/Engine/Renderer/FrameContext.hpp
             include/VOG/Engine/Renderer/Material.hpp
             include/VOG/Engine/Renderer/Mesh.hpp
             include/VOG/Engine/Renderer/Renderable.hpp
             include/VOG/Engine/Renderer/Renderer.hpp
+            include/VOG/Engine/Scene/Components.hpp
+            include/VOG/Engine/Scene/Registry.hpp
+            include/VOG/Engine/Scene/Scene.hpp
     PRIVATE
-        src/VOG/Engine/Renderer/Camera.cpp
+        src/VOG/Engine/Renderer/CameraView.cpp
         src/VOG/Engine/Renderer/FramePacketQueue.hpp
         src/VOG/Engine/Renderer/MaterialDefinition.hpp
         src/VOG/Engine/Renderer/MeshDefinition.hpp
         src/VOG/Engine/Renderer/PipelineCache.cpp
         src/VOG/Engine/Renderer/PipelineCache.hpp
         src/VOG/Engine/Renderer/Renderer.cpp
+        src/VOG/Engine/Scene/Scene.cpp
 )
 
 # Every header under include/ must be in the public header set: VOG.Engine.PublicHeadersTest is

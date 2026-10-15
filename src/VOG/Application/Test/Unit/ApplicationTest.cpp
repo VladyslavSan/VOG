@@ -1,5 +1,7 @@
 #include <VOG/Application/Application.hpp>
 #include <VOG/Engine/Renderer/Renderable.hpp>
+#include <VOG/Engine/Renderer/Renderer.hpp>
+#include <VOG/Engine/Scene/Scene.hpp>
 
 #include <SDL3/SDL.h>
 #include <gtest/gtest.h>
@@ -16,6 +18,7 @@
 #include <string_view>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace VOG::Application::Test
 {
@@ -52,6 +55,74 @@ public:
 private:
     std::function<void()> mFunction;
 };
+
+/** Runs functions for the start, every update and the end of its object. */
+class LambdaBehaviour final : public Engine::Behaviour
+{
+public:
+    std::function<void()>                            onStart;
+    std::function<void(const Engine::FrameContext&)> onUpdate;
+    std::function<void()>                            onEnd;
+
+    void
+    start() override
+    {
+        if (onStart)
+        {
+            onStart();
+        }
+    }
+
+    void
+    update(const Engine::FrameContext& frame) override
+    {
+        if (onUpdate)
+        {
+            onUpdate(frame);
+        }
+    }
+
+    void
+    onDestroy() override
+    {
+        if (onEnd)
+        {
+            onEnd();
+        }
+    }
+};
+
+/** Sets a flag when it dies, which is when the renderer that holds it dies. */
+class Sentinel final : public Engine::Renderable
+{
+public:
+    explicit Sentinel(bool& gone)
+        : mGone{gone}
+    {
+    }
+
+    ~Sentinel() override { mGone = true; }
+
+    Sentinel(const Sentinel&)            = delete;
+    Sentinel& operator=(const Sentinel&) = delete;
+
+    void
+    onDraw(const Engine::FrameContext& /*frameContext*/, Engine::RenderQueue& /*queue*/) override
+    {
+    }
+
+private:
+    bool& mGone;
+};
+
+/** Asks run() to quit. */
+void
+pushQuit()
+{
+    SDL_Event quit{};
+    quit.type = SDL_EVENT_QUIT;
+    SDL_PushEvent(&quit);
+}
 
 /**
  * What the OS does while the user drags a window edge on macOS and Windows: the main thread stays
@@ -144,13 +215,19 @@ protected:
         }
     }
 
+    static Application::ApplicationConfig
+    makeConfig()
+    {
+        // Hidden, so the tests do not flash windows; a hidden window presents all the same.
+        return {.title             = "VOG Application Test",
+                .hidden            = true,
+                .shaderStoragePath = VOG_TEST_SHADER_PATH};
+    }
+
     static Application
     makeApplication()
     {
-        // Hidden, so the tests do not flash windows; a hidden window presents all the same.
-        return Application({.title             = "VOG Application Test",
-                            .hidden            = true,
-                            .shaderStoragePath = VOG_TEST_SHADER_PATH});
+        return Application(makeConfig());
     }
 
     /** Asks the main thread, from another one, to emulate a live resize once run() pumps events. */
@@ -252,6 +329,109 @@ TEST_F(ApplicationRunTest, exposeInsideOnDrawDoesNotReenterFrame)
 
     EXPECT_TRUE(nestedSent);
     EXPECT_EQ(maxDepth, 1);
+}
+
+/** Behaviour::update() runs in the frame, so a Behaviour that pumps events does not nest one. */
+TEST_F(ApplicationRunTest, exposeInsideBehaviourUpdateDoesNotReenterFrame)
+{
+    int        depth      = 0;
+    int        maxDepth   = 0;
+    bool       nestedSent = false;
+    LiveResize liveResize{.done = [&]
+                          {
+                              return nestedSent;
+                          }};
+
+    auto app = makeApplication();
+    app.getScene().createGameObject().addBehaviour<LambdaBehaviour>().onUpdate =
+        [&](const Engine::FrameContext& /*frame*/)
+    {
+        maxDepth = std::max(maxDepth, ++depth);
+        // Only in a watch frame, as in exposeInsideOnDrawDoesNotReenterFrame.
+        if (liveResize.inTick && !nestedSent)
+        {
+            nestedSent = true;
+            SDL_Event expose{};
+            expose.type         = SDL_EVENT_WINDOW_EXPOSED;
+            expose.window.data1 = 1;
+            SDL_PushEvent(&expose);
+        }
+        --depth;
+    };
+    const Watchdog     watchdog;
+    const std::jthread poster = startLiveResize(liveResize);
+
+    app.run();
+
+    EXPECT_TRUE(nestedSent);
+    EXPECT_EQ(maxDepth, 1);
+}
+
+/** The first frame of every run() has no previous frame to measure from. */
+TEST_F(ApplicationRunTest, deltaIsZeroOnFirstFrameOfEachRun)
+{
+    constexpr std::size_t kFramesPerRun = 3;
+
+    std::vector<float> deltas;
+    auto               app = makeApplication();
+    app.getScene().createGameObject().addBehaviour<LambdaBehaviour>().onUpdate =
+        [&](const Engine::FrameContext& frame)
+    {
+        deltas.push_back(frame.deltaSeconds);
+        if (deltas.size() % kFramesPerRun == 0)
+        {
+            pushQuit();
+        }
+    };
+    const Watchdog watchdog;
+
+    app.run();
+    app.run();
+
+    ASSERT_EQ(deltas.size(), 2 * kFramesPerRun);
+    EXPECT_EQ(deltas[0], 0.0f);
+    EXPECT_GT(deltas[1] + deltas[2], 0.0f);
+    EXPECT_EQ(deltas[kFramesPerRun], 0.0f);
+    EXPECT_GT(deltas[kFramesPerRun + 1] + deltas[kFramesPerRun + 2], 0.0f);
+}
+
+/**
+ * The destructor of the Application ends the scene while the renderer still exists: an
+ * onDestroy() that creates a material gets one. The behaviour reports the renderer already gone
+ * (a sentinel in its renderables died) instead of using it, so a failing test does not crash.
+ */
+TEST_F(ApplicationRunTest, applicationTeardownRunsOnDestroyWhileRendererLives)
+{
+    bool               sentinelGone     = false;
+    bool               rendererGoneSeen = false;
+    bool               materialCreated  = false;
+    auto               app              = std::make_unique<Application>(makeConfig());
+    Application* const raw              = app.get();
+
+    raw->addRenderable(std::make_shared<Sentinel>(sentinelGone));
+    auto& behaviour    = raw->getScene().createGameObject().addBehaviour<LambdaBehaviour>();
+    behaviour.onUpdate = [](const Engine::FrameContext& /*frame*/)
+    {
+        pushQuit();
+    };
+    behaviour.onEnd = [&]
+    {
+        if (sentinelGone)
+        {
+            rendererGoneSeen = true;
+            return;
+        }
+        materialCreated = raw->getRenderer().createMaterial({.shader = "WorldSpace"}) != nullptr;
+    };
+    const Watchdog watchdog;
+
+    raw->run();
+    EXPECT_FALSE(sentinelGone);
+    app.reset();
+
+    EXPECT_FALSE(rendererGoneSeen);
+    EXPECT_TRUE(materialCreated);
+    EXPECT_TRUE(sentinelGone);
 }
 
 /** The watch cannot throw through SDL: run() rethrows what a watch frame threw, and stops. */

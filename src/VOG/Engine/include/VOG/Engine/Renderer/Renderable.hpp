@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VOG/Engine/Renderer/CameraView.hpp>
 #include <VOG/Engine/Renderer/FrameContext.hpp>
 #include <VOG/Engine/Renderer/Material.hpp>
 #include <VOG/Engine/Renderer/Mesh.hpp>
@@ -13,8 +14,8 @@ namespace VOG::Engine
 class Renderer;
 
 /**
- * The draws of one frame, filled by Renderable::onDraw(). Each draw is one mesh drawn with one
- * material; the camera and the world matrix place it.
+ * The draws and the camera of one frame, filled by Renderable::onDraw(). Each draw is one mesh
+ * drawn with one material; the camera and the world matrix place it.
  */
 class RenderQueue
 {
@@ -30,8 +31,19 @@ public:
             {.mesh = std::move(mesh), .material = std::move(material), .world = world});
     }
 
+    /**
+     * Sets the view the frame is drawn with. The last call of the frame wins; a frame without a
+     * call uses a default CameraView.
+     */
+    void
+    setCamera(const CameraView& camera)
+    {
+        mCamera = camera;
+    }
+
 private:
     friend class Renderer;
+    friend struct RenderQueueTestAccess;
 
     struct Draw
     {
@@ -41,6 +53,7 @@ private:
     };
 
     std::vector<Draw> mDraws;
+    CameraView        mCamera;
 };
 
 /**

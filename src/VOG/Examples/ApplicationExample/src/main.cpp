@@ -1,18 +1,56 @@
 #include <VOG/Application/Application.hpp>
 #include <VOG/Engine/Renderer/Renderer.hpp>
+#include <VOG/Engine/Scene/Scene.hpp>
+#include <VOG/Math/Math.hpp>
 
 #include <boost/program_options.hpp>
 
+#include <cstddef>
 #include <cstdlib>
 #include <iostream>
-#include <memory>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 
-#include "SpinningQuadsRenderable.hpp"
+#include "SwingBehaviour.hpp"
 
 namespace po = boost::program_options;
+
+namespace
+{
+struct VertexData
+{
+    VOG::Math::Vector2f position;
+    VOG::Math::Vector4f color;
+};
+
+// clang-format off
+constexpr VertexData gVertexData[] = {
+  // Red bottom left square
+  {{-1.0, -1.0}, {1.0, 0.0, 0.0, 1.0}},
+  {{-1.0,  0.0}, {1.0, 0.0, 0.0, 1.0}},
+  {{ 0.0,  0.0}, {1.0, 0.0, 0.0, 1.0}},
+  {{ 0.0,  0.0}, {1.0, 0.0, 0.0, 1.0}},
+  {{ 0.0, -1.0}, {1.0, 0.0, 0.0, 1.0}},
+  {{-1.0, -1.0}, {1.0, 0.0, 0.0, 1.0}},
+  // Green top right square
+  {{ 0.0,  0.0}, {0.0, 1.0, 0.0, 1.0}},
+  {{ 0.0,  1.0}, {0.0, 1.0, 0.0, 1.0}},
+  {{ 1.0,  1.0}, {0.0, 1.0, 0.0, 1.0}},
+  {{ 0.0,  0.0}, {0.0, 1.0, 0.0, 1.0}},
+  {{ 1.0,  1.0}, {0.0, 1.0, 0.0, 1.0}},
+  {{ 1.0,  0.0}, {0.0, 1.0, 0.0, 1.0}},
+};
+// clang-format on
+
+/** Rate at which the quads swing back and forth, in radians per second. */
+constexpr float gRotationRate = 1.6f;
+
+constexpr float gQuadHalfSizePixels = 300.0f;
+constexpr float gQuadDistance       = 20.0f;
+constexpr float gMaxRotationDegrees = 90.0f;
+} // namespace
 
 // prints the explanatory string of an exception. If the exception is nested,
 // recurses to print the explanatory of the exception it holds
@@ -98,8 +136,26 @@ main(int argc, const char** argv) // NOLINT(bugprone-exception-escape)
         constexpr float kNearPlane = 1.0f;
         constexpr float kFarPlane  = 200.0f;
 
-        app.getRenderer().setCamera({.nearPlane = kNearPlane, .farPlane = kFarPlane});
-        app.addRenderable(std::make_shared<SpinningQuadsRenderable>(app.getRenderer()));
+        VOG::Engine::Renderer& renderer = app.getRenderer();
+        VOG::Engine::Scene&    scene    = app.getScene();
+
+        const auto quads    = renderer.createMesh({
+            .vertices   = std::as_bytes(std::span{gVertexData}),
+            .stride     = sizeof(VertexData),
+            .attributes = {{VOG::Engine::VertexFormat::eFloat2, 0u},
+                           {VOG::Engine::VertexFormat::eFloat4, offsetof(VertexData, color)}},
+        });
+        const auto material = renderer.createMaterial({.shader = "WorldSpace"});
+
+        scene.createGameObject().addComponent<VOG::Engine::Camera>(
+            VOG::Engine::Camera{.nearPlane = kNearPlane, .farPlane = kFarPlane});
+
+        VOG::Engine::GameObject quadObject = scene.createGameObject();
+        quadObject.getTransform().position = {0.0f, 0.0f, gQuadDistance};
+        quadObject.getTransform().scale    = {gQuadHalfSizePixels, gQuadHalfSizePixels, 1.0f};
+        quadObject.addComponent<VOG::Engine::MeshRenderer>(
+            VOG::Engine::MeshRenderer{.mesh = quads, .material = material});
+        quadObject.addBehaviour<SwingBehaviour>(gRotationRate, gMaxRotationDegrees);
 
         app.run();
     }

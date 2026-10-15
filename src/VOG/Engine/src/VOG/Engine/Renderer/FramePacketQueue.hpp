@@ -1,6 +1,5 @@
 #pragma once
 
-#include "VOG/Engine/Renderer/Camera.hpp"
 #include "VOG/Engine/Renderer/Renderable.hpp"
 
 #include <condition_variable>
@@ -13,14 +12,13 @@ namespace VOG::Engine
 {
 /**
  * One frame, as the thread that submits it saw it. It holds CPU-side objects only (meshes,
- * materials, a camera), none of the render-thread-only objects of ResourceOwnership.md, so a
+ * materials, a camera view), none of the render-thread-only objects of ResourceOwnership.md, so a
  * packet may die on any thread.
  */
 struct FramePacket
 {
-    /** Every draw has a mesh and a material. */
+    /** Every draw has a mesh and a material. The camera view is in the queue. */
     RenderQueue draws;
-    Camera      camera;
 };
 
 /**

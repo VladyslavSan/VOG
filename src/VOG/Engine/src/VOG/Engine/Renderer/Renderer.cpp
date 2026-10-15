@@ -216,13 +216,6 @@ Renderer::createMaterial(MaterialDescription description)
 }
 
 void
-Renderer::setCamera(const Camera& camera)
-{
-    const std::scoped_lock lock{mCameraMutex};
-    mCamera = camera;
-}
-
-void
 Renderer::adoptPendingRenderables()
 {
     const std::scoped_lock lock{mPendingMutex};
@@ -252,9 +245,6 @@ Renderer::makePacket(const FrameContext& frameContext)
                   {
                       return !draw.mesh || !draw.material;
                   });
-
-    const std::scoped_lock lock{mCameraMutex};
-    packet.camera = mCamera;
 
     return packet;
 }
@@ -319,7 +309,7 @@ Renderer::renderFrame(FramePacket packet)
 
     const vk::Extent2D     extent = acquired->getExtent2D();
     const Math::Matrix4x4f viewProjection =
-        packet.camera.viewProjection({.width = extent.width, .height = extent.height});
+        packet.draws.mCamera.viewProjection({.width = extent.width, .height = extent.height});
 
     // Advance the frame slot only when we will actually submit — skip/out-of-date must not
     // burn a fence-keyed release slot.

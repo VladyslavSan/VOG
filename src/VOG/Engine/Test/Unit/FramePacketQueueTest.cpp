@@ -11,6 +11,8 @@
 #include <tuple>
 #include <utility>
 
+#include "RenderQueueTestAccess.hpp"
+
 using namespace VOG::Engine;
 
 namespace VOG::Tests
@@ -31,7 +33,7 @@ FramePacket
 packet(float marker)
 {
     FramePacket result;
-    result.camera.nearPlane = marker;
+    result.draws.setCamera(CameraView{.nearPlane = marker});
 
     return result;
 }
@@ -39,7 +41,7 @@ packet(float marker)
 float
 markerOf(const std::optional<FramePacket>& result)
 {
-    return result ? result->camera.nearPlane : -1.0f;
+    return result ? RenderQueueTestAccess::camera(result->draws).nearPlane : -1.0f;
 }
 
 /** Takes the packet in the slot, or returns nothing if there is none: it never waits. */

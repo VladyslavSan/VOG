@@ -5,8 +5,10 @@
 
 namespace VOG::Engine
 {
-/** Orthographic, one world unit per pixel, centered on the view axis. */
-struct Camera
+/** The view of one frame, as the renderer draws it: orthographic, one world unit per pixel,
+ * centered on the view axis. The default is the view of the Camera component at the identity
+ * transform. */
+struct CameraView
 {
     Math::Vector3f position{0.0f};
     Math::Vector3f direction{0.0f, 0.0f, 1.0f};
