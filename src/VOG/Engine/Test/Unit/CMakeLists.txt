@@ -5,10 +5,14 @@ set_target_properties(VOG.Engine.Unit PROPERTIES FOLDER "VOG/Tests")
 
 target_sources(VOG.Engine.Unit
     PRIVATE
-        CameraTest.cpp
+        CameraViewTest.cpp
+        FrameContextTest.cpp
         FramePacketQueueTest.cpp
         PipelineCacheTest.cpp
+        RegistryTest.cpp
+        RenderQueueTest.cpp
         RendererTest.cpp
+        SceneTest.cpp
 )
 
 # The renderer compiles every shader listed in config.json when it is constructed.
@@ -18,7 +22,7 @@ target_compile_definitions(VOG.Engine.Unit
 )
 
 # The tests reach behind the public API: the private definitions of Mesh and Material, the
-# pipeline cache, and the Vulkan objects behind the renderer.
+# pipeline cache, the Vulkan objects behind the renderer and the draws of a RenderQueue.
 target_include_directories(VOG.Engine.Unit
     PRIVATE
         ${PROJECT_SOURCE_DIR}/src/VOG/Engine/src

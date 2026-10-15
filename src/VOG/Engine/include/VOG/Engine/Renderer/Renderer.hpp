@@ -1,7 +1,6 @@
 #pragma once
 
 #include <VOG/Common/SurfaceHandle.hpp>
-#include <VOG/Engine/Renderer/Camera.hpp>
 #include <VOG/Engine/Renderer/Extent.hpp>
 #include <VOG/Engine/Renderer/Material.hpp>
 #include <VOG/Engine/Renderer/Mesh.hpp>
@@ -120,10 +119,6 @@ public:
      */
     MaterialPtr createMaterial(MaterialDescription description);
 
-    /** Any thread. A default Camera is used until this is called. Each frame takes the camera
-     *  that was set when it was submitted. */
-    void setCamera(const Camera& camera);
-
     /**
      * New window size in pixels. Any thread; the render thread recreates the swapchain at that
      * size before its next frame. Surfaces that report their own size (macOS, Windows, X11) ignore
@@ -136,8 +131,8 @@ public:
 
     /**
      * Calls Renderable::onDraw() of every renderable on the calling thread and queues the draws
-     * with the current camera as one frame. Waits while the render thread still holds the
-     * previous frame, so this paces the caller to the render thread. Does nothing when the
+     * with the camera view an onDraw() set as one frame. Waits while the render thread still holds
+     * the previous frame, so this paces the caller to the render thread. Does nothing when the
      * renderer is stopped. When the render thread has failed it still calls onDraw(), and the frame
      * is dropped; check getState().
      *
@@ -175,8 +170,8 @@ private:
     /** Submitting thread. Moves the pending renderables into mRenderables. */
     void adoptPendingRenderables();
 
-    /** Submitting thread. Calls onDraw() of every renderable and copies the camera into a packet.
-     */
+    /** Submitting thread. Calls onDraw() of every renderable and returns the draws and the
+     *  camera view they set as a packet. */
     FramePacket makePacket(const FrameContext& frameContext);
 
     /** Render thread. Finds the pipeline of each draw of @p draws in mPipelines. */
@@ -212,10 +207,6 @@ private:
 
     /** Submitting thread only. */
     std::vector<std::shared_ptr<Renderable>> mRenderables;
-
-    /** A mutex, not an atomic: Camera is too big to be lock-free without libatomic. */
-    std::mutex mCameraMutex;
-    Camera     mCamera;
 
     /** Render thread only. */
     std::unique_ptr<PipelineCache> mPipelineCache;

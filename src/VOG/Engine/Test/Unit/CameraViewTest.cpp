@@ -1,4 +1,4 @@
-#include <VOG/Engine/Renderer/Camera.hpp>
+#include <VOG/Engine/Renderer/CameraView.hpp>
 
 #include <gtest/gtest.h>
 
@@ -8,10 +8,10 @@ using VOG::Math::Vector4f;
 namespace VOG::Tests
 {
 /** One world unit is one pixel: the default camera maps the edge of the target to clip x = 1. */
-TEST(CameraTest, defaultCameraMapsPixelsToClipSpace)
+TEST(CameraViewTest, defaultCameraMapsPixelsToClipSpace)
 {
-    constexpr float kTolerance = 1e-6f;
-    const Camera    camera;
+    constexpr float  kTolerance = 1e-6f;
+    const CameraView camera;
 
     const Vector4f edge =
         camera.viewProjection({.width = 64u, .height = 64u}) * Vector4f{32.0f, 0.0f, 20.0f, 1.0f};

@@ -173,18 +173,19 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    fence pool and the swapchain, only its render thread uses them while it
    runs, and `~Renderer` joins that thread before it destroys them.
 
-   **Threads.** Two threads work with a `Renderer`. The main thread (the caller of
-   `submitFrame`) owns the renderables and runs `Renderable::onDraw`. The render thread owns the
-   objects of the list above and runs no user code. Main and render thread share the packet
-   queue (one slot, a mutex), `mRequestedExtent` (an atomic), and `mExit` and `mRenderThread`
-   (under `mStateMutex`). The pending-renderable list is shared between the callers of
-   `addRenderable` and the submitting thread, and the camera between the callers of `setCamera`
-   and the submitting thread; each has a mutex. `createMesh` and `createMaterial` are safe from
-   any thread: VMA is created without `EXTERNALLY_SYNCHRONIZED`, so the allocator locks
-   internally, and the shader cache is only read after its constructor. A packet holds meshes,
-   materials and a camera, none of the objects above, so it may die on any thread. `onDraw` may
-   run inside an SDL event watch on the main thread (`SwapchainSync.md`, "Live resize"): no
-   renderer lock is held, but it must not wait for a thread that pushes SDL events.
+   **Threads.** Two threads work with a `Renderer`. The main thread (the caller of `submitFrame`)
+   owns the renderables and runs `Renderable::onDraw`. The render thread owns the objects of the
+   list above and runs no user code. Main and render thread share the packet queue (one slot, a
+   mutex), `mRequestedExtent` (an atomic), and `mExit` and `mRenderThread` (under `mStateMutex`).
+   The pending-renderable list is shared between the callers of `addRenderable` and the submitting
+   thread; it has a mutex. The `Scene`, its `GameObject`s and its `Behaviour`s are main-thread
+   state: `Application` updates the scene and runs `onDraw` on the main thread, and only the packet
+   crosses to the render thread. `createMesh` and `createMaterial` are safe from any thread: VMA is
+   created without `EXTERNALLY_SYNCHRONIZED`, so the allocator locks internally, and the shader
+   cache is only read after its constructor. A packet holds meshes, materials and a camera view,
+   none of the objects above, so it may die on any thread. `onDraw` may run inside an SDL event
+   watch on the main thread (`SwapchainSync.md`, "Live resize"): no renderer lock is held, but it
+   must not wait for a thread that pushes SDL events.
 
    All destructors are `noexcept`. A Vulkan call that can fail in a destructor goes through
    `inDestructor` (`Graphics/Vulkan/InDestructor.hpp`), which logs a

@@ -2,6 +2,7 @@
 
 #include <VOG/Application/SDL.hpp>
 #include <VOG/Engine/Renderer/Renderer.hpp>
+#include <VOG/Engine/Scene/Scene.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -114,6 +115,7 @@ Application::Application(const ApplicationConfig& config, Validated /*validated*
                                           config.hidden ? SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN
                                                         : SDL_WINDOW_RESIZABLE)}
     , mStartTime{std::chrono::steady_clock::now()}
+    , mScene{std::make_shared<Engine::Scene>()}
     , mRenderer{std::make_unique<Engine::Renderer>(mWindow->getSurfaceHandle(),
                                                    Engine::Renderer::Config{
                                                        .appName          = config.title,
@@ -125,9 +127,15 @@ Application::Application(const ApplicationConfig& config, Validated /*validated*
                                                        .extent           = mWindow->sizeInPixels(),
                                                    })}
 {
+    mRenderer->addRenderable(mScene);
 }
 
-Application::~Application() = default;
+Application::~Application()
+{
+    // Here, not in ~Scene: onDestroy() may use the renderer, which is alive and stopped (run()
+    // stops it) until this body ends. Without it the scene would die after the renderer.
+    mScene->clear();
+}
 
 void
 Application::addRenderable(std::shared_ptr<Engine::Renderable> renderable)
@@ -141,14 +149,30 @@ Application::getRenderer()
     return *mRenderer;
 }
 
+Engine::Scene&
+Application::getScene()
+{
+    return *mScene;
+}
+
 void
 Application::frame(Wait wait)
 {
     const FlagScope inFrame{mInFrame};
 
+    const auto now   = std::chrono::steady_clock::now();
+    float      delta = 0.0f;
+    if (mLastFrameTime)
+    {
+        delta = Engine::frameDelta(std::chrono::duration<double>{now - *mLastFrameTime}.count());
+    }
+    mLastFrameTime = now;
     const Engine::FrameContext frameContext{
-        .timeSeconds =
-            std::chrono::duration<double>{std::chrono::steady_clock::now() - mStartTime}.count()};
+        .timeSeconds  = std::chrono::duration<double>{now - mStartTime}.count(),
+        .deltaSeconds = delta};
+
+    // Here, not in onDraw(): a frame the renderer skips for want of room does not call onDraw().
+    mScene->update(frameContext);
     if (wait == Wait::eYes)
     {
         mRenderer->submitFrame(frameContext);
@@ -205,6 +229,7 @@ void
 Application::run()
 {
     mWatchFailure = nullptr;
+    mLastFrameTime.reset();
     // Resizes before the watch exists are not seen by it.
     mRenderer->resize(mWindow->sizeInPixels());
     mRenderer->start();

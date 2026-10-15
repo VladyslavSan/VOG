@@ -1,11 +1,11 @@
-#include "VOG/Engine/Renderer/Camera.hpp"
+#include "VOG/Engine/Renderer/CameraView.hpp"
 
 #include <VOG/Math/Projections.hpp>
 
 namespace VOG::Engine
 {
 Math::Matrix4x4f
-Camera::viewProjection(Extent extent) const
+CameraView::viewProjection(Extent extent) const
 {
     const Math::Matrix4x4f view =
         glm::inverse(Math::calculateCameraMatrix(position, direction, up));
