@@ -177,6 +177,17 @@ CommandBufferRecorder::RenderingPass::bindVertexBuffers(
 }
 
 void
+CommandBufferRecorder::RenderingPass::bindIndexBuffer(std::shared_ptr<Buffer> buffer,
+                                                      vk::DeviceSize          offset,
+                                                      vk::IndexType           type)
+{
+    CommandBuffer& commandBuffer = *mRecorder.mCommandBuffer;
+
+    commandBuffer.bindIndexBuffer(**buffer, offset, type);
+    commandBuffer.retain(std::move(buffer));
+}
+
+void
 CommandBufferRecorder::RenderingPass::setViewport(std::uint32_t                      firstViewport,
                                                   vk::ArrayProxy<const vk::Viewport> viewports)
 {
@@ -197,6 +208,17 @@ CommandBufferRecorder::RenderingPass::draw(std::uint32_t vertexCount,
                                            std::uint32_t firstInstance)
 {
     mRecorder.mCommandBuffer->draw(vertexCount, instanceCount, firstVertex, firstInstance);
+}
+
+void
+CommandBufferRecorder::RenderingPass::drawIndexed(std::uint32_t indexCount,
+                                                  std::uint32_t instanceCount,
+                                                  std::uint32_t firstIndex,
+                                                  std::int32_t  vertexOffset,
+                                                  std::uint32_t firstInstance)
+{
+    mRecorder.mCommandBuffer->drawIndexed(
+        indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
 }
 
 void

@@ -53,6 +53,12 @@ toVk(Extent extent)
     return vk::Extent2D{.width = extent.width, .height = extent.height};
 }
 
+constexpr std::size_t
+alignUp(std::size_t value, std::size_t alignment)
+{
+    return (value + alignment - 1u) / alignment * alignment;
+}
+
 /** Push constants the renderer fills: the matrix, then the material's parameters. */
 constexpr std::size_t gPushConstantsSize = gParametersOffset + gMaxParametersSize;
 } // namespace
@@ -166,20 +172,51 @@ Renderer::createMesh(const MeshDescription& description)
         }
     }
 
+    const auto vertexCount =
+        static_cast<std::uint32_t>(description.vertices.size() / description.stride);
+    if (description.indices.size() % 3u != 0u)
+    {
+        throw std::invalid_argument{std::format(
+            "A mesh draws triangles, so its index count must be a multiple of 3; got {}.",
+            description.indices.size())};
+    }
+    for (std::size_t i = 0u; i < description.indices.size(); ++i)
+    {
+        if (description.indices[i] >= vertexCount)
+        {
+            throw std::invalid_argument{std::format("Index {} is {}, but the mesh has {} vertices.",
+                                                    i,
+                                                    description.indices[i],
+                                                    vertexCount)};
+        }
+    }
+
+    // The indices follow the vertices, aligned to the size of an index.
+    const std::size_t indexOffset =
+        alignUp(description.vertices.size_bytes(), sizeof(std::uint32_t));
+
     Graphics::Vulkan::BufferPtr buffer = mVulkanDevice->createBuffer(
-        {.size  = description.vertices.size_bytes(),
-         .usage = vk::BufferUsageFlagBits::eVertexBuffer},
+        {.size  = indexOffset + description.indices.size_bytes(),
+         .usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eIndexBuffer},
         {.flags = Graphics::Vulkan::AllocationFlag::eHostSequentialWrite});
     {
         auto mapping = buffer->mapForWrite();
         std::memcpy(mapping.data, description.vertices.data(), description.vertices.size_bytes());
+        if (!description.indices.empty())
+        {
+            std::memcpy(mapping.data + indexOffset,
+                        description.indices.data(),
+                        description.indices.size_bytes());
+        }
     }
 
-    return std::make_shared<const Mesh>(Mesh{
-        .buffer      = std::move(buffer),
-        .vertexCount = static_cast<std::uint32_t>(description.vertices.size() / description.stride),
-        .stride      = description.stride,
-        .attributes  = description.attributes});
+    return std::make_shared<const Mesh>(
+        Mesh{.buffer      = std::move(buffer),
+             .vertexCount = vertexCount,
+             .stride      = description.stride,
+             .attributes  = description.attributes,
+             .indexCount  = static_cast<std::uint32_t>(description.indices.size()),
+             .indexOffset = indexOffset});
 }
 
 MaterialPtr
@@ -384,7 +421,16 @@ Renderer::renderFrame(FramePacket packet)
                                                         pushConstants.data() + range.offset});
                 }
                 pass.bindVertexBuffers(0u, {{.buffer = draw.mesh->buffer, .offset = 0u}});
-                pass.draw(draw.mesh->vertexCount, 1, 0, 0);
+                if (draw.mesh->indexCount == 0u)
+                {
+                    pass.draw(draw.mesh->vertexCount, 1, 0, 0);
+                }
+                else
+                {
+                    pass.bindIndexBuffer(
+                        draw.mesh->buffer, draw.mesh->indexOffset, vk::IndexType::eUint32);
+                    pass.drawIndexed(draw.mesh->indexCount, 1, 0, 0, 0);
+                }
             }
         }
 
