@@ -5,23 +5,53 @@
 #include <VOG/Engine/Renderer/Mesh.hpp>
 #include <VOG/Math/Math.hpp>
 
+#include <utility>
 #include <vector>
 
 namespace VOG::Engine
 {
-/** One mesh drawn with one material; the camera and the world matrix place it. */
-struct Draw
-{
-    MeshPtr          mesh;
-    MaterialPtr      material;
-    Math::Matrix4x4f world{1.0f};
-};
-
-using DrawList = std::vector<Draw>;
+class Renderer;
 
 /**
- * Anything that contributes draws to a frame. collect() runs on the render thread with no lock
- * held, so it may call Renderer::addRenderable().
+ * The draws of one frame, filled by Renderable::onDraw(). Each draw is one mesh drawn with one
+ * material; the camera and the world matrix place it.
+ */
+class RenderQueue
+{
+public:
+    /**
+     * Adds a draw. A draw without a mesh or without a material is removed when the frame is
+     * submitted.
+     */
+    void
+    submit(MeshPtr mesh, MaterialPtr material, const Math::Matrix4x4f& world)
+    {
+        mDraws.push_back(
+            {.mesh = std::move(mesh), .material = std::move(material), .world = world});
+    }
+
+private:
+    friend class Renderer;
+
+    struct Draw
+    {
+        MeshPtr          mesh;
+        MaterialPtr      material;
+        Math::Matrix4x4f world{1.0f};
+    };
+
+    std::vector<Draw> mDraws;
+};
+
+/**
+ * Anything that contributes draws to a frame. Renderer::submitFrame() calls onDraw() on the
+ * submitting thread, the main thread, with no renderer lock held, so it may call
+ * Renderer::addRenderable().
+ *
+ * It must not call Renderer::submitFrame() or Renderer::trySubmitFrame(): that would change the
+ * renderables while they are being iterated. It may run inside an SDL event watch on the main
+ * thread (Application does that while the OS resizes the window): it must not wait for a thread
+ * that pushes SDL events.
  */
 class Renderable
 {
@@ -29,14 +59,13 @@ public:
     virtual ~Renderable() = default;
 
     /**
-     * Called every frame; append the draws for this frame to @p draws. A draw without a mesh or a
-     * material fails the render thread. The renderer keeps the draws, and so the meshes and
-     * materials they hold, until the next collect().
+     * Called for every frame that is submitted; append the draws for this frame to @p queue. The
+     * frame holds the meshes and materials of the draws until the render thread has recorded it.
      *
-     * It can also run for an iteration that draws nothing (no image was free, or the swapchain
-     * was out of date); its draws are dropped then. Derive per-frame state from @p frameContext,
-     * not from counting calls.
+     * A submitted frame may be dropped without being drawn (the window is minimized, no image was
+     * free, or the swapchain was out of date); its draws are dropped then. Derive per-frame state
+     * from @p frameContext, not from counting calls.
      */
-    virtual void collect(const FrameContext& frameContext, DrawList& draws) = 0;
+    virtual void onDraw(const FrameContext& frameContext, RenderQueue& queue) = 0;
 };
 } // namespace VOG::Engine

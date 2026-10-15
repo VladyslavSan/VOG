@@ -2,10 +2,10 @@
 
 namespace VOG::Engine
 {
-/** Per-frame inputs a Renderable may read while collecting its Draws. */
+/** Per-frame inputs a Renderable may read in onDraw(). */
 struct FrameContext
 {
-    /** Seconds elapsed since the renderer was constructed. */
+    /** Seconds since the application started; the caller of Renderer::submitFrame() sets it. */
     double timeSeconds = 0.0;
 };
 } // namespace VOG::Engine

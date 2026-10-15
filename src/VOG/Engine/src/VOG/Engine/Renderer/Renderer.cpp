@@ -1,6 +1,7 @@
 #include "VOG/Engine/Renderer/Renderer.hpp"
 
 #include <VOG/Common/Assert.hpp>
+#include "VOG/Engine/Renderer/FramePacketQueue.hpp"
 #include "VOG/Engine/Renderer/MaterialDefinition.hpp"
 #include "VOG/Engine/Renderer/MeshDefinition.hpp"
 #include "VOG/Engine/Renderer/PipelineCache.hpp"
@@ -28,10 +29,10 @@
 #include <cstring>
 #include <format>
 #include <iterator>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <thread>
-#include <typeinfo>
 #include <utility>
 
 namespace VOG::Engine
@@ -76,10 +77,10 @@ Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& con
       })}
     , mFrameObjectManager{std::make_unique<Graphics::Frame::FrameObjectManager>(
           mVulkanDevice, frameSlotCount(mFramesInFlight, mSwapchain->getImageCount()), 1u)}
-    , mStartTime{std::chrono::steady_clock::now()}
     , mRequestedExtent{config.extent}
     , mAppliedExtent{config.extent}
     , mPipelineCache{std::make_unique<PipelineCache>(mVulkanDevice)}
+    , mPackets{std::make_unique<FramePacketQueue>()}
 {
 }
 
@@ -231,30 +232,41 @@ Renderer::adoptPendingRenderables()
     mPending.clear();
 }
 
-void
-Renderer::collectDraws(const FrameContext& frameContext)
+FramePacket
+Renderer::makePacket(const FrameContext& frameContext)
 {
-    mDraws.clear();
-    mPipelines.clear();
+    // Renderables that onDraw() adds land in mPending and join the next frame.
+    adoptPendingRenderables();
 
+    // ponytail: a fresh vector of draws per frame, reuse its capacity if profiling shows the
+    // allocation.
+    FramePacket packet;
     for (const std::shared_ptr<Renderable>& renderable : mRenderables)
     {
-        Renderable&       current = *renderable;
-        const std::size_t before  = mDraws.size();
-        current.collect(frameContext, mDraws);
+        renderable->onDraw(frameContext, packet.draws);
+    }
 
-        for (std::size_t i = before; i < mDraws.size(); ++i)
-        {
-            const Draw& draw = mDraws[i];
-            if (!draw.mesh || !draw.material)
-            {
-                throw std::invalid_argument{std::format(
-                    "{} produced a Draw without a mesh or a material.", typeid(current).name())};
-            }
+    // Here, not on the render thread: mPipelines has one entry per draw, in step with the draws.
+    std::erase_if(packet.draws.mDraws,
+                  [](const RenderQueue::Draw& draw)
+                  {
+                      return !draw.mesh || !draw.material;
+                  });
 
-            mPipelines.push_back(
-                mPipelineCache->get(*draw.mesh, *draw.material, mSwapchain->getFormat()));
-        }
+    const std::scoped_lock lock{mCameraMutex};
+    packet.camera = mCamera;
+
+    return packet;
+}
+
+void
+Renderer::resolvePipelines(const RenderQueue& draws)
+{
+    mPipelines.clear();
+    for (const RenderQueue::Draw& draw : draws.mDraws)
+    {
+        mPipelines.push_back(
+            mPipelineCache->get(*draw.mesh, *draw.material, mSwapchain->getFormat()));
     }
 }
 
@@ -272,11 +284,9 @@ Renderer::applyExtent(Extent requested)
 }
 
 void
-Renderer::renderFrame()
+Renderer::renderFrame(FramePacket packet)
 {
     using namespace VOG::Graphics::Vulkan;
-
-    adoptPendingRenderables();
 
     const Extent requested = mRequestedExtent.load();
     if (requested != mAppliedExtent && !applyExtent(requested))
@@ -286,12 +296,8 @@ Renderer::renderFrame()
         return;
     }
 
-    // Collect and check before acquiring: a renderable that throws, or hands back a malformed
-    // draw, must do so while no image is acquired.
-    collectDraws({
-        .timeSeconds =
-            std::chrono::duration<double>{std::chrono::steady_clock::now() - mStartTime}.count(),
-    });
+    // Before acquiring: a vertex layout the shader cannot read throws while no image is acquired.
+    resolvePipelines(packet.draws);
 
     const auto acquireResult = mSwapchain->acquireNextImage(gAcquireTimeout);
     if (acquireResult.status == Swapchain::AcquireStatus::eOutOfDate)
@@ -311,14 +317,9 @@ Renderer::renderFrame()
     const auto& acquired = acquireResult.acquired;
     VOG_ASSERT_MSG(acquired, "eReady acquire must provide AcquiredSwapchainImage.");
 
-    const vk::Extent2D extent = acquired->getExtent2D();
-    Camera             camera;
-    {
-        const std::scoped_lock lock{mCameraMutex};
-        camera = mCamera;
-    }
+    const vk::Extent2D     extent = acquired->getExtent2D();
     const Math::Matrix4x4f viewProjection =
-        camera.viewProjection({.width = extent.width, .height = extent.height});
+        packet.camera.viewProjection({.width = extent.width, .height = extent.height});
 
     // Advance the frame slot only when we will actually submit — skip/out-of-date must not
     // burn a fence-keyed release slot.
@@ -370,10 +371,10 @@ Renderer::renderFrame()
                                 },
                             });
 
-            for (std::size_t i = 0u; i < mDraws.size(); ++i)
+            for (std::size_t i = 0u; i < packet.draws.mDraws.size(); ++i)
             {
-                const Draw&     draw     = mDraws[i];
-                const Material& material = *draw.material;
+                const RenderQueue::Draw& draw     = packet.draws.mDraws[i];
+                const Material&          material = *draw.material;
 
                 // The matrix first, then the parameters; createMaterial checked that the shader's
                 // ranges end inside what is filled here.
@@ -453,15 +454,55 @@ Renderer::start()
                          {
                              while (!stopToken.stop_requested())
                              {
-                                 renderFrame();
+                                 std::optional<FramePacket> packet = mPackets->pop(stopToken);
+                                 if (!packet)
+                                 {
+                                     break;
+                                 }
+                                 renderFrame(std::move(*packet));
                              }
                              exit.set_value();
                          }
                          catch (...)
                          {
+                             // Report first, so getState() shows the failure at once. Then keep
+                             // consuming until stop(): submitFrame() must not wait for a
+                             // consumer that is gone.
                              exit.set_exception(std::current_exception());
+                             while (mPackets->pop(stopToken))
+                             {
+                             }
                          }
                      }};
+}
+
+void
+Renderer::submitFrame(const FrameContext& frameContext)
+{
+    std::stop_token stopToken;
+    {
+        const std::scoped_lock lock{mStateMutex};
+        if (!mRenderThread.joinable())
+        {
+            return;
+        }
+        // Not mStateMutex across the push: stop() holds it across the join, and a blocked push
+        // is what stop() wakes through this token.
+        stopToken = mRenderThread.get_stop_token();
+    }
+
+    mPackets->push(makePacket(frameContext), stopToken);
+}
+
+void
+Renderer::trySubmitFrame(const FrameContext& frameContext)
+{
+    if (getState() == State::eStopped || !mPackets->empty())
+    {
+        return;
+    }
+
+    mPackets->tryPush(makePacket(frameContext));
 }
 
 std::exception_ptr

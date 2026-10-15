@@ -123,12 +123,21 @@ step builds on the previous. Completed work is kept for context.
   `RenderItem`, `ResourceContext` and `FrameContext::extent` are removed. Engine links Graphics
   PRIVATE, and `VOG.Engine.PublicHeadersTest` fails the build if a public Engine header includes a
   Graphics or Vulkan header. See `ResourceOwnership.md`, "Meshes and materials".
+- **Engine API S2: main/render thread split**: `Renderer::submitFrame` calls `Renderable::onDraw`
+  (the former `collect`) on the calling thread, the main thread, and queues the draws and the
+  camera as one packet in a one-slot queue; the render thread takes the packets, records and
+  presents them, and runs no user code. A renderable fills a `RenderQueue` with
+  `queue.submit(mesh, material, world)` (the former `DrawList`); a draw without a mesh or a
+  material is skipped. `Application::run` submits a frame per loop iteration. An SDL event watch
+  passes every size change to the renderer, and submits frames while macOS and Windows run their
+  live-resize loop. A mesh is checked against the inputs of the vertex shader when its pipeline is built:
+  `GraphicsPipeline` throws `std::invalid_argument` for a location without an attribute or a
+  numeric type that does not match. See `ResourceOwnership.md`, "Threads", and `SwapchainSync.md`,
+  "Threads".
 
 ## Later milestones (in rough order)
 
-1. **Engine API (S2-S7)**: continues S1 (see Done).
-   - S2: main/render thread split. The main thread extracts an immutable per-frame packet (draws,
-     camera, time).
+1. **Engine API (S3-S7)**: continues S2 (see Done).
    - S3: homegrown ECS with a GameObject facade.
    - S4: indexed meshes.
    - S5: textures and parameter blocks on descriptor heaps.

@@ -16,8 +16,8 @@ class SpinningQuadsRenderable final : public VOG::Engine::Renderable
 public:
     explicit SpinningQuadsRenderable(VOG::Engine::Renderer& renderer);
 
-    void collect(const VOG::Engine::FrameContext& frameContext,
-                 VOG::Engine::DrawList&           draws) override;
+    void onDraw(const VOG::Engine::FrameContext& frameContext,
+                VOG::Engine::RenderQueue&        queue) override;
 
 private:
     VOG::Engine::MeshPtr     mMesh;

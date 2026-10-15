@@ -1,4 +1,6 @@
+#include "VOG/Engine/Renderer/FramePacketQueue.hpp"
 #include "VOG/Engine/Renderer/MeshDefinition.hpp"
+#include "VOG/Engine/Renderer/PipelineCache.hpp"
 #include <VOG/Engine/Renderer/Renderer.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
@@ -6,19 +8,20 @@
 
 #include <gtest/gtest.h>
 
-#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
-#include <latch>
+#include <functional>
+#include <future>
 #include <memory>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -29,13 +32,26 @@ namespace VOG::Engine
 /** Test-only window into the renderer, befriended by Renderer. */
 struct RendererTestAccess
 {
-    /** On the render thread, or while none runs. */
+    /** While no render thread runs. */
     static Extent
     swapchainExtent(const Renderer& renderer)
     {
         const vk::Extent2D extent = renderer.mSwapchain->getExtent();
 
         return {.width = extent.width, .height = extent.height};
+    }
+
+    /** While no render thread runs. */
+    static std::size_t
+    pipelineCount(const Renderer& renderer)
+    {
+        return renderer.mPipelineCache->mEntries.size();
+    }
+
+    static FramePacketQueue&
+    packets(Renderer& renderer)
+    {
+        return *renderer.mPackets;
     }
 };
 } // namespace VOG::Engine
@@ -47,6 +63,9 @@ namespace
 constexpr Extent        gStartExtent{.width = 64u, .height = 64u};
 constexpr std::uint32_t gResizedExtent      = 32u;
 constexpr std::uint32_t gResizedAgainExtent = 48u;
+
+/** How long a call that could block may take. A test that waits longer has found a hang. */
+constexpr std::chrono::seconds gDeadline{5};
 
 /** Renders into a headless surface, with the validation layer when it is installed. */
 class RendererTest : public testing::Test
@@ -90,229 +109,123 @@ protected:
     bool mValidationInstalled = false;
 };
 
-/** Does nothing but count frames. */
-class CountingRenderable : public Renderable
+/** Runs a function for every frame; the tests' stand-in for a game object. */
+class LambdaRenderable final : public Renderable
 {
 public:
-    explicit CountingRenderable(std::latch& firstFrame)
-        : mFirstFrame{firstFrame}
+    using Function = std::function<void(const FrameContext&, RenderQueue&)>;
+
+    explicit LambdaRenderable(Function function)
+        : mFunction{std::move(function)}
     {
     }
 
     void
-    collect(const FrameContext& /*frameContext*/, DrawList& /*draws*/) override
+    onDraw(const FrameContext& frameContext, RenderQueue& queue) override
     {
-        // count_down() past zero is undefined, and collect() runs every frame.
-        if (!mCounted)
-        {
-            mCounted = true;
-            mFirstFrame.count_down();
-        }
+        mFunction(frameContext, queue);
     }
 
 private:
-    std::latch& mFirstFrame;
-    bool        mCounted = false;
+    Function mFunction;
 };
 
-struct Blocking : Renderable
+/** Notes the thread that destroys it. */
+struct DestroyRecorder final : Renderable
 {
-    /** One parameter: three references of two types would be easy to swap. */
-    struct Signals
-    {
-        std::latch&      entered;
-        std::latch&      release;
-        std::thread::id& destroyedOn;
-    };
-
-    explicit Blocking(const Signals& signals)
-        : entered{signals.entered}
-        , release{signals.release}
-        , destroyedOn{signals.destroyedOn}
+    explicit DestroyRecorder(std::thread::id& destroyedOn)
+        : destroyedOn{destroyedOn}
     {
     }
 
-    ~Blocking() override { destroyedOn = std::this_thread::get_id(); }
+    ~DestroyRecorder() override { destroyedOn = std::this_thread::get_id(); }
 
     void
-    collect(const FrameContext& /*frameContext*/, DrawList& /*draws*/) override
+    onDraw(const FrameContext& /*frameContext*/, RenderQueue& /*queue*/) override
     {
-        // Only the first frame signals and blocks: count_down() past zero is undefined, and
-        // a second frame can run before the dropper requests the stop.
-        if (!blocked)
-        {
-            blocked = true;
-            entered.count_down();
-            release.wait();
-        }
     }
 
-    bool             blocked = false;
-    std::latch&      entered;
-    std::latch&      release;
     std::thread::id& destroyedOn;
 };
 
-/** Throws from its first collect() only, so a restart can get past it. */
-struct Failing : Renderable
-{
-    explicit Failing(std::latch& entered)
-        : entered{entered}
-    {
-    }
-
-    void
-    collect(const FrameContext& /*frameContext*/, DrawList& /*draws*/) override
-    {
-        if (thrown)
-        {
-            return;
-        }
-
-        // Before the throw, so stop() cannot win the race against the first frame.
-        thrown = true;
-        entered.count_down();
-        throw std::runtime_error{"collect failed"};
-    }
-
-    bool        thrown = false;
-    std::latch& entered;
-};
-
-struct Child : Renderable
-{
-    Child(std::vector<std::string>& log, std::latch& firstCollect)
-        : log{log}
-        , firstCollect{firstCollect}
-    {
-    }
-
-    void
-    collect(const FrameContext& /*frameContext*/, DrawList& /*draws*/) override
-    {
-        // Only the first frame logs and counts down: count_down() past zero is undefined.
-        if (!collected)
-        {
-            collected = true;
-            log.emplace_back("child.collect");
-            firstCollect.count_down();
-        }
-    }
-
-    bool                      collected = false;
-    std::vector<std::string>& log;
-    std::latch&               firstCollect;
-};
-
-struct Parent : Renderable
-{
-    Parent(Renderer& renderer, std::vector<std::string>& log, std::latch& childCollect)
-        : renderer{renderer}
-        , log{log}
-        , childCollect{childCollect}
-    {
-    }
-
-    void
-    collect(const FrameContext& /*frameContext*/, DrawList& /*draws*/) override
-    {
-        if (!collected)
-        {
-            collected = true;
-            log.emplace_back("parent.collect");
-            renderer.addRenderable(std::make_shared<Child>(log, childCollect));
-        }
-    }
-
-    bool                      collected = false;
-    Renderer&                 renderer;
-    std::vector<std::string>& log;
-    std::latch&               childCollect;
-};
-
-struct Malformed : Renderable
-{
-    explicit Malformed(std::latch& entered)
-        : entered{entered}
-    {
-    }
-
-    void
-    collect(const FrameContext& /*frameContext*/, DrawList& draws) override
-    {
-        // Before the push, so stop() cannot win the race against the first frame.
-        entered.count_down();
-        draws.push_back(Draw{});
-    }
-
-    std::latch& entered;
-};
-
-/** Records the swapchain extent each collect() sees; it runs on the render thread, which owns the
- *  swapchain. */
-struct Probe : Renderable
-{
-    explicit Probe(const Renderer& renderer)
-        : renderer{renderer}
-    {
-    }
-
-    void
-    collect(const FrameContext& /*frameContext*/, DrawList& /*draws*/) override
-    {
-        extents.push_back(RendererTestAccess::swapchainExtent(renderer));
-        if (extents.size() == 1u)
-        {
-            entered.count_down();
-            release.wait();
-        }
-        else if (extents.size() == 2u)
-        {
-            second.count_down();
-        }
-    }
-
-    const Renderer&     renderer;
-    std::vector<Extent> extents;
-    std::latch          entered{1};
-    std::latch          release{1};
-    std::latch          second{1};
-};
-
 /**
- * Draws its mesh in the first frame. In the second it drops the mesh and blocks in collect(), so
- * the test looks at the first frame's command buffer while it is still held by its frame slot.
+ * Runs @p call on a helper thread and waits for it for gDeadline. If it has not returned by
+ * then, the test fails and @p unblock runs, so that the helper can finish and be joined. An
+ * exception of @p call reaches the test thread.
  */
-struct MeshDropper : Renderable
+template <class Call, class Unblock>
+bool
+returnsInTime(Call&& call, Unblock&& unblock)
 {
-    MeshDropper(MeshPtr mesh, MaterialPtr material)
-        : mesh{std::move(mesh)}
-        , material{std::move(material)}
+    std::packaged_task<void()> task{std::forward<Call>(call)};
+    std::future<void>          done = task.get_future();
+    std::thread                helper{std::move(task)};
+
+    const bool inTime = done.wait_for(gDeadline) == std::future_status::ready;
+    if (!inTime)
     {
+        ADD_FAILURE() << "A call did not return within " << gDeadline.count() << " s.";
+        unblock();
+    }
+    helper.join();
+    done.get();
+
+    return inTime;
+}
+
+/** Polls @p condition until it holds or gDeadline passes. */
+template <class Condition>
+bool
+becomesTrue(Condition&& condition)
+{
+    const auto deadline = std::chrono::steady_clock::now() + gDeadline;
+    while (!condition())
+    {
+        if (std::chrono::steady_clock::now() >= deadline)
+        {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{1});
     }
 
-    void
-    collect(const FrameContext& /*frameContext*/, DrawList& draws) override
-    {
-        ++collects;
-        if (collects == 1u)
-        {
-            draws.push_back({.mesh = mesh, .material = material});
-        }
-        else if (collects == 2u)
-        {
-            mesh.reset();
-            entered.count_down();
-            release.wait();
-        }
-    }
+    return true;
+}
 
-    std::size_t collects = 0u;
-    MeshPtr     mesh;
-    MaterialPtr material;
-    std::latch  entered{1};
-    std::latch  release{1};
-};
+constexpr std::size_t gQuadStride = 24u;
+
+/** As the WorldSpace shader reads them: a vec3 position (fed two floats) and a vec4 color. */
+std::vector<VertexAttribute>
+compatibleLayout()
+{
+    return {{VertexFormat::eFloat2, 0u}, {VertexFormat::eFloat4, sizeOf(VertexFormat::eFloat2)}};
+}
+
+/** WorldSpace also reads location 1, which this layout lacks. */
+std::vector<VertexAttribute>
+incompatibleLayout()
+{
+    return {{VertexFormat::eFloat2, 0u}};
+}
+
+MeshPtr
+makeMesh(Renderer& renderer, const std::vector<VertexAttribute>& attributes)
+{
+    return renderer.createMesh({.vertices   = std::vector<std::byte>(3u * gQuadStride),
+                                .stride     = gQuadStride,
+                                .attributes = attributes});
+}
+
+/** A renderable that draws @p mesh with @p material in every frame. */
+std::shared_ptr<Renderable>
+drawing(MeshPtr mesh, MaterialPtr material)
+{
+    return std::make_shared<LambdaRenderable>(
+        [mesh = std::move(mesh), material = std::move(material)](const FrameContext& /*context*/,
+                                                                 RenderQueue& queue)
+        {
+            queue.submit(mesh, material, Math::Matrix4x4f{1.0f});
+        });
+}
 
 /** A shader directory with one shader whose push-constant block is two matrices, 128 bytes. */
 class WideShaderDirectory
@@ -351,34 +264,32 @@ private:
 } // namespace
 
 /**
- * Dropping the renderer from another thread while a frame is in flight waits for that frame and
- * tears the renderer down on the dropping thread: the render thread owns nothing, so it cannot
- * be the one that runs ~Renderer. The renderable it was drawing dies there too.
+ * Dropping the renderer from another thread tears it down on that thread: the render thread owns
+ * nothing, so it cannot be the one that runs ~Renderer. The renderable dies there too.
  *
  * It proves liveness and thread affinity. The self-join it is named for can no longer be
  * written, so there is no broken version of the code for it to fail against.
  */
 TEST_F(RendererTest, destroyWhileFrameInFlightJoins)
 {
-    std::latch      entered{1};
-    std::latch      release{1};
     std::thread::id destroyedOn;
 
-    auto renderable = std::make_shared<Blocking>(
-        Blocking::Signals{.entered = entered, .release = release, .destroyedOn = destroyedOn});
-    const std::weak_ptr<Renderable> weak = renderable;
+    auto                            renderable = std::make_shared<DestroyRecorder>(destroyedOn);
+    const std::weak_ptr<Renderable> weak       = renderable;
 
     auto renderer = makeRenderer();
     renderer->addRenderable(std::move(renderable));
     renderer->start();
-    entered.wait();
+    for (int frame = 0; frame < 3; ++frame)
+    {
+        renderer->submitFrame({});
+    }
 
     std::thread           dropper{[&renderer]
                                   {
                             renderer.reset();
                                   }};
     const std::thread::id dropperId = dropper.get_id();
-    release.count_down();
     dropper.join();
 
     EXPECT_TRUE(weak.expired());
@@ -386,77 +297,299 @@ TEST_F(RendererTest, destroyWhileFrameInFlightJoins)
 }
 
 /**
- * A collect() that throws ends the render thread, and stop() hands the exception to the caller.
- * The renderables stay: after a restart the one that threw is collected again, and so is the one
- * queued behind it.
+ * An onDraw() that throws reaches the caller of submitFrame(), the main thread: the renderer keeps
+ * running, and the next frame is submitted as usual.
  */
 // The score comes from the gtest assertion macros.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-TEST_F(RendererTest, failingCollectIsReportedAndRestartable)
+TEST_F(RendererTest, throwingOnDrawPropagatesFromSubmitFrame)
 {
-    std::latch entered{1};
-    std::latch firstFrame{1};
+    bool thrown = false;
 
     auto renderer = makeRenderer();
-    renderer->addRenderable(std::make_shared<Failing>(entered));
-    renderer->addRenderable(std::make_shared<CountingRenderable>(firstFrame));
+    renderer->addRenderable(std::make_shared<LambdaRenderable>(
+        [&thrown](const FrameContext& /*context*/, RenderQueue& /*queue*/)
+        {
+            if (!thrown)
+            {
+                thrown = true;
+                throw std::runtime_error{"onDraw failed"};
+            }
+        }));
     renderer->start();
-    entered.wait();
 
-    while (renderer->getState() == Renderer::State::eRunning)
-    {
-        std::this_thread::yield();
-    }
-    EXPECT_EQ(renderer->getState(), Renderer::State::eFailed);
+    EXPECT_THROW(renderer->submitFrame({}), std::runtime_error);
+    EXPECT_EQ(renderer->getState(), Renderer::State::eRunning);
+
+    EXPECT_NO_THROW(renderer->submitFrame({}));
+    EXPECT_FALSE(renderer->stop());
+}
+
+/**
+ * A draw whose vertex layout the shader cannot read ends the render thread, and stop() hands the
+ * exception to the caller. While it is down, submitFrame() does not wait for it: the dead thread
+ * keeps taking and dropping packets. The renderable stays: after a restart it draws a mesh that
+ * fits.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, renderThreadFailureIsReportedAndRestartable)
+{
+    auto renderer = makeRenderer();
+    auto material = renderer->createMaterial({.shader = "WorldSpace"});
+    auto bad      = makeMesh(*renderer, incompatibleLayout());
+    auto good     = makeMesh(*renderer, compatibleLayout());
+
+    bool first = true;
+    renderer->addRenderable(std::make_shared<LambdaRenderable>(
+        [&](const FrameContext& /*context*/, RenderQueue& queue)
+        {
+            queue.submit(first ? bad : good, material, Math::Matrix4x4f{1.0f});
+            first = false;
+        }));
+    renderer->start();
+    renderer->submitFrame({});
+
+    ASSERT_TRUE(becomesTrue(
+        [&]
+        {
+            return renderer->getState() == Renderer::State::eFailed;
+        }));
+
+    // The first of these fills the slot, the second waits for a consumer.
+    EXPECT_TRUE(returnsInTime(
+        [&]
+        {
+            for (int frame = 0; frame < 3; ++frame)
+            {
+                renderer->submitFrame({});
+            }
+        },
+        [&]
+        {
+            // Wakes the submit that waits. The test has failed already, so losing the exception
+            // to this stop() does not matter.
+            std::ignore = renderer->stop();
+        }));
 
     const std::exception_ptr failure = renderer->stop();
     ASSERT_TRUE(failure);
-    EXPECT_THROW(std::rethrow_exception(failure), std::runtime_error);
+    EXPECT_THROW(std::rethrow_exception(failure), std::invalid_argument);
     EXPECT_EQ(renderer->getState(), Renderer::State::eStopped);
 
     renderer->start();
-    firstFrame.wait();
+    renderer->submitFrame({});
+    renderer->submitFrame({});
     EXPECT_EQ(renderer->getState(), Renderer::State::eRunning);
     EXPECT_FALSE(renderer->stop());
 }
 
 /**
- * A renderable may queue another from collect(): no lock is held while it runs. The child is
- * adopted at the start of the next frame, and collected in it.
+ * A renderable may queue another from onDraw(): no lock is held while it runs. The child is
+ * adopted by the next submitFrame(), and drawn in that frame.
  */
-TEST_F(RendererTest, addRenderableFromCollectIsCollectedNextFrame)
+TEST_F(RendererTest, addRenderableFromOnDrawIsDrawnNextFrame)
 {
     std::vector<std::string> log;
-    std::latch               childCollect{1};
 
     auto renderer = makeRenderer();
-    renderer->addRenderable(std::make_shared<Parent>(*renderer, log, childCollect));
+    bool added    = false;
+    renderer->addRenderable(std::make_shared<LambdaRenderable>(
+        [&](const FrameContext& /*context*/, RenderQueue& /*queue*/)
+        {
+            if (!added)
+            {
+                added = true;
+                log.emplace_back("parent.onDraw");
+                renderer->addRenderable(std::make_shared<LambdaRenderable>(
+                    [&log, logged = false](const FrameContext& /*context*/,
+                                           RenderQueue& /*queue*/) mutable
+                    {
+                        if (!std::exchange(logged, true))
+                        {
+                            log.emplace_back("child.onDraw");
+                        }
+                    }));
+            }
+        }));
     renderer->start();
-    childCollect.wait();
-    EXPECT_FALSE(renderer->stop());
 
-    // The render thread wrote the log; stop() joined it.
-    ASSERT_EQ(log.size(), 2u);
-    EXPECT_EQ(log[0], "parent.collect");
-    EXPECT_EQ(log[1], "child.collect");
+    renderer->submitFrame({});
+    EXPECT_EQ(log, (std::vector<std::string>{"parent.onDraw"}));
+
+    renderer->submitFrame({});
+    EXPECT_EQ(log, (std::vector<std::string>{"parent.onDraw", "child.onDraw"}));
+    EXPECT_FALSE(renderer->stop());
 }
 
 /**
- * A draw without a mesh or a material is a bug of the renderable: it fails the render thread
- * instead of being skipped. It is found while no image is acquired.
+ * A mesh whose attributes do not cover the shader's inputs is a bug of the renderable: it fails
+ * the render thread, when the pipeline is looked up, instead of being drawn with garbage.
  */
-TEST_F(RendererTest, malformedDrawFailsRenderThread)
+TEST_F(RendererTest, incompatibleMeshFailsRenderThread)
 {
-    std::latch entered{1};
-
     auto renderer = makeRenderer();
-    renderer->addRenderable(std::make_shared<Malformed>(entered));
+    renderer->addRenderable(drawing(makeMesh(*renderer, incompatibleLayout()),
+                                    renderer->createMaterial({.shader = "WorldSpace"})));
     renderer->start();
-    entered.wait();
+    renderer->submitFrame({});
+
+    EXPECT_TRUE(becomesTrue(
+        [&]
+        {
+            return renderer->getState() == Renderer::State::eFailed;
+        }));
 
     const std::exception_ptr failure = renderer->stop();
     ASSERT_TRUE(failure);
     EXPECT_THROW(std::rethrow_exception(failure), std::invalid_argument);
+}
+
+/**
+ * A draw without a mesh or a material is dropped when the packet is built, and the other draws
+ * of the frame are drawn: the valid draw's pipeline is in the cache afterwards.
+ */
+TEST_F(RendererTest, drawWithoutMeshOrMaterialIsSkipped)
+{
+    auto renderer = makeRenderer();
+    auto material = renderer->createMaterial({.shader = "WorldSpace"});
+    auto mesh     = makeMesh(*renderer, compatibleLayout());
+
+    renderer->addRenderable(std::make_shared<LambdaRenderable>(
+        [&](const FrameContext& /*context*/, RenderQueue& queue)
+        {
+            queue.submit(nullptr, nullptr, Math::Matrix4x4f{1.0f});
+            queue.submit(mesh, nullptr, Math::Matrix4x4f{1.0f});
+            queue.submit(nullptr, material, Math::Matrix4x4f{1.0f});
+            queue.submit(mesh, material, Math::Matrix4x4f{1.0f});
+        }));
+    renderer->start();
+    for (int frame = 0; frame < 3; ++frame)
+    {
+        renderer->submitFrame({});
+    }
+
+    EXPECT_EQ(renderer->getState(), Renderer::State::eRunning);
+    EXPECT_FALSE(renderer->stop());
+
+    // The valid draw reached the render thread: it asked for its pipeline.
+    EXPECT_EQ(RendererTestAccess::pipelineCount(*renderer), 1u);
+}
+
+/** onDraw() runs on the thread that submits, with the context it was given. */
+TEST_F(RendererTest, onDrawRunsOnSubmittingThread)
+{
+    constexpr double kTime = 1.5;
+
+    std::thread::id drawnOn;
+    double          timeSeen = 0.0;
+
+    auto renderer = makeRenderer();
+    renderer->addRenderable(std::make_shared<LambdaRenderable>(
+        [&](const FrameContext& context, RenderQueue& /*queue*/)
+        {
+            drawnOn  = std::this_thread::get_id();
+            timeSeen = context.timeSeconds;
+        }));
+    renderer->start();
+    renderer->submitFrame({.timeSeconds = kTime});
+    EXPECT_FALSE(renderer->stop());
+
+    EXPECT_EQ(drawnOn, std::this_thread::get_id());
+    EXPECT_EQ(timeSeen, kTime);
+}
+
+/**
+ * submitFrame() on a renderer that is not running returns at once and calls no renderable. It would
+ * otherwise wait for a consumer that does not exist.
+ */
+TEST_F(RendererTest, submitFrameWhenStoppedReturns)
+{
+    std::size_t draws = 0u;
+
+    auto renderer = makeRenderer();
+    renderer->addRenderable(std::make_shared<LambdaRenderable>(
+        [&draws](const FrameContext& /*context*/, RenderQueue& /*queue*/)
+        {
+            ++draws;
+        }));
+
+    // The second call would wait for a consumer if the first had queued a frame. start() gives it
+    // one.
+    const auto submitTwice = [&]
+    {
+        return returnsInTime(
+            [&]
+            {
+                renderer->submitFrame({});
+                renderer->submitFrame({});
+            },
+            [&]
+            {
+                renderer->start();
+            });
+    };
+
+    EXPECT_TRUE(submitTwice());
+    renderer->start();
+    EXPECT_FALSE(renderer->stop());
+    EXPECT_TRUE(submitTwice());
+
+    EXPECT_EQ(draws, 0u);
+}
+
+/**
+ * trySubmitFrame() calls no renderable while the render thread still holds the previous frame, and
+ * none when stopped. A zero-sized window makes the render thread sleep after each frame, which
+ * keeps the slot full long enough to see.
+ */
+TEST_F(RendererTest, trySubmitFrameSkipsWhileQueued)
+{
+    std::size_t draws = 0u;
+
+    auto renderer = makeRenderer();
+    renderer->addRenderable(std::make_shared<LambdaRenderable>(
+        [&draws](const FrameContext& /*context*/, RenderQueue& /*queue*/)
+        {
+            ++draws;
+        }));
+
+    renderer->trySubmitFrame({});
+    EXPECT_EQ(draws, 0u);
+
+    renderer->resize({});
+    renderer->start();
+    std::size_t calls    = 0u;
+    const auto  deadline = std::chrono::steady_clock::now() + gDeadline;
+    while (calls == draws && std::chrono::steady_clock::now() < deadline)
+    {
+        renderer->trySubmitFrame({});
+        ++calls;
+    }
+    EXPECT_LT(draws, calls) << "No call found the slot full.";
+    EXPECT_FALSE(renderer->stop());
+
+    const std::size_t drawsWhenStopped = draws;
+    renderer->trySubmitFrame({});
+    EXPECT_EQ(draws, drawsWhenStopped);
+}
+
+/** stop() wakes a render thread that waits for the next frame. */
+TEST_F(RendererTest, stopInterruptsIdleRenderThread)
+{
+    auto renderer = makeRenderer();
+    renderer->start();
+
+    EXPECT_TRUE(returnsInTime(
+        [&]
+        {
+            EXPECT_FALSE(renderer->stop());
+        },
+        [&]
+        {
+            // stop() holds the state lock while it waits, so submitFrame() would wait for it.
+            RendererTestAccess::packets(*renderer).push({}, {});
+        }));
 }
 
 // The score comes from the gtest assertion macros.
@@ -518,9 +651,14 @@ TEST_F(RendererTest, createMaterialRejectsUnknownShaderAndShortParameters)
 }
 
 /**
- * A frame in flight keeps the mesh's buffer alive after the renderer let go of the mesh: the draw
- * is gone when the next collect() starts, the first frame's slot is not reused yet. Once the slot
- * is reused, nothing holds the buffer.
+ * A frame in flight keeps the mesh's buffer alive after the renderer let go of the mesh: the frame
+ * that drew it is rendered and gone, but its slot is not reused yet. Once the slot is reused,
+ * nothing holds the buffer.
+ *
+ * A popped packet is rendered unless the acquire skips it; on a headless surface only an acquire
+ * timeout does, and the first frames find a free image. Submitting N+1 returns only once N has been
+ * popped. The test submits no third frame, and reusing the slot of N takes one (the renderer has
+ * two frame slots).
  *
  * It proves that Engine records the buffer through the retaining path and the renderer holds
  * nothing on top. GPU safety rests on the Graphics retention tests; validation errors do not fail
@@ -530,35 +668,37 @@ TEST_F(RendererTest, meshBufferOutlivesMeshWhileFrameInFlight)
 {
     auto renderer = makeRenderer();
 
-    std::shared_ptr<MeshDropper>            dropper;
     std::weak_ptr<const Mesh>               weakMesh;
     std::weak_ptr<Graphics::Vulkan::Buffer> weakBuffer;
     {
-        constexpr std::size_t kStride = 24u;
-        MeshPtr               mesh    = renderer->createMesh(
-            {.vertices   = std::vector<std::byte>(3u * kStride),
-             .stride     = kStride,
-             .attributes = {{VertexFormat::eFloat2, 0u},
-                            {VertexFormat::eFloat4, sizeOf(VertexFormat::eFloat2)}}});
-        weakMesh   = mesh;
-        weakBuffer = mesh->buffer;
-        dropper = std::make_shared<MeshDropper>(std::move(mesh),
-                                                renderer->createMaterial({.shader = "WorldSpace"}));
+        MeshPtr mesh = makeMesh(*renderer, compatibleLayout());
+        weakMesh     = mesh;
+        weakBuffer   = mesh->buffer;
+        renderer->addRenderable(std::make_shared<LambdaRenderable>(
+            [mesh = std::move(mesh), material = renderer->createMaterial({.shader = "WorldSpace"})](
+                const FrameContext& /*context*/, RenderQueue& queue) mutable
+            {
+                // The first frame draws the mesh and lets go of it; later frames draw nothing.
+                queue.submit(mesh, material, Math::Matrix4x4f{1.0f});
+                mesh.reset();
+            }));
     }
 
-    renderer->addRenderable(dropper);
     renderer->start();
-    dropper->entered.wait();
+    renderer->submitFrame({});
+    renderer->submitFrame({});
+    EXPECT_FALSE(renderer->stop());
+
     EXPECT_TRUE(weakMesh.expired());
     EXPECT_FALSE(weakBuffer.expired());
 
-    // The next frame reuses the first frame's slot; the deadline keeps a leak from hanging the
-    // test.
-    dropper->release.count_down();
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+    // Frames that draw nothing cycle through the slots until the first frame's slot is reused; the
+    // deadline keeps a leak from hanging the test.
+    renderer->start();
+    const auto deadline = std::chrono::steady_clock::now() + gDeadline;
     while (!weakBuffer.expired() && std::chrono::steady_clock::now() < deadline)
     {
-        std::this_thread::yield();
+        renderer->submitFrame({});
     }
     EXPECT_TRUE(weakBuffer.expired());
     EXPECT_FALSE(renderer->stop());
@@ -574,29 +714,25 @@ TEST_F(RendererTest, startTwiceThrows)
 }
 
 /**
- * resize() takes effect before the next frame collects: the swapchain has the new extent when that
- * frame's collect() runs, not only after an out-of-date acquire or at the end of the frame. A
- * resize requested before start() shows in the first collect(); one requested while the renderable
- * is blocked inside the first frame shows in the second.
+ * resize() takes effect before the next frame is rendered: the swapchain has the new extent once
+ * the first packet after the request has been taken, whether the request came before start() or
+ * while the thread ran. A second frame is submitted so that the first has been taken.
  */
 TEST_F(RendererTest, resizeRecreatesAtRequestedExtent)
 {
     auto renderer = makeRenderer();
-    auto probe    = std::make_shared<Probe>(*renderer);
-    renderer->addRenderable(probe);
-    renderer->resize({.width = gResizedExtent, .height = gResizedExtent});
-    renderer->start();
 
-    probe->entered.wait();
-    renderer->resize({.width = gResizedAgainExtent, .height = gResizedAgainExtent});
-    probe->release.count_down();
-    probe->second.wait();
-    EXPECT_FALSE(renderer->stop());
+    for (const std::uint32_t size : {gResizedExtent, gResizedAgainExtent})
+    {
+        renderer->resize({.width = size, .height = size});
+        renderer->start();
+        renderer->submitFrame({});
+        renderer->submitFrame({});
+        EXPECT_FALSE(renderer->stop());
 
-    // The render thread wrote the extents; stop() joined it.
-    ASSERT_GE(probe->extents.size(), 2u);
-    EXPECT_EQ(probe->extents[0], (Extent{.width = gResizedExtent, .height = gResizedExtent}));
-    EXPECT_EQ(probe->extents[1],
-              (Extent{.width = gResizedAgainExtent, .height = gResizedAgainExtent}));
+        // stop() joined the render thread.
+        EXPECT_EQ(RendererTestAccess::swapchainExtent(*renderer),
+                  (Extent{.width = size, .height = size}));
+    }
 }
 } // namespace VOG::Tests

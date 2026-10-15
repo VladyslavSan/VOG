@@ -36,6 +36,9 @@ public:
     get(const Mesh& mesh, const Material& material, vk::Format colorFormat);
 
 private:
+    /** Lets RendererTest count the entries. */
+    friend struct RendererTestAccess;
+
     struct Entry
     {
         // The shader program is keyed by pipeline->program: the pipeline holds it, so its address

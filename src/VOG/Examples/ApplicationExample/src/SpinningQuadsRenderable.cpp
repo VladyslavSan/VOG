@@ -59,8 +59,8 @@ SpinningQuadsRenderable::SpinningQuadsRenderable(VOG::Engine::Renderer& renderer
 }
 
 void
-SpinningQuadsRenderable::collect(const VOG::Engine::FrameContext& frameContext,
-                                 VOG::Engine::DrawList&           draws)
+SpinningQuadsRenderable::onDraw(const VOG::Engine::FrameContext& frameContext,
+                                VOG::Engine::RenderQueue&        queue)
 {
     const float timeFactor = std::sin(static_cast<float>(frameContext.timeSeconds) * gRotationRate);
 
@@ -69,5 +69,5 @@ SpinningQuadsRenderable::collect(const VOG::Engine::FrameContext& frameContext,
         glm::scale(Vector3f{gQuadHalfSizePixels, gQuadHalfSizePixels, 1.0}) *
         glm::rotate(glm::radians(timeFactor * gMaxRotationDegrees), Vector3f{0.0, 0.0, 1.0});
 
-    draws.push_back({.mesh = mMesh, .material = mMaterial, .world = model});
+    queue.submit(mMesh, mMaterial, model);
 }
