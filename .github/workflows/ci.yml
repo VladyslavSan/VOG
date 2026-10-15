@@ -85,13 +85,8 @@ jobs:
             --output-on-failure \
             --output-junit ${{ runner.temp }}/test-results.xml
 
-      # Not required to pass yet: MoltenVK on the runner's paravirtual GPU is unverified. Drop
-      # continue-on-error after two green runs.
       - name: Test (macOS)
         if: runner.os == 'macOS'
-        continue-on-error: true
-        env:
-          VK_LOADER_DEBUG: error
         run: |
           ctest --test-dir build/build/${{ matrix.build_type }} --output-on-failure
 
