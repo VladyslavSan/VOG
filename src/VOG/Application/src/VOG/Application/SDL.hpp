@@ -2,7 +2,7 @@
 
 #include <VOG/Common/Assert.hpp>
 #include <VOG/Common/SurfaceHandle.hpp>
-#include <VOG/Graphics/Config/VulkanConfig.hpp>
+#include <VOG/Engine/Renderer/Extent.hpp>
 
 #include <SDL3/SDL.h>
 
@@ -40,7 +40,7 @@ public:
     const Common::SurfaceHandle& getSurfaceHandle() const;
 
     /** Size of the window in physical pixels. Main thread only, like every SDL window call. */
-    vk::Extent2D sizeInPixels() const;
+    Engine::Extent sizeInPixels() const;
 
 protected:
     Handle mWindowHandle;
@@ -70,7 +70,7 @@ SDLWindow::getSurfaceHandle() const
     return mSurfaceHandles;
 }
 
-inline vk::Extent2D
+inline Engine::Extent
 SDLWindow::sizeInPixels() const
 {
     int width  = 0;

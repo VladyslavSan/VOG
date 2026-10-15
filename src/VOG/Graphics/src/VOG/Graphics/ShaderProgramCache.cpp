@@ -134,7 +134,7 @@ ShaderProgramCache::ShaderProgramCache(const Vulkan::DevicePtr&     device,
 ShaderProgramCache::~ShaderProgramCache() = default;
 
 std::shared_ptr<Vulkan::ShaderProgram>
-ShaderProgramCache::get(const std::string& name)
+ShaderProgramCache::get(const std::string& name) const
 {
     const auto found = mCache.find(name);
     if (found == mCache.end()) [[unlikely]]

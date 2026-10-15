@@ -1,8 +1,11 @@
 #pragma once
 
 #include <VOG/Common/SurfaceHandle.hpp>
+#include <VOG/Engine/Renderer/Camera.hpp>
+#include <VOG/Engine/Renderer/Extent.hpp>
+#include <VOG/Engine/Renderer/Material.hpp>
+#include <VOG/Engine/Renderer/Mesh.hpp>
 #include <VOG/Engine/Renderer/Renderable.hpp>
-#include <VOG/Graphics/Config/VulkanConfig.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -32,12 +35,15 @@ namespace VOG::Graphics::Vulkan
 class Instance;
 class Device;
 class FencePool;
+class GraphicsPipeline;
 class Queue;
 class Swapchain;
 } // namespace VOG::Graphics::Vulkan
 
 namespace VOG::Engine
 {
+class PipelineCache;
+
 /**
  * Owns the Vulkan objects of one window and the thread that renders into it.
  *
@@ -70,7 +76,7 @@ public:
          * Size of the window in pixels at startup. It sizes the swapchain where the surface
          * leaves that to the application (Wayland, headless): required there, 0x0 throws.
          */
-        vk::Extent2D extent;
+        Extent extent;
     };
 
     enum class State : std::uint8_t
@@ -91,18 +97,36 @@ public:
     Renderer& operator=(const Renderer&) = delete;
 
     /**
-     * Queues @p renderable; its prepare() runs on the render thread before its first collect().
-     * Any thread, including a Renderable callback: no callback runs under a lock, and a
-     * renderable queued while another one prepares is prepared in the same frame.
+     * Queues @p renderable; the render thread collects from it from the next frame on. Any
+     * thread, including a Renderable callback: no callback runs under a lock.
      */
     void addRenderable(std::shared_ptr<Renderable> renderable);
+
+    /**
+     * Uploads the vertices of @p description. Any thread: the allocator is internally
+     * synchronized.
+     * @throws std::invalid_argument if the description is empty, its size is not a multiple of the
+     *         stride, an attribute overruns the stride, or it has more attributes than a pipeline
+     *         can take.
+     */
+    MeshPtr createMesh(const MeshDescription& description);
+
+    /**
+     * Looks up the shader of @p description. Any thread: the shader cache is only read.
+     * @throws std::invalid_argument for an unknown shader, more than 64 bytes of parameters, or a
+     *         push-constant range of the shader that ends past the parameters.
+     */
+    MaterialPtr createMaterial(MaterialDescription description);
+
+    /** Any thread. A default Camera is used until this is called. */
+    void setCamera(const Camera& camera);
 
     /**
      * New window size in pixels. Any thread; the render thread recreates the swapchain at that
      * size before its next frame. Surfaces that report their own size (macOS, Windows, X11) ignore
      * it; Wayland and headless surfaces take it as given.
      */
-    void resize(vk::Extent2D extent);
+    void resize(Extent extent);
 
     /** Starts the render thread. @throws std::logic_error unless getState() is eStopped. */
     void start();
@@ -117,21 +141,20 @@ public:
     State getState() const;
 
 private:
+    /** Lets RendererTest read the swapchain; nothing else uses it. */
+    friend struct RendererTestAccess;
+
     /** min(framesInFlight, imageCount); logs when it clamps. */
     static std::uint8_t frameSlotCount(std::uint8_t framesInFlight, std::size_t imageCount);
 
-    /** Locks mPendingMutex only. */
-    std::shared_ptr<Renderable> takePendingRenderable();
+    /** Render thread. Moves the pending renderables into mRenderables. */
+    void adoptPendingRenderables();
 
-    /** Render thread. Drains the pending queue one renderable at a time; no lock is held while a
-     *  renderable prepares, and one whose prepare() throws is dropped. */
-    void prepareRenderables();
-
-    /** Render thread. Refills mRenderItems and checks every item. */
-    void collectRenderItems(const FrameContext& frameContext);
+    /** Render thread. Refills mDraws, checks every draw and finds its pipeline in mPipelines. */
+    void collectDraws(const FrameContext& frameContext);
 
     /** Render thread. Rebuilds the swapchain for @p requested; false if it is zero-sized. */
-    bool applyExtent(vk::Extent2D requested);
+    bool applyExtent(Extent requested);
 
     /** Render thread. One frame; an exception ends the thread. */
     void renderFrame();
@@ -148,23 +171,33 @@ private:
 
     std::chrono::steady_clock::time_point mStartTime;
 
-    /** Written by resize() on any thread; vk::Extent2D is trivially copyable, so this is lock-free.
-     */
-    std::atomic<vk::Extent2D> mRequestedExtent;
+    /** Written by resize() on any thread. Extent is trivially copyable and 8 bytes, so the atomic
+     * is lock-free (Renderer.cpp asserts it). */
+    std::atomic<Extent> mRequestedExtent;
 
     /** Render thread only: the last requested extent that was applied. Surfaces that report their
      *  own size ignore the request, so this is not necessarily the size of the images. */
-    vk::Extent2D mAppliedExtent;
+    Extent mAppliedExtent;
 
     /** Written by any thread, drained by the render thread. No callback runs under it. */
     std::mutex                              mPendingMutex;
     std::deque<std::shared_ptr<Renderable>> mPending;
 
-    /** Render thread only; everything in it has been prepared. */
+    /** Render thread only. */
     std::vector<std::shared_ptr<Renderable>> mRenderables;
 
-    /** Render-thread scratch space, kept to reuse its capacity across frames. */
-    std::vector<RenderItem> mRenderItems;
+    /** A mutex, not an atomic: Camera is too big to be lock-free without libatomic. */
+    std::mutex mCameraMutex;
+    Camera     mCamera;
+
+    /** Render thread only. */
+    std::unique_ptr<PipelineCache> mPipelineCache;
+
+    /** Render-thread scratch space, kept to reuse its capacity across frames. The draws, and so
+     *  the meshes, stay alive until the next frame's collect clears them. */
+    DrawList mDraws;
+    /** The pipeline of each draw in mDraws, at the same index. */
+    std::vector<std::shared_ptr<Graphics::Vulkan::GraphicsPipeline>> mPipelines;
 
     /** Serializes start, stop and getState. */
     mutable std::mutex mStateMutex;

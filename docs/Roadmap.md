@@ -115,23 +115,29 @@ step builds on the previous. Completed work is kept for context.
   `eHostSequentialWrite` is what `Buffer::mapForWrite()` needs.
 - **Docs pass** (review stage 7): current-state text checked against the code; the known
   gaps are listed in `ResourceOwnership.md`.
+- **Engine API S1: meshes, materials, camera**: `Renderer::createMesh` and `createMaterial` return
+  immutable `MeshPtr` and `MaterialPtr`, and `setCamera` sets an orthographic `Camera`. A
+  `Renderable` appends `Draw`s (mesh, material, world matrix) in `collect()`; the renderer builds
+  the pipelines in a `PipelineCache` (one per vertex layout, shader program and color format) and
+  records the draws, pushing the matrix and the material parameters. `Renderable::prepare`,
+  `RenderItem`, `ResourceContext` and `FrameContext::extent` are removed. Engine links Graphics
+  PRIVATE, and `VOG.Engine.PublicHeadersTest` fails the build if a public Engine header includes a
+  Graphics or Vulkan header. See `ResourceOwnership.md`, "Meshes and materials".
 
 ## Later milestones (in rough order)
 
-1. **Render graph**: declared passes with reads/writes; derives barriers,
+1. **Engine API (S2-S7)**: continues S1 (see Done).
+   - S2: main/render thread split. The main thread extracts an immutable per-frame packet (draws,
+     camera, time).
+   - S3: homegrown ECS with a GameObject facade.
+   - S4: indexed meshes.
+   - S5: textures and parameter blocks on descriptor heaps.
+   - S6: device-local uploads through staging on the transfer queue.
+   - S7: parallel recording.
+2. **Scene representation: decided, a homegrown ECS (S3).**
+3. **Render graph**: declared passes with reads/writes; derives barriers,
    layouts and transient attachment lifetimes. Deletes the hand-written
    barrier blocks in the renderer.
-2. **Images & uploads**: `Image`/texture class, staging-buffer upload path on
-   the so-far-unused transfer queue.
-3. **Materials and meshes: the Engine-level draw API.** A material is a shader plus its
-   parameters; a draw submits a mesh and a material to the render queue. Pipelines, shader
-   programs, buffers and the device stay in `VOG::Graphics`. This replaces today's stopgap,
-   which hands Graphics types to Engine users: `RenderItem` (pipeline, vertex buffer,
-   push-constant blob), `ResourceContext` (device, shader program cache) and the swapchain
-   extent in `FrameContext`, which a renderable needs only to build its own projection (a
-   camera's job). Material parameters move to bindless descriptors.
-4. **Scene representation** decision (ECS vs scene graph) — deferred until
-   materials/meshes exist.
 
 ## Standing decisions
 
@@ -139,7 +145,12 @@ step builds on the previous. Completed work is kept for context.
   backend is ever wanted.
 - **Layering of the draw API**: `VOG::Graphics` speaks Vulkan (pipelines, shaders, buffers,
   descriptors); the Engine API speaks meshes and materials and does not expose Graphics types.
-  The `Renderable` interface breaks this until milestone 3.
+  Enforced since S1: Engine links Graphics PRIVATE, and `VOG.Engine.PublicHeadersTest` fails the
+  build if a public Engine header includes a Graphics or Vulkan header. `Renderer.hpp` still
+  forward-declares Graphics types as private members.
+- **Descriptors: descriptor heaps (`VK_EXT_descriptor_heap`) only.** lavapipe exposes the extension
+  from Mesa 26.2.0, and CI currently has Mesa 25.2.8; MoltenVK 1.4.2 and KosmicKrisp (Mesa main as
+  of 2026-10-15) do not expose it.
 - Resource lifetimes follow the recording-retains model
   (`ResourceOwnership.md`); new recording APIs must retain through
   `CommandBufferRecorder`.

@@ -1,6 +1,9 @@
 #include "VOG/Engine/Renderer/Renderer.hpp"
 
 #include <VOG/Common/Assert.hpp>
+#include "VOG/Engine/Renderer/MaterialDefinition.hpp"
+#include "VOG/Engine/Renderer/MeshDefinition.hpp"
+#include "VOG/Engine/Renderer/PipelineCache.hpp"
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Frame/FrameObjectManager.hpp>
 #include <VOG/Graphics/ShaderProgramCache.hpp>
@@ -14,6 +17,7 @@
 #include <VOG/Graphics/Vulkan/FencePool.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
+#include <VOG/Graphics/Vulkan/Limits.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 
 #include <spdlog/spdlog.h>
@@ -21,7 +25,9 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstring>
 #include <format>
+#include <iterator>
 #include <span>
 #include <stdexcept>
 #include <thread>
@@ -30,6 +36,8 @@
 
 namespace VOG::Engine
 {
+static_assert(std::atomic<Extent>::is_always_lock_free);
+
 namespace
 {
 constexpr std::chrono::milliseconds gZeroExtentBackoff{16};
@@ -37,6 +45,15 @@ constexpr std::chrono::milliseconds gZeroExtentBackoff{16};
 constexpr std::chrono::milliseconds gAcquireTimeout{100};
 constexpr std::size_t               gThreadId   = 0u;
 constexpr std::array                gClearColor = {0.0f, 0.0f, 0.0f, 1.0f};
+
+vk::Extent2D
+toVk(Extent extent)
+{
+    return vk::Extent2D{.width = extent.width, .height = extent.height};
+}
+
+/** Push constants the renderer fills: the matrix, then the material's parameters. */
+constexpr std::size_t gPushConstantsSize = gParametersOffset + gMaxParametersSize;
 } // namespace
 
 Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& config)
@@ -55,13 +72,14 @@ Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& con
     , mSwapchain{mVulkanDevice->createSwapchain(Graphics::Vulkan::Swapchain::SwapchainParameters{
           .framesInFlight = mFramesInFlight,
           .surface        = surfaceHandle,
-          .extent         = config.extent,
+          .extent         = toVk(config.extent),
       })}
     , mFrameObjectManager{std::make_unique<Graphics::Frame::FrameObjectManager>(
           mVulkanDevice, frameSlotCount(mFramesInFlight, mSwapchain->getImageCount()), 1u)}
     , mStartTime{std::chrono::steady_clock::now()}
     , mRequestedExtent{config.extent}
     , mAppliedExtent{config.extent}
+    , mPipelineCache{std::make_unique<PipelineCache>(mVulkanDevice)}
 {
 }
 
@@ -113,78 +131,137 @@ Renderer::addRenderable(std::shared_ptr<Renderable> renderable)
 }
 
 void
-Renderer::resize(vk::Extent2D extent)
+Renderer::resize(Extent extent)
 {
     mRequestedExtent.store(extent);
 }
 
-std::shared_ptr<Renderable>
-Renderer::takePendingRenderable()
+MeshPtr
+Renderer::createMesh(const MeshDescription& description)
+{
+    if (description.vertices.empty() || description.stride == 0u ||
+        description.vertices.size() % description.stride != 0u)
+    {
+        throw std::invalid_argument{
+            std::format("A mesh needs vertices, a non-zero stride and a size that is a multiple of "
+                        "it; got {} bytes with stride {}.",
+                        description.vertices.size(),
+                        description.stride)};
+    }
+    if (description.attributes.size() > Graphics::Vulkan::Limits::gMaxNumStageAttributes)
+    {
+        throw std::invalid_argument{std::format("A mesh takes at most {} attributes; got {}.",
+                                                Graphics::Vulkan::Limits::gMaxNumStageAttributes,
+                                                description.attributes.size())};
+    }
+    for (const VertexAttribute& attribute : description.attributes)
+    {
+        if (std::uint64_t{attribute.offset} + sizeOf(attribute.format) > description.stride)
+        {
+            throw std::invalid_argument{std::format(
+                "A vertex attribute at offset {} does not fit in the stride of {} bytes.",
+                attribute.offset,
+                description.stride)};
+        }
+    }
+
+    Graphics::Vulkan::BufferPtr buffer = mVulkanDevice->createBuffer(
+        {.size  = description.vertices.size_bytes(),
+         .usage = vk::BufferUsageFlagBits::eVertexBuffer},
+        {.flags = Graphics::Vulkan::AllocationFlag::eHostSequentialWrite});
+    {
+        auto mapping = buffer->mapForWrite();
+        std::memcpy(mapping.data, description.vertices.data(), description.vertices.size_bytes());
+    }
+
+    return std::make_shared<const Mesh>(Mesh{
+        .buffer      = std::move(buffer),
+        .vertexCount = static_cast<std::uint32_t>(description.vertices.size() / description.stride),
+        .stride      = description.stride,
+        .attributes  = description.attributes});
+}
+
+MaterialPtr
+Renderer::createMaterial(MaterialDescription description)
+{
+    if (description.parameters.size() > gMaxParametersSize)
+    {
+        throw std::invalid_argument{
+            std::format("A material takes at most {} bytes of parameters; got {}.",
+                        gMaxParametersSize,
+                        description.parameters.size())};
+    }
+
+    Graphics::Vulkan::ShaderProgramPtr program = mShaderProgramCache->get(description.shader);
+
+    const std::size_t pushedSize = gParametersOffset + description.parameters.size();
+    for (const vk::PushConstantRange& range : program->pushConstants.ranges)
+    {
+        if (std::size_t{range.offset} + range.size > pushedSize)
+        {
+            throw std::invalid_argument{std::format(
+                "Shader \"{}\" has a push-constant range [{}, {}) past the {} bytes the renderer "
+                "pushes for {} bytes of parameters.",
+                description.shader,
+                range.offset,
+                range.offset + range.size,
+                pushedSize,
+                description.parameters.size())};
+        }
+    }
+
+    return std::make_shared<const Material>(
+        Material{.program = std::move(program), .parameters = std::move(description.parameters)});
+}
+
+void
+Renderer::setCamera(const Camera& camera)
+{
+    const std::scoped_lock lock{mCameraMutex};
+    mCamera = camera;
+}
+
+void
+Renderer::adoptPendingRenderables()
 {
     const std::scoped_lock lock{mPendingMutex};
-    if (mPending.empty())
-    {
-        return nullptr;
-    }
-
-    std::shared_ptr<Renderable> renderable = std::move(mPending.front());
-    mPending.pop_front();
-
-    return renderable;
+    mRenderables.insert(mRenderables.end(),
+                        std::make_move_iterator(mPending.begin()),
+                        std::make_move_iterator(mPending.end()));
+    mPending.clear();
 }
 
 void
-Renderer::prepareRenderables()
+Renderer::collectDraws(const FrameContext& frameContext)
 {
-    std::shared_ptr<Renderable> renderable = takePendingRenderable();
-    if (!renderable)
-    {
-        return;
-    }
-
-    const ResourceContext resourceContext{
-        mVulkanDevice, mShaderProgramCache, mSwapchain->getFormat()};
-
-    // One at a time and without a lock: prepare() may call addRenderable(), and the child is
-    // taken by this same loop. A prepare() that throws drops only its own renderable; the rest
-    // stay pending.
-    while (renderable)
-    {
-        renderable->prepare(resourceContext);
-        mRenderables.push_back(std::move(renderable));
-        renderable = takePendingRenderable();
-    }
-}
-
-void
-Renderer::collectRenderItems(const FrameContext& frameContext)
-{
-    mRenderItems.clear();
+    mDraws.clear();
+    mPipelines.clear();
 
     for (const std::shared_ptr<Renderable>& renderable : mRenderables)
     {
         Renderable&       current = *renderable;
-        const std::size_t before  = mRenderItems.size();
-        current.collect(frameContext, mRenderItems);
+        const std::size_t before  = mDraws.size();
+        current.collect(frameContext, mDraws);
 
-        for (std::size_t i = before; i < mRenderItems.size(); ++i)
+        for (std::size_t i = before; i < mDraws.size(); ++i)
         {
-            const RenderItem& item = mRenderItems[i];
-            if (!item.pipeline || !item.vertexBuffer || item.vertexCount == 0u)
+            const Draw& draw = mDraws[i];
+            if (!draw.mesh || !draw.material)
             {
-                throw std::invalid_argument{
-                    std::format("{} produced a RenderItem without a pipeline, a vertex buffer or "
-                                "a vertex count.",
-                                typeid(current).name())};
+                throw std::invalid_argument{std::format(
+                    "{} produced a Draw without a mesh or a material.", typeid(current).name())};
             }
+
+            mPipelines.push_back(
+                mPipelineCache->get(*draw.mesh, *draw.material, mSwapchain->getFormat()));
         }
     }
 }
 
 bool
-Renderer::applyExtent(vk::Extent2D requested)
+Renderer::applyExtent(Extent requested)
 {
-    if (!mSwapchain->recreate(requested))
+    if (!mSwapchain->recreate(toVk(requested)))
     {
         return false;
     }
@@ -199,9 +276,9 @@ Renderer::renderFrame()
 {
     using namespace VOG::Graphics::Vulkan;
 
-    prepareRenderables();
+    adoptPendingRenderables();
 
-    const vk::Extent2D requested = mRequestedExtent.load();
+    const Extent requested = mRequestedExtent.load();
     if (requested != mAppliedExtent && !applyExtent(requested))
     {
         // Zero-sized (minimized); back off instead of spinning.
@@ -210,13 +287,10 @@ Renderer::renderFrame()
     }
 
     // Collect and check before acquiring: a renderable that throws, or hands back a malformed
-    // item, must do so while no image is acquired. The frame's extent is the size of every image
-    // acquired from here on, because an out-of-date acquire drops the frame.
-    const vk::Extent2D extent = mSwapchain->getExtent();
-    collectRenderItems({
+    // draw, must do so while no image is acquired.
+    collectDraws({
         .timeSeconds =
             std::chrono::duration<double>{std::chrono::steady_clock::now() - mStartTime}.count(),
-        .extent = extent,
     });
 
     const auto acquireResult = mSwapchain->acquireNextImage(gAcquireTimeout);
@@ -236,6 +310,15 @@ Renderer::renderFrame()
 
     const auto& acquired = acquireResult.acquired;
     VOG_ASSERT_MSG(acquired, "eReady acquire must provide AcquiredSwapchainImage.");
+
+    const vk::Extent2D extent = acquired->getExtent2D();
+    Camera             camera;
+    {
+        const std::scoped_lock lock{mCameraMutex};
+        camera = mCamera;
+    }
+    const Math::Matrix4x4f viewProjection =
+        camera.viewProjection({.width = extent.width, .height = extent.height});
 
     // Advance the frame slot only when we will actually submit — skip/out-of-date must not
     // burn a fence-keyed release slot.
@@ -287,23 +370,30 @@ Renderer::renderFrame()
                                 },
                             });
 
-            for (const RenderItem& item : mRenderItems)
+            for (std::size_t i = 0u; i < mDraws.size(); ++i)
             {
-                pass.bindPipeline(item.pipeline);
-                pass.bindVertexBuffers(0u, {{.buffer = item.vertexBuffer, .offset = 0u}});
+                const Draw&     draw     = mDraws[i];
+                const Material& material = *draw.material;
 
-                if (!item.pushConstants.empty())
+                // The matrix first, then the parameters; createMaterial checked that the shader's
+                // ranges end inside what is filled here.
+                const Math::Matrix4x4f                    mvp = viewProjection * draw.world;
+                std::array<std::byte, gPushConstantsSize> pushConstants{};
+                std::memcpy(pushConstants.data(), &mvp, sizeof(mvp));
+                std::ranges::copy(material.parameters, pushConstants.begin() + gParametersOffset);
+
+                pass.bindPipeline(mPipelines[i]);
+                for (const vk::PushConstantRange& range : material.program->pushConstants.ranges)
                 {
                     pass.pushConstants<std::byte>(
-                        *item.pipeline->program->pipelineLayout,
-                        item.pushConstantsStages,
-                        0u,
-                        vk::ArrayProxy<const std::byte>{
-                            static_cast<std::uint32_t>(item.pushConstants.size()),
-                            item.pushConstants.data()});
+                        *material.program->pipelineLayout,
+                        range.stageFlags,
+                        range.offset,
+                        vk::ArrayProxy<const std::byte>{range.size,
+                                                        pushConstants.data() + range.offset});
                 }
-
-                pass.draw(item.vertexCount, 1, 0, 0);
+                pass.bindVertexBuffers(0u, {{.buffer = draw.mesh->buffer, .offset = 0u}});
+                pass.draw(draw.mesh->vertexCount, 1, 0, 0);
             }
         }
 

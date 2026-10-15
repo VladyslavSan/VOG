@@ -1,4 +1,5 @@
 #include <VOG/Application/Application.hpp>
+#include <VOG/Engine/Renderer/Renderer.hpp>
 
 #include <boost/program_options.hpp>
 
@@ -94,7 +95,11 @@ main(int argc, const char** argv) // NOLINT(bugprone-exception-escape)
             .shaderStoragePath = varMap["shader-storage-path"].as<std::string>(),
         });
 
-        app.addRenderable(std::make_shared<SpinningQuadsRenderable>());
+        constexpr float kNearPlane = 1.0f;
+        constexpr float kFarPlane  = 200.0f;
+
+        app.getRenderer().setCamera({.nearPlane = kNearPlane, .farPlane = kFarPlane});
+        app.addRenderable(std::make_shared<SpinningQuadsRenderable>(app.getRenderer()));
 
         app.run();
     }

@@ -47,6 +47,9 @@ public:
     /** Any time, before or between run()s. */
     void addRenderable(std::shared_ptr<Engine::Renderable> renderable);
 
+    /** For createMesh, createMaterial and setCamera; run() owns start and stop. */
+    Engine::Renderer& getRenderer();
+
     /**
      * Starts rendering and pumps events on the calling thread until a quit is requested or the
      * render thread fails; then stops the renderer and rethrows that failure. May be called again.

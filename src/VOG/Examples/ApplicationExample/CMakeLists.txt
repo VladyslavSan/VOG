@@ -1,3 +1,5 @@
+find_package(Boost COMPONENTS program_options REQUIRED)
+
 set(ApplicationExample_source_files
     src/main.cpp
     src/SpinningQuadsRenderable.hpp
@@ -11,4 +13,5 @@ target_link_libraries(ApplicationExample
     PRIVATE
         ${PROJECT_NAME}::Application
         ${PROJECT_NAME}::Math
+        Boost::program_options
 )
