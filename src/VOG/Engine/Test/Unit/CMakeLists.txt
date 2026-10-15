@@ -5,6 +5,8 @@ set_target_properties(VOG.Engine.Unit PROPERTIES FOLDER "VOG/Tests")
 
 target_sources(VOG.Engine.Unit
     PRIVATE
+        CameraTest.cpp
+        PipelineCacheTest.cpp
         RendererTest.cpp
 )
 
@@ -14,11 +16,20 @@ target_compile_definitions(VOG.Engine.Unit
         VOG_TEST_SHADER_PATH="${PROJECT_SOURCE_DIR}/src/VOG/Graphics/resources/shaders"
 )
 
+# The tests reach behind the public API: the private definitions of Mesh and Material, the
+# pipeline cache, and the Vulkan objects behind the renderer.
+target_include_directories(VOG.Engine.Unit
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/VOG/Engine/src
+)
+
 target_link_libraries(VOG.Engine.Unit
     PUBLIC
         ${PROJECT_NAME}::Engine
         GTest::gtest
         GTest::gtest_main
+    PRIVATE
+        ${PROJECT_NAME}::Graphics
 )
 
 include(GoogleTest)

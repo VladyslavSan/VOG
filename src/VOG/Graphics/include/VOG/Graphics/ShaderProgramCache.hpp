@@ -24,7 +24,7 @@ public:
 
     ~ShaderProgramCache();
 
-    Vulkan::ShaderProgramPtr get(const std::string& name);
+    Vulkan::ShaderProgramPtr get(const std::string& name) const;
 
 protected:
     Vulkan::DevicePtr           mDevice;

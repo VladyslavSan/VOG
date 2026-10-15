@@ -71,6 +71,12 @@ Application::addRenderable(std::shared_ptr<Engine::Renderable> renderable)
     mRenderer->addRenderable(std::move(renderable));
 }
 
+Engine::Renderer&
+Application::getRenderer()
+{
+    return *mRenderer;
+}
+
 void
 Application::run()
 {

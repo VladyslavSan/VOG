@@ -63,6 +63,19 @@ after the fence of the frame that referenced the resource has signaled.
    no `waitIdle`: the old generation is retired by reference count.
    Details: `SwapchainSync.md`.
 
+## Meshes and materials
+
+The Engine hands out `MeshPtr` and `MaterialPtr`; the chain behind them is the same one:
+
+- A `Mesh` owns a `BufferPtr`. `Renderer::mDraws` holds each `Draw`, and so its mesh, until the
+  next frame's collect clears it.
+- `bindVertexBuffers` retains the buffer, not the `Mesh`. Dropping the last `MeshPtr` while a frame
+  is in flight frees the CPU object; the buffer dies when that frame's slot is reused and its
+  fence has signalled (`meshBufferOutlivesMeshWhileFrameInFlight`).
+- A `Material` owns a `ShaderProgramPtr`. Its parameters are copied into push constants while
+  recording, so no GPU-side object is retained for them.
+- The `PipelineCache` holds its pipelines until `~Renderer`; `bindPipeline` retains them per frame.
+
 ## Self-sufficient handles
 
 The model, generalised from Metal: **any object you hold keeps alive everything
@@ -211,8 +224,12 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
   between acquire and present (a Vulkan error, or out of memory) reaches it; see
   `SwapchainSync.md`.
 
-- **Descriptor-set-referenced resources** (future textures/UBOs): tracking must
-  be extended to descriptor set binding when those appear.
+- **The pipeline cache never evicts.** A pipeline stays until `~Renderer`, even if no mesh or
+  material uses its vertex layout, shader program and color format any more.
+
+- **Heap-referenced resources** (future textures and parameter blocks, on descriptor heaps): a
+  draw that references a resource by heap index must retain it through `CommandBufferRecorder`;
+  nothing does that yet.
 
 - **Out-of-date and suboptimal paths are untested.** A headless surface never
   reports them, so no automated test reaches the acquire/present

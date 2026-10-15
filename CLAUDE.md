@@ -7,7 +7,7 @@ Common
   ├─ Math          (glm wrappers; consumed by Engine)
   ├─ CVarSystem    (SHARED; parked — only its unit tests link it today)
   └─ Graphics      (Vulkan wrappers; links Common only)
-       └─ Engine   (Renderer, Renderable / RenderItem)
+       └─ Engine   (Renderer, Renderable, Mesh, Material, Camera; links Graphics PRIVATE)
             └─ Application (SDL3 shell)
                  └─ Examples
 ```
