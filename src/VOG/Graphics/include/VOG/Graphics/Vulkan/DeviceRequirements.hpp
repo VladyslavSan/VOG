@@ -42,6 +42,11 @@ struct DeviceRequirements
                 {
                     return features.get<vk::PhysicalDeviceFeatures2>().features.depthClamp;
                 }},
+        Feature{"fullDrawIndexUint32",
+                [](Features& features) -> vk::Bool32&
+                {
+                    return features.get<vk::PhysicalDeviceFeatures2>().features.fullDrawIndexUint32;
+                }},
         Feature{"timelineSemaphore",
                 [](Features& features) -> vk::Bool32&
                 {

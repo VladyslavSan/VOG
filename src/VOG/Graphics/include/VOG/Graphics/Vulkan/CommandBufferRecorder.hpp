@@ -78,6 +78,9 @@ public:
                                StaticVectorStrict<CommandBuffer::BufferBinding,
                                                   CommandBuffer::kMaxNumVertexBufferBind> bindings);
 
+        void
+        bindIndexBuffer(std::shared_ptr<Buffer> buffer, vk::DeviceSize offset, vk::IndexType type);
+
         void setViewport(std::uint32_t firstViewport, vk::ArrayProxy<const vk::Viewport> viewports);
 
         void setScissor(std::uint32_t firstScissor, vk::ArrayProxy<const vk::Rect2D> scissors);
@@ -96,6 +99,12 @@ public:
                   std::uint32_t instanceCount,
                   std::uint32_t firstVertex,
                   std::uint32_t firstInstance);
+
+        void drawIndexed(std::uint32_t indexCount,
+                         std::uint32_t instanceCount,
+                         std::uint32_t firstIndex,
+                         std::int32_t  vertexOffset,
+                         std::uint32_t firstInstance);
 
     private:
         CommandBufferRecorder& mRecorder;

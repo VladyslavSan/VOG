@@ -107,6 +107,42 @@ TEST_F(VulkanFixture, CommandBufferRecorder_barrierRetainsBufferUntilPoolReset)
 }
 
 /**
+ * An index buffer bound in a rendering pass is retained like a barrier's buffer. Under the
+ * validation layer, so that the bind itself (buffer usage, offset alignment) is checked too.
+ */
+TEST_F(VulkanValidationFixture, CommandBufferRecorder_bindIndexBufferRetainsBufferUntilPoolReset)
+{
+    std::shared_ptr<Buffer> buffer = mDevice->createBuffer(
+        {.size = gBufferSize, .usage = vk::BufferUsageFlagBits::eIndexBuffer}, {});
+    const std::weak_ptr<Buffer> weakBuffer = buffer;
+
+    auto target    = makeTarget(*mDevice, 64u);
+    auto fencePool = FencePool::create(mDevice);
+    auto pool      = mDevice->createCommandBufferPool();
+
+    auto recorder = pool->record();
+    recorder.setImageBarrier(target, VulkanFixture::toColorAttachmentBarrier());
+    {
+        auto pass = recorder.beginRendering({{.attachment = target,
+                                              .loadOp     = vk::AttachmentLoadOp::eClear,
+                                              .storeOp    = vk::AttachmentStoreOp::eStore}});
+        pass.bindIndexBuffer(buffer, 0u, vk::IndexType::eUint32);
+    }
+    auto executable = recorder.finish();
+
+    buffer.reset();
+    EXPECT_FALSE(weakBuffer.expired());
+
+    submitAlone(mDevice, *fencePool, executable);
+    EXPECT_FALSE(weakBuffer.expired());
+
+    pool->reset();
+    EXPECT_TRUE(weakBuffer.expired());
+    EXPECT_TRUE(mValidationErrors.empty())
+        << (mValidationErrors.empty() ? "" : mValidationErrors.front());
+}
+
+/**
  * Queue::submit makes the command buffers retain the semaphores they wait and signal, so the
  * caller can drop them. A semaphore dies when the last command buffer that used it is reset: the
  * wait semaphore outlives the signalling command buffer, and the signal-only one dies with it.

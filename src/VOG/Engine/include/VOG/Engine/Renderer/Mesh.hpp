@@ -25,11 +25,14 @@ struct VertexAttribute
     auto operator<=>(const VertexAttribute&) const = default;
 };
 
-/** Interleaved, non-indexed vertices of a triangle list. */
+/** Interleaved vertices of a triangle list, drawn in order or through indices. */
 struct MeshDescription
 {
     /** Copied by Renderer::createMesh(); the caller keeps ownership. */
     std::span<const std::byte> vertices;
+    /** Optional; copied like the vertices. Three per triangle, each less than the vertex count.
+     *  Empty draws the vertices in order. */
+    std::span<const std::uint32_t> indices;
     /** Size of one vertex in bytes. */
     std::uint32_t stride = 0u;
     /** The shader input location of an attribute is its index here. */

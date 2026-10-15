@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -623,6 +624,94 @@ TEST_F(RendererTest, createMeshRejectsMalformedDescription)
         renderer->createMesh({.vertices = bytes, .stride = kStride, .attributes = {float2}});
     ASSERT_TRUE(mesh);
     EXPECT_EQ(mesh->vertexCount, 2u);
+}
+
+/** Indices are Renderer's to check: without robustBufferAccess an index past the vertices reads
+ * outside the buffer. */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, createMeshRejectsMalformedIndices)
+{
+    constexpr std::size_t        kStride = 8u;
+    const std::vector<std::byte> bytes(3u * kStride);
+    const VertexAttribute        float2{VertexFormat::eFloat2, 0u};
+    const std::uint32_t          triangle[] = {0u, 1u, 2u};
+    const std::uint32_t          quad[]     = {0u, 1u, 2u, 0u};
+    const std::uint32_t          pastEnd[]  = {0u, 1u, 3u};
+
+    auto renderer = makeRenderer();
+
+    EXPECT_THROW(
+        renderer->createMesh(
+            {.vertices = bytes, .indices = quad, .stride = kStride, .attributes = {float2}}),
+        std::invalid_argument);
+    EXPECT_THROW(
+        renderer->createMesh(
+            {.vertices = bytes, .indices = pastEnd, .stride = kStride, .attributes = {float2}}),
+        std::invalid_argument);
+
+    const MeshPtr indexed = renderer->createMesh(
+        {.vertices = bytes, .indices = triangle, .stride = kStride, .attributes = {float2}});
+    ASSERT_TRUE(indexed);
+    EXPECT_EQ(indexed->indexCount, 3u);
+
+    const MeshPtr plain =
+        renderer->createMesh({.vertices = bytes, .stride = kStride, .attributes = {float2}});
+    ASSERT_TRUE(plain);
+    EXPECT_EQ(plain->indexCount, 0u);
+}
+
+/**
+ * The indices follow the vertices at a multiple of 4 bytes, even when the vertices end off it.
+ * MoltenVK only draws strides that are a multiple of 4, and no test draws an unaligned stride, so
+ * this test is the padding's only coverage.
+ */
+TEST_F(RendererTest, createMeshAlignsIndicesAfterVertices)
+{
+    constexpr std::size_t kStride = 10u;
+    // 30 bytes of vertices: the indices start at 32.
+    std::vector<std::byte> vertices(3u * kStride);
+    for (std::size_t i = 0u; i < vertices.size(); ++i)
+    {
+        vertices[i] = static_cast<std::byte>(i + 1u);
+    }
+    const std::uint32_t indices[] = {2u, 1u, 0u};
+
+    auto renderer = makeRenderer();
+
+    const MeshPtr mesh = renderer->createMesh({.vertices   = vertices,
+                                               .indices    = indices,
+                                               .stride     = kStride,
+                                               .attributes = {{VertexFormat::eFloat2, 0u}}});
+    ASSERT_TRUE(mesh);
+    EXPECT_EQ(mesh->indexOffset, 32u);
+
+    const auto mapping = mesh->buffer->mapForWrite();
+    ASSERT_GE(mapping.size, mesh->indexOffset + sizeof(indices));
+    EXPECT_EQ(std::memcmp(mapping.data, vertices.data(), vertices.size()), 0);
+    EXPECT_EQ(std::memcmp(mapping.data + mesh->indexOffset, indices, sizeof(indices)), 0);
+}
+
+/** An indexed mesh reaches the render thread; the validation run of the gate sees the draw. */
+TEST_F(RendererTest, indexedMeshIsDrawn)
+{
+    const std::uint32_t indices[] = {0u, 1u, 2u};
+
+    auto renderer = makeRenderer();
+    auto mesh     = renderer->createMesh({.vertices   = std::vector<std::byte>(3u * gQuadStride),
+                                          .indices    = indices,
+                                          .stride     = gQuadStride,
+                                          .attributes = compatibleLayout()});
+    renderer->addRenderable(drawing(mesh, renderer->createMaterial({.shader = "WorldSpace"})));
+    renderer->start();
+    for (int frame = 0; frame < 3; ++frame)
+    {
+        renderer->submitFrame({});
+    }
+
+    EXPECT_EQ(renderer->getState(), Renderer::State::eRunning);
+    EXPECT_FALSE(renderer->stop());
+    EXPECT_EQ(RendererTestAccess::pipelineCount(*renderer), 1u);
 }
 
 // The score comes from the gtest assertion macros.

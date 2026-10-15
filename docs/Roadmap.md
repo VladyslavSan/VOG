@@ -143,11 +143,16 @@ step builds on the previous. Completed work is kept for context.
   `RenderQueue::setCamera`; the renderer-side `Camera` is now `CameraView`, and
   `Renderer::setCamera` is removed. `~Application` clears the scene while the renderer still
   exists. See `ResourceOwnership.md`, "Threads".
+- **Engine API S4: indexed meshes**: `MeshDescription::indices` takes `uint32` indices, three per
+  triangle, each less than the vertex count; `createMesh` throws `std::invalid_argument` for
+  anything else, because the device has no `robustBufferAccess`. The indices share the buffer of
+  the vertices, after them and aligned to 4 bytes. `RenderingPass` gains `bindIndexBuffer`
+  (retains the buffer) and `drawIndexed`, and the renderer draws a mesh with indices through them.
+  Device selection requires `fullDrawIndexUint32`. A mesh without indices draws as before.
 
 ## Later milestones (in rough order)
 
-1. **Engine API (S4-S7)**: continues S3 (see Done).
-   - S4: indexed meshes.
+1. **Engine API (S5-S7)**: continues S4 (see Done).
    - S5: textures and parameter blocks on descriptor heaps.
    - S6: device-local uploads through staging on the transfer queue.
    - S7: parallel recording.

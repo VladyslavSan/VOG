@@ -6,6 +6,7 @@
 #include <boost/program_options.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <span>
@@ -31,16 +32,17 @@ constexpr VertexData gVertexData[] = {
   {{-1.0, -1.0}, {1.0, 0.0, 0.0, 1.0}},
   {{-1.0,  0.0}, {1.0, 0.0, 0.0, 1.0}},
   {{ 0.0,  0.0}, {1.0, 0.0, 0.0, 1.0}},
-  {{ 0.0,  0.0}, {1.0, 0.0, 0.0, 1.0}},
   {{ 0.0, -1.0}, {1.0, 0.0, 0.0, 1.0}},
-  {{-1.0, -1.0}, {1.0, 0.0, 0.0, 1.0}},
   // Green top right square
   {{ 0.0,  0.0}, {0.0, 1.0, 0.0, 1.0}},
   {{ 0.0,  1.0}, {0.0, 1.0, 0.0, 1.0}},
   {{ 1.0,  1.0}, {0.0, 1.0, 0.0, 1.0}},
-  {{ 0.0,  0.0}, {0.0, 1.0, 0.0, 1.0}},
-  {{ 1.0,  1.0}, {0.0, 1.0, 0.0, 1.0}},
   {{ 1.0,  0.0}, {0.0, 1.0, 0.0, 1.0}},
+};
+
+constexpr std::uint32_t gIndexData[] = {
+  0, 1, 2, 2, 3, 0, // Red
+  4, 5, 6, 4, 6, 7, // Green
 };
 // clang-format on
 
@@ -141,6 +143,7 @@ main(int argc, const char** argv) // NOLINT(bugprone-exception-escape)
 
         const auto quads    = renderer.createMesh({
             .vertices   = std::as_bytes(std::span{gVertexData}),
+            .indices    = gIndexData,
             .stride     = sizeof(VertexData),
             .attributes = {{VOG::Engine::VertexFormat::eFloat2, 0u},
                            {VOG::Engine::VertexFormat::eFloat4, offsetof(VertexData, color)}},

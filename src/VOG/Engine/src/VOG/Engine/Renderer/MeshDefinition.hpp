@@ -17,10 +17,14 @@ namespace VOG::Engine
 class Mesh
 {
 public:
+    /** Vertices at offset 0, then the indices at indexOffset. */
     Graphics::Vulkan::BufferPtr  buffer;
     std::uint32_t                vertexCount = 0u;
     std::uint32_t                stride      = 0u;
     std::vector<VertexAttribute> attributes;
+    /** Zero draws the vertices in order. */
+    std::uint32_t  indexCount  = 0u;
+    vk::DeviceSize indexOffset = 0u;
 };
 
 /** Size of one attribute in bytes. */

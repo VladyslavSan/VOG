@@ -20,7 +20,7 @@ anything that flows through the tracked APIs.
    `CommandBufferRecorder` (recording) and `Queue::submit` (semaphores) call it.
    The command buffer keeps them
    in a set, so binding one pipeline 1000 times holds one reference:
-   - `RenderingPass::bindVertexBuffers` retains each buffer, and
+   - `RenderingPass::bindVertexBuffers` retains each buffer, `bindIndexBuffer` its buffer, and
      `RenderingPass::bindPipeline` the pipeline
      (`Graphics/Vulkan/CommandBufferRecorder.cpp`).
    - `CommandBufferRecorder::beginRendering` retains every color and depth
@@ -70,7 +70,8 @@ The Engine hands out `MeshPtr` and `MaterialPtr`; the chain behind them is the s
 - A `Mesh` owns a `BufferPtr`. The packet that `Renderer::submitFrame` queues holds each draw, and
   so its mesh, from `submitFrame` until the render thread has recorded the frame; the queue holds
   at most one packet.
-- `bindVertexBuffers` retains the buffer, not the `Mesh`. Dropping the last `MeshPtr` while a frame
+- `bindVertexBuffers` and `bindIndexBuffer` retain the buffer, not the `Mesh`; the vertices and
+  the indices of a mesh are in one buffer. Dropping the last `MeshPtr` while a frame
   is in flight frees the CPU object; the buffer dies when that frame's slot is reused and its
   fence has signalled (`meshBufferOutlivesMeshWhileFrameInFlight`).
 - A `Material` owns a `ShaderProgramPtr`. Its parameters are copied into push constants while
