@@ -123,7 +123,13 @@ step builds on the previous. Completed work is kept for context.
    barrier blocks in the renderer.
 2. **Images & uploads**: `Image`/texture class, staging-buffer upload path on
    the so-far-unused transfer queue.
-3. **Materials, meshes, descriptor strategy** (extends `RenderItem`).
+3. **Materials and meshes: the Engine-level draw API.** A material is a shader plus its
+   parameters; a draw submits a mesh and a material to the render queue. Pipelines, shader
+   programs, buffers and the device stay in `VOG::Graphics`. This replaces today's stopgap,
+   which hands Graphics types to Engine users: `RenderItem` (pipeline, vertex buffer,
+   push-constant blob), `ResourceContext` (device, shader program cache) and the swapchain
+   extent in `FrameContext`, which a renderable needs only to build its own projection (a
+   camera's job). Material parameters move to bindless descriptors.
 4. **Scene representation** decision (ECS vs scene graph) — deferred until
    materials/meshes exist.
 
@@ -131,6 +137,9 @@ step builds on the previous. Completed work is kept for context.
 
 - **Vulkan-only**; an RHI layer can be reintroduced later if a second
   backend is ever wanted.
+- **Layering of the draw API**: `VOG::Graphics` speaks Vulkan (pipelines, shaders, buffers,
+  descriptors); the Engine API speaks meshes and materials and does not expose Graphics types.
+  The `Renderable` interface breaks this until milestone 3.
 - Resource lifetimes follow the recording-retains model
   (`ResourceOwnership.md`); new recording APIs must retain through
   `CommandBufferRecorder`.
