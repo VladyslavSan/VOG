@@ -44,8 +44,15 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo add-apt-repository -y ppa:kisak/kisak-mesa
+          # The image's apt uses the amd64v3 architecture variant and skips every amd64 index of a
+          # repository whose Release lists amd64v3. The PPA's amd64v3 index is an empty stub, so its
+          # amd64 packages stay invisible unless the source names the architecture itself.
+          sudo sed -i '/^Components:/a Architectures: amd64' /etc/apt/sources.list.d/*kisak*.sources
+          grep -x 'Architectures: amd64' /etc/apt/sources.list.d/*kisak*.sources
           sudo apt-get update -q
+          apt-cache policy mesa-vulkan-drivers
           sudo apt-get install -y libvulkan1 mesa-vulkan-drivers vulkan-validationlayers vulkan-tools xvfb xauth
+          apt-cache policy mesa-vulkan-drivers
           echo "VK_ICD_FILENAMES=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' | head -1)" >> "$GITHUB_ENV"
 
       - name: Require descriptor heaps (Linux)
