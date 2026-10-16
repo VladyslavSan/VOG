@@ -32,6 +32,7 @@ namespace VOG::Graphics::Vulkan
 {
 class Instance;
 class Device;
+class DescriptorHeap;
 class FencePool;
 class GraphicsPipeline;
 class Queue;
@@ -190,6 +191,7 @@ private:
     std::shared_ptr<const Graphics::Vulkan::Queue>       mGraphicsQueue;
     std::shared_ptr<Graphics::Vulkan::FencePool>         mFencePool;
     std::shared_ptr<Graphics::ShaderProgramCache>        mShaderProgramCache;
+    std::shared_ptr<Graphics::Vulkan::DescriptorHeap>    mHeap;
     std::unique_ptr<Graphics::Vulkan::Swapchain>         mSwapchain;
     std::unique_ptr<Graphics::Frame::FrameObjectManager> mFrameObjectManager;
 

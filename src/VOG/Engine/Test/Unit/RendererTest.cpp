@@ -243,7 +243,8 @@ void main() { gl_Position = pc.first * pc.second * vec4(0.0, 0.0, 0.0, 1.0); }
         // The fragment shader of the WorldSpace shader; an absolute path is not made relative.
         std::ofstream{mPath / "config.json"}
             << R"({"shaders": {"Wide": {"vertex": "Wide.vert.glsl", "fragment": ")"
-            << (std::filesystem::path{VOG_TEST_SHADER_PATH} / "src/TestUniformBuffer.frag.glsl")
+            << (std::filesystem::path{VOG_TEST_SHADER_PATH} /
+                "src/ScreenSpacePositionColor.frag.glsl")
                    .generic_string()
             << R"("}}})";
     }

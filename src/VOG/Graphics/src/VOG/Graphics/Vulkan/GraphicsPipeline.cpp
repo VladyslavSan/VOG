@@ -146,6 +146,7 @@ makePipeline(const Device&                       device,
         .dynamicStateCount = static_cast<std::uint32_t>(createInfo.dynamicStates.size()),
         .pDynamicStates    = createInfo.dynamicStates.data()};
 
+    // No pipeline layout: the shaders reach their resources through the descriptor heap.
     vk::StructureChain info{
         vk::GraphicsPipelineCreateInfo{
             .stageCount          = static_cast<std::uint32_t>(shadingStages.size()),
@@ -158,8 +159,10 @@ makePipeline(const Device&                       device,
             .pDepthStencilState  = &createInfo.depthStencil,
             .pColorBlendState    = &blendingState,
             .pDynamicState       = &dynamicState,
-            .layout              = *program.pipelineLayout,
+            .layout              = nullptr,
         },
+        vk::PipelineCreateFlags2CreateInfo{.flags =
+                                               vk::PipelineCreateFlagBits2::eDescriptorHeapEXT},
         vk::PipelineRenderingCreateInfo{
             .colorAttachmentCount = static_cast<std::uint32_t>(
                 createInfo.renderingDescription.colorAttachmentFormats.size()),

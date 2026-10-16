@@ -9,6 +9,7 @@
 #include <format>
 #include <ranges>
 #include <string_view>
+#include <utility>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -135,20 +136,34 @@ parseStructMembers(const spirv_cross::Compiler& compiler, const spirv_cross::Res
     return members;
 }
 
+/**
+ * Pipelines have no layout, so a resource declared with a set and a binding could never be bound.
+ * SPIRV-Cross lists none of the heap resources here (ShaderTest, Shader_heapShaderReflects...).
+ */
 void
-checkResourceLocation(const Shader::Reflection::ResourceLocation& location)
+rejectDescriptorSetResources(const spirv_cross::ShaderResources& resources)
 {
-    if (location.set > Limits::gMaxNumDescriptorSets)
+    const std::pair<const char*, const spirv_cross::SmallVector<spirv_cross::Resource>&> kinds[] = {
+        {"uniform buffer", resources.uniform_buffers},
+        {"storage buffer", resources.storage_buffers},
+        {"sampled image", resources.sampled_images},
+        {"separate image", resources.separate_images},
+        {"separate sampler", resources.separate_samplers},
+        {"storage image", resources.storage_images},
+        {"acceleration structure", resources.acceleration_structures},
+        {"subpass input", resources.subpass_inputs},
+    };
+    for (const auto& [kind, list] : kinds)
     {
-        throw Shader::ShaderError{std::format("Resource set \"{}\" exceeds the limit of \"{}\"",
-                                              location.set,
-                                              Limits::gMaxNumDescriptorSets)};
-    }
-    if (location.binding > Limits::gMaxNumDescriptorBindings)
-    {
-        throw Shader::ShaderError{std::format("Resource binding \"{}\" exceeds the limit of \"{}\"",
-                                              location.binding,
-                                              Limits::gMaxNumDescriptorBindings)};
+        if (!list.empty())
+        {
+            throw Shader::ShaderError{
+                std::format("The shader declares the {} \"{}\" with a set and a binding. Shaders "
+                            "reach their resources through the descriptor heap "
+                            "(layout(descriptor_heap)); pipelines have no layout.",
+                            kind,
+                            list.front().name)};
+        }
     }
 }
 
@@ -157,6 +172,7 @@ reflect(std::span<const std::uint32_t> binary)
 {
     const spirv_cross::Compiler        compiler{binary.data(), binary.size()};
     const spirv_cross::ShaderResources resources = compiler.get_shader_resources();
+    rejectDescriptorSetResources(resources);
 
     Shader::Reflection reflection{};
 
@@ -172,27 +188,6 @@ reflect(std::span<const std::uint32_t> binary)
         const auto& pushConstantsBlock     = resources.push_constant_buffers[0];
         reflection.pushConstants.variables = parseStructMembers(compiler, pushConstantsBlock);
     }
-
-    for (const spirv_cross::Resource& resource : resources.uniform_buffers)
-    {
-        const Shader::Reflection::ResourceLocation location = {
-            .set = compiler.get_decoration(resource.id, spv::Decoration::DecorationDescriptorSet),
-            .binding = compiler.get_decoration(resource.id, spv::Decoration::DecorationBinding)};
-        checkResourceLocation(location);
-
-        const auto& baseType = compiler.get_type(resource.base_type_id);
-        const auto  size     = compiler.get_declared_struct_size(baseType);
-
-        reflection.uniformBuffers.push_back({.location = location,
-                                             .size     = size,
-                                             .members  = parseStructMembers(compiler, resource)});
-    }
-    std::sort(reflection.uniformBuffers.begin(),
-              reflection.uniformBuffers.end(),
-              [](const auto& left, const auto& right)
-              {
-                  return left.location < right.location;
-              });
 
     return reflection;
 }

@@ -19,7 +19,10 @@ struct DeviceRequirements
     using Features = vk::StructureChain<vk::PhysicalDeviceFeatures2,
                                         vk::PhysicalDeviceVulkan12Features,
                                         vk::PhysicalDeviceVulkan13Features,
-                                        vk::PhysicalDeviceSwapchainMaintenance1FeaturesKHR>;
+                                        vk::PhysicalDeviceSwapchainMaintenance1FeaturesKHR,
+                                        vk::PhysicalDeviceDescriptorHeapFeaturesEXT,
+                                        vk::PhysicalDeviceShaderUntypedPointersFeaturesKHR,
+                                        vk::PhysicalDeviceMaintenance5FeaturesKHR>;
 
     struct Feature
     {
@@ -31,10 +34,15 @@ struct DeviceRequirements
     /**
      * Device extensions VOG enables. The EXT name of swapchain maintenance 1, not the KHR one: the
      * types and sType values are the same, and drivers and validation layers that predate the KHR
-     * promotion expose only the EXT name.
+     * promotion expose only the EXT name. Descriptor heaps replace descriptor sets and pipeline
+     * layouts; the heap extension depends on maintenance 5 and buffer device address, and heap
+     * shaders declare untyped pointers.
      */
     static constexpr std::array kExtensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-                                               VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME};
+                                               VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME,
+                                               VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME,
+                                               VK_KHR_SHADER_UNTYPED_POINTERS_EXTENSION_NAME,
+                                               VK_KHR_MAINTENANCE_5_EXTENSION_NAME};
 
     static constexpr std::array kFeatures = {
         Feature{"depthClamp",
@@ -67,11 +75,33 @@ struct DeviceRequirements
                 {
                     return features.get<vk::PhysicalDeviceVulkan13Features>().maintenance4;
                 }},
+        Feature{"bufferDeviceAddress",
+                [](Features& features) -> vk::Bool32&
+                {
+                    return features.get<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress;
+                }},
         Feature{"swapchainMaintenance1",
                 [](Features& features) -> vk::Bool32&
                 {
                     return features.get<vk::PhysicalDeviceSwapchainMaintenance1FeaturesKHR>()
                         .swapchainMaintenance1;
+                }},
+        Feature{
+            "descriptorHeap",
+            [](Features& features) -> vk::Bool32&
+            {
+                return features.get<vk::PhysicalDeviceDescriptorHeapFeaturesEXT>().descriptorHeap;
+            }},
+        Feature{"shaderUntypedPointers",
+                [](Features& features) -> vk::Bool32&
+                {
+                    return features.get<vk::PhysicalDeviceShaderUntypedPointersFeaturesKHR>()
+                        .shaderUntypedPointers;
+                }},
+        Feature{"maintenance5",
+                [](Features& features) -> vk::Bool32&
+                {
+                    return features.get<vk::PhysicalDeviceMaintenance5FeaturesKHR>().maintenance5;
                 }},
     };
 

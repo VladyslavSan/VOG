@@ -125,7 +125,7 @@ ShaderProgramCache::ShaderProgramCache(const Vulkan::DevicePtr&     device,
         }
 
         std::shared_ptr<Vulkan::ShaderProgram> program =
-            mDevice->createShaderProgram(std::move(stages));
+            Vulkan::ShaderProgram::create(std::move(stages));
 
         mCache.emplace(shaderName, std::move(program));
     }

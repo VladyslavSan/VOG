@@ -8,13 +8,13 @@
       "vertex": "src/TestVertexAttribute.vert.glsl",
       "fragment": "src/TestVertexAttribute.frag.glsl"
     },
-    "TestUniformBuffer": {
-      "vertex": "src/TestUniformBuffer.vert.glsl",
-      "fragment": "src/TestUniformBuffer.frag.glsl"
+    "TestDescriptorHeap": {
+      "vertex": "src/TestDescriptorHeap.vert.glsl",
+      "fragment": "src/TestDescriptorHeap.frag.glsl"
     },
     "WorldSpace": {
       "vertex": "src/WorldSpace.vert.glsl",
-      "fragment": "src/TestUniformBuffer.frag.glsl"
+      "fragment": "src/ScreenSpacePositionColor.frag.glsl"
     }
   }
 }

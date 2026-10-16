@@ -52,6 +52,9 @@ public:
      */
     [[nodiscard]] MemoryMapping mapForWrite();
 
+    /** GPU address of the buffer. Only for a buffer created with eShaderDeviceAddress usage. */
+    [[nodiscard]] vk::DeviceAddress deviceAddress() const;
+
 private:
     Buffer(MemoryAllocator::Allocation allocation, vk::raii::Buffer buffer);
 };

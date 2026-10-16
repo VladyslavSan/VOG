@@ -107,7 +107,7 @@ TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
         [&](const std::string& vertexSource, const std::vector<vk::Format>& formats)
     {
         auto createInfo    = createInfoTemplate;
-        createInfo.shading = mDevice->createShaderProgram(
+        createInfo.shading = ShaderProgram::create(
             {.vertex   = {.shader     = createShader(Shader::ShadingStage::eVertex, vertexSource),
                           .entryPoint = "main"},
              .fragment = {.shader = fragmentShader, .entryPoint = "main"}});

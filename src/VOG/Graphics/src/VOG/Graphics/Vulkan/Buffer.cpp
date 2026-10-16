@@ -1,6 +1,7 @@
 #include "VOG/Graphics/Vulkan/Buffer.hpp"
 
 #include <VOG/Common/Assert.hpp>
+#include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/VmaConfig.hpp>
 
 #include <stdexcept>
@@ -41,5 +42,11 @@ Buffer::mapForWrite()
         static_cast<bool>(memoryFlags & vk::MemoryPropertyFlagBits::eHostCoherent);
 
     return {static_cast<std::byte*>(data), size, this, !isHostCoherent};
+}
+
+vk::DeviceAddress
+Buffer::deviceAddress() const
+{
+    return device->getBufferAddress({.buffer = **this});
 }
 } // namespace VOG::Graphics::Vulkan

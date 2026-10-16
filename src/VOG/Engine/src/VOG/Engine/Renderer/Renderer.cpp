@@ -14,6 +14,7 @@
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferRecorder.hpp>
+#include <VOG/Graphics/Vulkan/DescriptorHeap.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/FencePool.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
@@ -61,6 +62,21 @@ alignUp(std::size_t value, std::size_t alignment)
 
 /** Push constants the renderer fills: the matrix, then the material's parameters. */
 constexpr std::size_t gPushConstantsSize = gParametersOffset + gMaxParametersSize;
+
+/**
+ * Images and uniform blocks the descriptor heap holds at once.
+ * Fixed, because growing means binding another heap; make it grow when a scene runs out.
+ */
+constexpr std::uint32_t gDescriptorHeapSlots = 4096u;
+
+/** The one sampler of the sampler heap, at index 0. */
+const vk::SamplerCreateInfo gLinearRepeatSampler{.magFilter    = vk::Filter::eLinear,
+                                                 .minFilter    = vk::Filter::eLinear,
+                                                 .mipmapMode   = vk::SamplerMipmapMode::eLinear,
+                                                 .addressModeU = vk::SamplerAddressMode::eRepeat,
+                                                 .addressModeV = vk::SamplerAddressMode::eRepeat,
+                                                 .addressModeW = vk::SamplerAddressMode::eRepeat,
+                                                 .maxLod       = vk::LodClampNone};
 } // namespace
 
 Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& config)
@@ -76,6 +92,7 @@ Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& con
     , mFencePool{Graphics::Vulkan::FencePool::create(mVulkanDevice)}
     , mShaderProgramCache{std::make_shared<Graphics::ShaderProgramCache>(mVulkanDevice,
                                                                          config.shaderSourcePath)}
+    , mHeap{mVulkanDevice->createDescriptorHeap(gDescriptorHeapSlots, {&gLinearRepeatSampler, 1u})}
     , mSwapchain{mVulkanDevice->createSwapchain(Graphics::Vulkan::Swapchain::SwapchainParameters{
           .framesInFlight = mFramesInFlight,
           .surface        = surfaceHandle,
@@ -233,7 +250,8 @@ Renderer::createMaterial(MaterialDescription description)
     Graphics::Vulkan::ShaderProgramPtr program = mShaderProgramCache->get(description.shader);
 
     const std::size_t pushedSize = gParametersOffset + description.parameters.size();
-    for (const vk::PushConstantRange& range : program->pushConstants.ranges)
+    for (const Graphics::Vulkan::ShaderProgram::PushConstants::Range& range :
+         program->pushConstants.ranges)
     {
         if (std::size_t{range.offset} + range.size > pushedSize)
         {
@@ -354,6 +372,7 @@ Renderer::renderFrame(FramePacket packet)
     auto pool  = frame->getCommandBufferPoolForThread(gThreadId);
 
     auto recorder = pool->record();
+    recorder.bindDescriptorHeap(mHeap);
 
     {
         recorder.setImageBarrier(
@@ -411,14 +430,11 @@ Renderer::renderFrame(FramePacket packet)
                 std::ranges::copy(material.parameters, pushConstants.begin() + gParametersOffset);
 
                 pass.bindPipeline(mPipelines[i]);
-                for (const vk::PushConstantRange& range : material.program->pushConstants.ranges)
+                for (const ShaderProgram::PushConstants::Range& range :
+                     material.program->pushConstants.ranges)
                 {
-                    pass.pushConstants<std::byte>(
-                        *material.program->pipelineLayout,
-                        range.stageFlags,
-                        range.offset,
-                        vk::ArrayProxy<const std::byte>{range.size,
-                                                        pushConstants.data() + range.offset});
+                    pass.pushData(range.offset,
+                                  std::span{pushConstants}.subspan(range.offset, range.size));
                 }
                 pass.bindVertexBuffers(0u, {{.buffer = draw.mesh->buffer, .offset = 0u}});
                 if (draw.mesh->indexCount == 0u)

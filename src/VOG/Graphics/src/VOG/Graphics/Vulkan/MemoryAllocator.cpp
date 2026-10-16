@@ -3,6 +3,7 @@
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
+#include <VOG/Graphics/Vulkan/Texture.hpp>
 #include <VOG/Graphics/Vulkan/VmaConfig.hpp>
 
 #include <stdexcept>
@@ -111,6 +112,7 @@ MemoryAllocator::MemoryAllocator(Device& device)
     };
 
     VmaAllocatorCreateInfo allocatorInfo = {
+        .flags            = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
         .physicalDevice   = *static_cast<const PhysicalDevice&>(mDevice),
         .device           = *mDevice,
         .pVulkanFunctions = &vulkanFunctions,
@@ -140,13 +142,14 @@ MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
     VmaAllocationInfo       allocationInfo;
     VmaAllocationCreateInfo vmaAllocationCreateInfo = toVma(allocationCreateInfo);
 
-    vk::Result result =
-        static_cast<vk::Result>(vmaCreateBuffer(mAllocator,
-                                                &static_cast<const VkBufferCreateInfo&>(createInfo),
-                                                &vmaAllocationCreateInfo,
-                                                &buffer,
-                                                &allocation,
-                                                &allocationInfo));
+    vk::Result result = static_cast<vk::Result>(
+        vmaCreateBufferWithAlignment(mAllocator,
+                                     &static_cast<const VkBufferCreateInfo&>(createInfo),
+                                     &vmaAllocationCreateInfo,
+                                     allocationCreateInfo.alignment,
+                                     &buffer,
+                                     &allocation,
+                                     &allocationInfo));
 
     if (result != vk::Result::eSuccess || buffer == VK_NULL_HANDLE)
     {
@@ -167,5 +170,45 @@ MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
 
     return std::unique_ptr<Buffer>(
         new Buffer{std::move(owningAllocation), std::move(owningBuffer)});
+}
+
+std::unique_ptr<Texture>
+MemoryAllocator::makeTexture(const vk::ImageCreateInfo& createInfo, DescriptorHeap::Slot slot)
+{
+    // Taken before vmaCreateImage, like in makeBuffer.
+    DevicePtr device = mDevice.shared_from_this();
+
+    VkImage                 image;
+    VmaAllocation           allocation;
+    VmaAllocationInfo       allocationInfo;
+    VmaAllocationCreateInfo vmaAllocationCreateInfo = toVma({});
+
+    vk::Result result =
+        static_cast<vk::Result>(vmaCreateImage(mAllocator,
+                                               &static_cast<const VkImageCreateInfo&>(createInfo),
+                                               &vmaAllocationCreateInfo,
+                                               &image,
+                                               &allocation,
+                                               &allocationInfo));
+
+    if (result != vk::Result::eSuccess || image == VK_NULL_HANDLE)
+    {
+        throw std::runtime_error{"Texture creation failed."};
+    }
+
+    // Owned in the order Texture's bases are declared, like in makeBuffer.
+    Allocation      owningAllocation{std::move(device),
+                                     mAllocator,
+                                     allocation,
+                                     allocationInfo.size,
+                                     getMemoryFlags(mAllocator, allocationInfo.memoryType),
+                                     AllocationFlags{}};
+    vk::raii::Image owningImage{mDevice.raii(), image};
+
+    return std::unique_ptr<Texture>(
+        new Texture{std::move(owningAllocation),
+                    std::move(owningImage),
+                    std::move(slot),
+                    {createInfo.extent.width, createInfo.extent.height}});
 }
 } // namespace VOG::Graphics::Vulkan

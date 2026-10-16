@@ -28,6 +28,9 @@ namespace
 {
 constexpr vk::DeviceSize gBufferSize = 256u;
 
+/** 16 bytes: a 2x2 RGBA8 texture, or a minimal uniform block. */
+constexpr std::array<std::byte, 16> gBlockBytes{};
+
 /** Submits @p executable on the graphics queue with nothing to wait and nothing to signal. */
 void
 submitAlone(const DevicePtr& device, FencePool& fencePool, ExecutableCommandBuffer& executable)
@@ -138,6 +141,109 @@ TEST_F(VulkanValidationFixture, CommandBufferRecorder_bindIndexBufferRetainsBuff
 
     pool->reset();
     EXPECT_TRUE(weakBuffer.expired());
+    EXPECT_TRUE(mValidationErrors.empty())
+        << (mValidationErrors.empty() ? "" : mValidationErrors.front());
+}
+
+/**
+ * A texture and a uniform block that a pass uses by heap index are retained like a bound buffer:
+ * they outlive the caller's last reference and die only when the pool resets.
+ */
+TEST_F(VulkanValidationFixture, CommandBufferRecorder_useResourceRetainsUntilPoolReset)
+{
+    auto                     heap = createHeap();
+    std::shared_ptr<Texture> texture =
+        mDevice->createTexture(heap, {.width = 2u, .height = 2u}, vk::Format::eR8G8B8A8Srgb);
+    std::shared_ptr<UniformBlock>     block       = mDevice->createUniformBlock(heap, gBlockBytes);
+    const std::weak_ptr<Texture>      weakTexture = texture;
+    const std::weak_ptr<UniformBlock> weakBlock   = block;
+
+    auto target    = makeTarget(*mDevice, 64u);
+    auto fencePool = FencePool::create(mDevice);
+    auto pool      = mDevice->createCommandBufferPool();
+
+    auto recorder = pool->record();
+    recorder.setImageBarrier(target, VulkanFixture::toColorAttachmentBarrier());
+    {
+        auto pass = recorder.beginRendering({{.attachment = target}});
+        pass.useResource(texture);
+        pass.useResource(block);
+    }
+    auto executable = recorder.finish();
+
+    texture.reset();
+    block.reset();
+    EXPECT_FALSE(weakTexture.expired());
+    EXPECT_FALSE(weakBlock.expired());
+
+    submitAlone(mDevice, *fencePool, executable);
+    EXPECT_FALSE(weakTexture.expired());
+    EXPECT_FALSE(weakBlock.expired());
+
+    pool->reset();
+    EXPECT_TRUE(weakTexture.expired());
+    EXPECT_TRUE(weakBlock.expired());
+    EXPECT_TRUE(mValidationErrors.empty())
+        << (mValidationErrors.empty() ? "" : mValidationErrors.front());
+}
+
+/** The heap bound into a command buffer outlives the caller's last reference, like a buffer. */
+TEST_F(VulkanValidationFixture, CommandBufferRecorder_bindDescriptorHeapRetainsHeap)
+{
+    auto                                heap     = createHeap();
+    const std::weak_ptr<DescriptorHeap> weakHeap = heap;
+
+    auto fencePool = FencePool::create(mDevice);
+    auto pool      = mDevice->createCommandBufferPool();
+
+    auto recorder = pool->record();
+    recorder.bindDescriptorHeap(heap);
+    auto executable = recorder.finish();
+
+    heap.reset();
+    EXPECT_FALSE(weakHeap.expired());
+
+    submitAlone(mDevice, *fencePool, executable);
+    EXPECT_FALSE(weakHeap.expired());
+
+    pool->reset();
+    EXPECT_TRUE(weakHeap.expired());
+    EXPECT_TRUE(mValidationErrors.empty())
+        << (mValidationErrors.empty() ? "" : mValidationErrors.front());
+}
+
+/**
+ * The upload retains the staging buffer and the texture. Under the validation layer, so that the
+ * two barriers and the copy are checked too.
+ */
+TEST_F(VulkanValidationFixture, CommandBufferRecorder_copyBufferToTextureRetainsBoth)
+{
+    auto                     heap    = createHeap();
+    std::shared_ptr<Buffer>  staging = createStaging(gBlockBytes);
+    std::shared_ptr<Texture> texture =
+        mDevice->createTexture(heap, {.width = 2u, .height = 2u}, vk::Format::eR8G8B8A8Srgb);
+    const std::weak_ptr<Buffer>  weakStaging = staging;
+    const std::weak_ptr<Texture> weakTexture = texture;
+
+    auto fencePool = FencePool::create(mDevice);
+    auto pool      = mDevice->createCommandBufferPool();
+
+    auto recorder = pool->record();
+    recorder.copyBufferToTexture(staging, texture);
+    auto executable = recorder.finish();
+
+    staging.reset();
+    texture.reset();
+    EXPECT_FALSE(weakStaging.expired());
+    EXPECT_FALSE(weakTexture.expired());
+
+    submitAlone(mDevice, *fencePool, executable);
+    EXPECT_FALSE(weakStaging.expired());
+    EXPECT_FALSE(weakTexture.expired());
+
+    pool->reset();
+    EXPECT_TRUE(weakStaging.expired());
+    EXPECT_TRUE(weakTexture.expired());
     EXPECT_TRUE(mValidationErrors.empty())
         << (mValidationErrors.empty() ? "" : mValidationErrors.front());
 }

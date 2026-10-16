@@ -1,14 +1,20 @@
 #pragma once
 
 #include <VOG/Common/JSONContainer.hpp>
+#include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferRecorder.hpp>
+#include <VOG/Graphics/Vulkan/DescriptorHeap.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/DeviceRequirements.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
+#include <VOG/Graphics/Vulkan/Texture.hpp>
+#include <VOG/Graphics/Vulkan/UniformBlock.hpp>
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -52,6 +58,28 @@ public:
     createShader(Graphics::Vulkan::Shader::ShadingStage stage, const std::string& glslCode)
     {
         return mDevice->createShader(stage, compileGLSL(stage, glslCode));
+    }
+
+    /** A descriptor heap of @p slots resource slots and one linear sampler. */
+    Graphics::Vulkan::DescriptorHeapPtr
+    createHeap(std::uint32_t slots = 8u)
+    {
+        const vk::SamplerCreateInfo sampler{.magFilter = vk::Filter::eLinear,
+                                            .minFilter = vk::Filter::eLinear};
+        return mDevice->createDescriptorHeap(slots, {&sampler, 1u});
+    }
+
+    /** A host-written buffer holding @p bytes, to copy from. */
+    Graphics::Vulkan::BufferPtr
+    createStaging(std::span<const std::byte> bytes)
+    {
+        Graphics::Vulkan::BufferPtr staging = mDevice->createBuffer(
+            {.size = bytes.size(), .usage = vk::BufferUsageFlagBits::eTransferSrc},
+            {.flags = Graphics::Vulkan::AllocationFlag::eHostSequentialWrite});
+        auto mapping = staging->mapForWrite();
+        std::ranges::copy(bytes, mapping.data);
+
+        return staging;
     }
 
 protected:

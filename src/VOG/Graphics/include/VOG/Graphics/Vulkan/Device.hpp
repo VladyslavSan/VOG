@@ -14,12 +14,18 @@
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 #include <VOG/Graphics/Vulkan/TimelineSemaphore.hpp>
 
+#include <cstddef>
+#include <span>
+
 namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Buffer);
 VOG_DECLARE_PTR(CommandBufferPool);
+VOG_DECLARE_PTR(DescriptorHeap);
 VOG_DECLARE_PTR(RenderBuffer);
 VOG_DECLARE_PTR(Instance);
+VOG_DECLARE_PTR(Texture);
+VOG_DECLARE_PTR(UniformBlock);
 
 class PhysicalDevice : private vk::raii::PhysicalDevice
 {
@@ -73,6 +79,7 @@ public:
 
     ~Device(); // NOLINT(bugprone-derived-method-shadowing-base-method)
 
+    using vk::raii::Device::getBufferAddress;
     using vk::raii::Device::getDispatcher;
     using vk::raii::Device::operator*;
     using vk::raii::Device::releaseSwapchainImagesEXT;
@@ -95,20 +102,10 @@ public:
                                          std::span<const std::uint32_t> binary);
 
     /**
-     * Links vertex and fragment shaders into a shader program.
-     * Descriptor set layouts and push constant ranges are derived through shader reflection.
-     *
-     * @param stages  Vertex and fragment shader stage descriptors.
-     *
-     * @return Linked shader program with a reflected pipeline layout.
-     */
-    std::unique_ptr<ShaderProgram> createShaderProgram(ShaderProgram::ShadingStages stages);
-
-    /**
      * Creates a graphics pipeline for dynamic rendering into the attachments that
      * Parameters::renderingDescription describes.
      *
-     * @param createInfo  Pipeline parameters; the pipeline layout comes from `shading`.
+     * @param createInfo  Pipeline parameters.
      *
      * @return Compiled graphics pipeline.
      */
@@ -170,6 +167,37 @@ public:
     std::unique_ptr<Buffer>
     createBuffer(const vk::BufferCreateInfo&                  createInfo,
                  const MemoryAllocator::AllocationParameters& allocationInfo);
+
+    /**
+     * Creates the descriptor heaps that textures and uniform blocks take their slots from.
+     *
+     * @param resourceSlots  Number of images and uniform blocks the heap holds at once.
+     * @param samplers       Samplers to write into the sampler heap; shaders read them by their
+     *                       position in the span.
+     *
+     * @throws std::runtime_error if the device limits do not allow the heap.
+     */
+    DescriptorHeapPtr createDescriptorHeap(std::uint32_t                          resourceSlots,
+                                           std::span<const vk::SamplerCreateInfo> samplers);
+
+    /**
+     * Creates a 2D, single-mip texture and writes its descriptor into a slot of @p heap. The
+     * contents are undefined until CommandBufferRecorder::copyBufferToTexture() filled it.
+     *
+     * @throws std::runtime_error if @p heap is full.
+     */
+    std::unique_ptr<Texture>
+    createTexture(const DescriptorHeapPtr& heap, vk::Extent2D extent, vk::Format format);
+
+    /**
+     * Creates an immutable block that holds a copy of @p bytes and writes its descriptor into a
+     * slot of @p heap. The block is at least 16 bytes; a shader reading past @p bytes reads
+     * zeros up to that size.
+     *
+     * @throws std::runtime_error if @p heap is full.
+     */
+    std::unique_ptr<UniformBlock> createUniformBlock(const DescriptorHeapPtr&   heap,
+                                                     std::span<const std::byte> bytes);
 
     /**
      * Creates a binary semaphore. Pass it to Queue::submit and Swapchain::present: the command

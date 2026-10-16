@@ -53,7 +53,7 @@ jobs:
           apt-cache policy mesa-vulkan-drivers
           sudo apt-get install -y libvulkan1 mesa-vulkan-drivers vulkan-validationlayers vulkan-tools xvfb xauth
           apt-cache policy mesa-vulkan-drivers
-          echo "VK_ICD_FILENAMES=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' | head -1)" >> "$GITHUB_ENV"
+          echo "VK_DRIVER_FILES=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' | head -1)" >> "$GITHUB_ENV"
 
       - name: Require descriptor heaps (Linux)
         if: runner.os == 'Linux'
@@ -61,20 +61,6 @@ jobs:
           # Capture first: a failing vulkaninfo then fails with its own error, not as a missing extension.
           vulkaninfo > "${{ runner.temp }}/vulkaninfo.txt"
           grep -q VK_EXT_descriptor_heap "${{ runner.temp }}/vulkaninfo.txt" || { echo "lavapipe lacks VK_EXT_descriptor_heap: check ppa:kisak/kisak-mesa"; exit 1; }
-
-      - name: Install MoltenVK (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install molten-vk vulkan-loader vulkan-validationlayers
-          echo "VK_ICD_FILENAMES=$(brew --prefix molten-vk)/etc/vulkan/icd.d/MoltenVK_icd.json" >> "$GITHUB_ENV"
-          # The bottle's manifest names the layer dylib without a directory, and dyld never
-          # searches /opt/homebrew/lib for a bare name: createInstance fails with ErrorLayerNotPresent.
-          vvl="$(brew --prefix vulkan-validationlayers)"
-          manifest="$vvl/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json"
-          test -f "$vvl/lib/libVkLayer_khronos_validation.dylib"
-          sed -i '' "s|\"libVkLayer_khronos_validation.dylib\"|\"$vvl/lib/libVkLayer_khronos_validation.dylib\"|" "$manifest"
-          grep -q '"library_path": "/' "$manifest"
-          echo "VK_ADD_LAYER_PATH=$vvl/share/vulkan/explicit_layer.d" >> "$GITHUB_ENV"
 
       - name: Set up Conan
         uses: ./.github/actions/setup-conan
@@ -109,11 +95,6 @@ jobs:
             echo "A skipped test is lost coverage on the CI driver stack."
             exit 1
           fi
-
-      - name: Test (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          ctest --test-dir build/build/${{ matrix.build_type }} --output-on-failure
 
       - name: Publish test results
         uses: dorny/test-reporter@v1

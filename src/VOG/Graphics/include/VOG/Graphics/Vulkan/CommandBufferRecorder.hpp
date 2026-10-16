@@ -16,6 +16,9 @@ namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(GraphicsPipeline);
 VOG_DECLARE_PTR(Buffer);
+VOG_DECLARE_PTR(DescriptorHeap);
+VOG_DECLARE_PTR(Texture);
+VOG_DECLARE_PTR(UniformBlock);
 
 /**
  * Only supported recording surface, and the only way to retain a resource in a command buffer:
@@ -85,15 +88,21 @@ public:
 
         void setScissor(std::uint32_t firstScissor, vk::ArrayProxy<const vk::Rect2D> scissors);
 
-        template <typename T>
-        void
-        pushConstants(vk::PipelineLayout      layout,
-                      vk::ShaderStageFlags    stageFlags,
-                      std::uint32_t           offset,
-                      vk::ArrayProxy<const T> values)
-        {
-            mRecorder.mCommandBuffer->pushConstants(layout, stageFlags, offset, values);
-        }
+        /**
+         * Pushes @p data to byte @p offset of the push data every shader stage reads. The bytes are
+         * copied while recording.
+         */
+        void pushData(std::uint32_t offset, std::span<const std::byte> data);
+
+        /**
+         * Retains a texture that the draws of this command buffer read by its heap index, until the
+         * command buffer's fence has signaled; its heap slot is not reused before. Metal's
+         * useResource.
+         */
+        void useResource(std::shared_ptr<const Texture> texture);
+
+        /** As for a texture, for a uniform block. */
+        void useResource(std::shared_ptr<const UniformBlock> block);
 
         void draw(std::uint32_t vertexCount,
                   std::uint32_t instanceCount,
@@ -138,6 +147,21 @@ public:
     [[nodiscard]] RenderingPass
     beginRendering(const ColorAttachments&               colorAttachments,
                    const std::optional<DepthAttachment>& depthAttachment = {});
+
+    /**
+     * Binds both heaps of @p heap, which every draw after it reads its resources from, and retains
+     * it. Outside a rendering pass.
+     */
+    void bindDescriptorHeap(DescriptorHeapPtr heap);
+
+    /**
+     * Copies @p staging, tightly packed rows of the texture's format, into mip 0 of @p texture and
+     * leaves the texture ready for shaders to sample. Retains both. The texture is undefined
+     * before: this is its one initial upload, which overwrites it whole. Uploading again would race
+     * the draws that sample it, because the first barrier waits for nothing. Outside a rendering
+     * pass.
+     */
+    void copyBufferToTexture(const BufferPtr& staging, const TexturePtr& texture);
 
     /**
      * Image barrier that retains @p attachment until the command buffer's fence fires. Fills

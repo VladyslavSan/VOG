@@ -27,6 +27,10 @@ anything that flows through the tracked APIs.
      attachment.
    - `setImageBarrier` / `setBufferBarrier` retain the passed attachment or
      buffer. `setImageBarrier` fills `barrier.image` from the attachment.
+   - `CommandBufferRecorder::bindDescriptorHeap` retains the `DescriptorHeap`.
+     `RenderingPass::useResource` retains a `Texture` or a `UniformBlock` that a draw
+     reads by heap index, and `copyBufferToTexture` retains the staging buffer and the
+     texture.
 
 2. **Submission retains the command buffer.** `Queue::submit` consumes
    `ExecutableCommandBuffer`s (what `CommandBufferRecorder::finish()` returns).
@@ -117,15 +121,15 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    non-copyable and stores no back-reference.
 3. **Leaves are `unique_ptr`, parents are `shared_ptr`.** Factories return
    `std::unique_ptr` by default (`Shader`, `ShaderProgram`, `GraphicsPipeline`,
-   `Swapchain`, `RenderBuffer`, `Buffer`) — callers convert to `shared_ptr`
+   `Swapchain`, `RenderBuffer`, `Buffer`, `Texture`, `UniformBlock`) — callers convert to `shared_ptr`
    when they need to share or record the object. A type that hands out
    dependents (calls `shared_from_this()`: `Instance`, `Device`,
-   `CommandBufferPool`, `FencePool`) must be created as `shared_ptr`, since
+   `CommandBufferPool`, `FencePool`, `DescriptorHeap`) must be created as `shared_ptr`, since
    `shared_from_this()` on a `unique_ptr`-owned object throws
    `std::bad_weak_ptr` at runtime. Enforced, not documented: those types have
    private constructors, deleted copy and move constructors, and are created only
    through a factory returning `shared_ptr` (`Instance::create`, `Instance::makeDevice`,
-   `Device::createCommandBufferPool`, `FencePool::create`). `Semaphore` is a
+   `Device::createCommandBufferPool`, `Device::createDescriptorHeap`, `FencePool::create`). `Semaphore` is a
    leaf that Device::createSemaphore returns as `shared_ptr`, because every
    submit shares it with the command buffers.
 4. **No cycles.** A dependency never strongly references its dependents, so
@@ -139,10 +143,10 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    is what forced the hand-written `~Buffer` at 16af4c1. `DeviceChild` is that
    earlier base for types that derive from a `vk::raii` handle and need the
    device (`Fence`, `GraphicsPipeline`, `Semaphore`, `TimelineSemaphore`).
-   A `GraphicsPipeline` retains its `ShaderProgram`, which owns the pipeline
-   layout, so the layout outlives the pipeline by retention, not by order.
+   A `GraphicsPipeline` retains its `ShaderProgram`. Pipelines have no layout and a program
+   owns no Vulkan object: its shaders hold the device.
    The `vk::raii` base is `private` in `Semaphore`, `TimelineSemaphore`,
-   `GraphicsPipeline`, `Buffer`, `PhysicalDevice`, `Device`, `Instance`, `Fence`,
+   `GraphicsPipeline`, `Buffer`, `Texture`, `PhysicalDevice`, `Device`, `Instance`, `Fence`,
    `Queue` and `CommandBuffer`, with a `using` for the calls that have callers,
    so a caller cannot slice the wrapper into the bare handle and drop the
    object that keeps its dependencies alive. `Device::raii()`,
@@ -202,15 +206,17 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    Covered: `Device` (its `Instance`), `Buffer`, `FencePool`, `CommandBufferPool`,
    `CommandBufferRecorder`, `ExecutableCommandBuffer`, `Semaphore`,
    `TimelineSemaphore`, `Queue`,
-   `RenderBuffer`, `Shader`, `ShaderProgram`, `GraphicsPipeline`,
+   `RenderBuffer`, `Shader`, `GraphicsPipeline`, `DescriptorHeap`, `Texture`, `UniformBlock`,
    `FrameObjects`, `FrameObjectManager`, `ShaderProgramCache`, `Swapchain`,
    `SwapchainGeneration` (private to the library, reached through the
    `AcquiredSwapchainImage` and `Presentation` that hold it) and
    `AcquiredSwapchainImage` (`SwapchainTest.cpp`, on a headless surface via
    `VK_EXT_headless_surface`; the generation is covered by
-   `acquiredImageKeepsSwapchainAlive`, which holds nothing else). `Shader`, `ShaderProgram`, `RenderBuffer`,
-   `Semaphore` and `ExecutableCommandBuffer` expose no Vulkan call, so their
-   destruction is the call under test; for `ShaderProgramCache` it is the lookup.
+   `acquiredImageKeepsSwapchainAlive`, which holds nothing else). `Shader`, `RenderBuffer`, `Semaphore`, `ExecutableCommandBuffer`,
+   `DescriptorHeap`, `Texture` and `UniformBlock` expose no Vulkan call, so their
+   destruction is the call under test (the texture and the block also expire their heap);
+   for `ShaderProgramCache` it is the lookup. A `ShaderProgram` owns no Vulkan object, so it
+   has no test of its own: its shaders hold the device (`Shader_keepsDeviceAlive`).
    `Device` (its `Instance`) and `Queue` are ownership-only: no Vulkan call is
    reachable through a transfer `Queue`, and the `Device` test checks the
    expiry order without the validation layer. A `FenceHandle` is only
@@ -247,9 +253,9 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
 - **The pipeline cache never evicts.** A pipeline stays until `~Renderer`, even if no mesh or
   material uses its vertex layout, shader program and color format any more.
 
-- **Heap-referenced resources** (future textures and parameter blocks, on descriptor heaps): a
-  draw that references a resource by heap index must retain it through `CommandBufferRecorder`;
-  nothing does that yet.
+- **Heap-referenced resources** (textures and uniform blocks on the descriptor heap): a draw that
+  references one by heap index must retain it through `RenderingPass::useResource`, which
+  nothing enforces. The `Renderer` draws with none yet.
 
 - **Out-of-date and suboptimal paths are untested.** A headless surface never
   reports them, so no automated test reaches the acquire/present
@@ -257,7 +263,7 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
   rethrow in `Swapchain::present`. The example's resize and close runs on a real
   window are the only coverage.
 
-- **Windows CI only builds.** The Windows job does not run the tests.
+- **Windows and macOS CI only build.** Those jobs do not run the tests.
 
 - **Wayland and X11 have no CI.** The Linux jobs build and test on a headless
   surface; the Wayland and X11 surface paths have not run in CI.
