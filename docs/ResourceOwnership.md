@@ -78,7 +78,10 @@ one:
 - `bindVertexBuffers` and `bindIndexBuffer` retain the buffer, not the `Mesh`; the vertices and
   the indices of a mesh are in one buffer. Dropping the last `MeshPtr` while a frame
   is in flight frees the CPU object; the buffer dies when that frame's slot is reused and its
-  fence has signalled (`meshBufferOutlivesMeshWhileFrameInFlight`).
+  fence has signalled (`meshBufferOutlivesMeshWhileFrameInFlight`). The draw loop skips a
+  pipeline or buffer bind that repeats the previous bind of its kind in the frame; the first
+  bind's retain covers the rest, because all draws of a frame are in one command buffer and its
+  retained set lives until the fence signals.
 - A `Material` owns a `ShaderProgramPtr`, a `UniformBlock` that holds its parameters, and the
   `TexturePtr`s it samples. A draw pushes the heap indices of the block and the textures, and
   records them with `RenderingPass::useResource`, which retains them: dropping the last

@@ -180,11 +180,20 @@ step builds on the previous. Completed work is kept for context.
   the graphics family's queue (`PhysicalDevice::kDedicatedTransferFamily` is `false`) until an
   upload has run on a GPU with a transfer-only family; the cross-family path is value-tested
   only. Uniform blocks stay host-visible. See `ResourceOwnership.md`.
+- **Repeated binds skipped**: the draw loop of `Renderer::renderFrame` does not record
+  `bindPipeline`, `bindVertexBuffers` or `bindIndexBuffer` when they would repeat the previous
+  bind of their kind in the same frame. Draw order is unchanged (no sorting: depth and blending
+  are off, so submission order is the output). The cheap first step of recording cost;
+  `repeatedBindsAreSkipped` counts the binds that reach the driver.
 
 ## Later milestones (in rough order)
 
-1. **Engine API (S7)**: continues S6 (see Done).
-   - S7: parallel recording.
+1. **Engine API (S7): parallel recording**, deferred until a profile on a real GPU driver shows
+   recording cost (CI's lavapipe cannot tell), like the retention-cost item under "Standing
+   decisions". Design in short: each worker records a contiguous range of the draws into its own
+   primary command buffer from its own pool of the frame slot, inside one dynamic-rendering
+   instance split by suspend and resume, and the primaries go in range order to the one graphics
+   `Queue::submit`.
 2. **Render graph**: declared passes with reads/writes; derives barriers,
    layouts and transient attachment lifetimes. Deletes the hand-written
    barrier blocks in the renderer.

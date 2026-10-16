@@ -82,6 +82,64 @@ const vk::SamplerCreateInfo gLinearRepeatSampler{.magFilter    = vk::Filter::eLi
                                                  .addressModeV = vk::SamplerAddressMode::eRepeat,
                                                  .addressModeW = vk::SamplerAddressMode::eRepeat,
                                                  .maxLod       = vk::LodClampNone};
+
+/**
+ * Records the pipeline and buffer binds of one rendering pass, and leaves out a bind that would
+ * repeat the previous bind of its kind in the pass. The pass is one command buffer, and the earlier
+ * bind already retained the resource in it until the fence signals, so a skipped bind loses no
+ * retention. That also makes comparing addresses sound: this command buffer retains every bound
+ * object, so no new allocation can reuse an address while the pass records. A non-indexed draw
+ * binds no index buffer and leaves the bound one as it was.
+ */
+class PassBinder
+{
+public:
+    explicit PassBinder(Graphics::Vulkan::CommandBufferRecorder::RenderingPass& pass)
+        : mPass{pass}
+    {
+    }
+
+    void
+    pipeline(const Graphics::Vulkan::GraphicsPipelinePtr& pipeline)
+    {
+        if (pipeline.get() != mPipeline)
+        {
+            mPass.bindPipeline(pipeline);
+            mPipeline = pipeline.get();
+        }
+    }
+
+    void
+    vertexBuffer(const Graphics::Vulkan::BufferPtr& buffer)
+    {
+        if (buffer.get() != mVertexBuffer)
+        {
+            mPass.bindVertexBuffers(0u, {{.buffer = buffer, .offset = 0u}});
+            mVertexBuffer = buffer.get();
+        }
+    }
+
+    void
+    indexBuffer(const Graphics::Vulkan::BufferPtr& buffer, vk::DeviceSize offset)
+    {
+        // Untested: every mesh owns its buffer, so the same buffer is always at the same offset;
+        // meshes that share a buffer would reach the offset comparison.
+        if (buffer.get() != mIndexBuffer || offset != mIndexOffset)
+        {
+            mPass.bindIndexBuffer(buffer, offset, vk::IndexType::eUint32);
+            mIndexBuffer = buffer.get();
+            mIndexOffset = offset;
+        }
+    }
+
+private:
+    Graphics::Vulkan::CommandBufferRecorder::RenderingPass& mPass;
+
+    const Graphics::Vulkan::GraphicsPipeline* mPipeline     = nullptr;
+    const Graphics::Vulkan::Buffer*           mVertexBuffer = nullptr;
+    const Graphics::Vulkan::Buffer*           mIndexBuffer  = nullptr;
+    vk::DeviceSize                            mIndexOffset  = 0u;
+};
 } // namespace
 
 Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& config)
@@ -535,6 +593,8 @@ Renderer::renderFrame(FramePacket packet)
                                 },
                             });
 
+            PassBinder binder{pass};
+
             for (std::size_t i = 0u; i < packet.draws.mDraws.size(); ++i)
             {
                 const RenderQueue::Draw& draw     = packet.draws.mDraws[i];
@@ -549,7 +609,7 @@ Renderer::renderFrame(FramePacket packet)
                 std::memcpy(
                     pushData.data() + gMaterialIndexOffset, &blockIndex, sizeof(blockIndex));
 
-                pass.bindPipeline(mPipelines[i]);
+                binder.pipeline(mPipelines[i]);
                 pass.useResource(material.block);
                 for (std::size_t textureIndex = 0u; textureIndex < material.textures.size();
                      ++textureIndex)
@@ -563,15 +623,14 @@ Renderer::renderFrame(FramePacket packet)
                     pass.useResource(texture);
                 }
                 pass.pushData(0u, pushData);
-                pass.bindVertexBuffers(0u, {{.buffer = draw.mesh->buffer, .offset = 0u}});
+                binder.vertexBuffer(draw.mesh->buffer);
                 if (draw.mesh->indexCount == 0u)
                 {
                     pass.draw(draw.mesh->vertexCount, 1, 0, 0);
                 }
                 else
                 {
-                    pass.bindIndexBuffer(
-                        draw.mesh->buffer, draw.mesh->indexOffset, vk::IndexType::eUint32);
+                    binder.indexBuffer(draw.mesh->buffer, draw.mesh->indexOffset);
                     pass.drawIndexed(draw.mesh->indexCount, 1, 0, 0, 0);
                 }
             }

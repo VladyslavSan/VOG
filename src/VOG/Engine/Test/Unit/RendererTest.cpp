@@ -6,6 +6,7 @@
 #include <VOG/Engine/Renderer/Renderer.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
+#include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/DeviceRequirements.hpp>
 #include <VOG/Graphics/Vulkan/Texture.hpp>
 #include <VOG/Graphics/Vulkan/UniformBlock.hpp>
@@ -78,6 +79,15 @@ struct RendererTestAccess
         const std::scoped_lock lock{renderer.mUploadMutex};
 
         return renderer.mPendingUploads.at(index).staging;
+    }
+
+    /** The function table that every command buffer of the renderer's device records through. */
+    static vk::raii::detail::DeviceDispatcher&
+    dispatcher(Renderer& renderer)
+    {
+        // The device owns the table and keeps it mutable; getDispatcher() only hands it out const.
+        return const_cast<vk::raii::detail::DeviceDispatcher&>(
+            *renderer.mVulkanDevice->getDispatcher());
     }
 };
 } // namespace VOG::Engine
@@ -328,6 +338,75 @@ void main() { gl_Position = pc.first * pc.second * vec4(0.0, 0.0, 0.0, 1.0); }
 
 private:
     std::filesystem::path mPath;
+};
+
+std::atomic<int> gPipelineBinds;
+std::atomic<int> gVertexBufferBinds;
+std::atomic<int> gIndexBufferBinds;
+
+PFN_vkCmdBindPipeline      gRealBindPipeline      = nullptr;
+PFN_vkCmdBindVertexBuffers gRealBindVertexBuffers = nullptr;
+PFN_vkCmdBindIndexBuffer   gRealBindIndexBuffer   = nullptr;
+
+VKAPI_ATTR void VKAPI_CALL
+countBindPipeline(VkCommandBuffer commandBuffer, VkPipelineBindPoint bindPoint, VkPipeline pipeline)
+{
+    ++gPipelineBinds;
+    gRealBindPipeline(commandBuffer, bindPoint, pipeline);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+countBindVertexBuffers(VkCommandBuffer     commandBuffer,
+                       uint32_t            firstBinding,
+                       uint32_t            bindingCount,
+                       const VkBuffer*     buffers,
+                       const VkDeviceSize* offsets)
+{
+    ++gVertexBufferBinds;
+    gRealBindVertexBuffers(commandBuffer, firstBinding, bindingCount, buffers, offsets);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+countBindIndexBuffer(VkCommandBuffer commandBuffer,
+                     VkBuffer        buffer,
+                     VkDeviceSize    offset,
+                     VkIndexType     indexType)
+{
+    ++gIndexBufferBinds;
+    gRealBindIndexBuffer(commandBuffer, buffer, offset, indexType);
+}
+
+/**
+ * Counts the bind commands that reach the driver, by swapping them in the device's function table
+ * for counting forwarders. Scope it around a stopped renderer: the render thread reads the table.
+ */
+class BindCounter
+{
+public:
+    explicit BindCounter(vk::raii::detail::DeviceDispatcher& table)
+        : mTable{table}
+    {
+        gPipelineBinds = gVertexBufferBinds = gIndexBufferBinds = 0;
+        gRealBindPipeline                                       = table.vkCmdBindPipeline;
+        gRealBindVertexBuffers                                  = table.vkCmdBindVertexBuffers;
+        gRealBindIndexBuffer                                    = table.vkCmdBindIndexBuffer;
+        table.vkCmdBindPipeline                                 = countBindPipeline;
+        table.vkCmdBindVertexBuffers                            = countBindVertexBuffers;
+        table.vkCmdBindIndexBuffer                              = countBindIndexBuffer;
+    }
+
+    ~BindCounter()
+    {
+        mTable.vkCmdBindPipeline      = gRealBindPipeline;
+        mTable.vkCmdBindVertexBuffers = gRealBindVertexBuffers;
+        mTable.vkCmdBindIndexBuffer   = gRealBindIndexBuffer;
+    }
+
+    BindCounter(const BindCounter&)            = delete;
+    BindCounter& operator=(const BindCounter&) = delete;
+
+private:
+    vk::raii::detail::DeviceDispatcher& mTable;
 };
 } // namespace
 
@@ -789,6 +868,68 @@ TEST_F(RendererTest, indexedMeshIsDrawn)
     EXPECT_EQ(renderer->getState(), Renderer::State::eRunning);
     EXPECT_FALSE(renderer->stop());
     EXPECT_EQ(RendererTestAccess::pipelineCount(*renderer), 1u);
+}
+
+/**
+ * A draw does not bind what the draw before it bound in the same frame. One frame draws, in order:
+ * mesh A (indexed) twice, A with another program, a non-indexed mesh B, A again, and an indexed
+ * mesh C. Binds that reach the driver, with the reason for each:
+ *   pipeline 2: the first draw, and A's second program;
+ *   vertex buffers 4: A, B, A again (B came between), C;
+ *   index buffers 2: A, and C. A is not bound again after B, because a non-indexed draw leaves the
+ *   bound index buffer as it was.
+ * Without the skip it is 6, 6 and 5.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, repeatedBindsAreSkipped)
+{
+    const std::uint32_t indices[] = {0u, 1u, 2u};
+    const auto          vertices  = std::vector<std::byte>(3u * gQuadStride);
+
+    auto renderer = makeRenderer();
+    auto indexed  = [&]
+    {
+        return renderer->createMesh({.vertices   = vertices,
+                                     .indices    = indices,
+                                     .stride     = gQuadStride,
+                                     .attributes = compatibleLayout()});
+    };
+    const MeshPtr     meshA = indexed();
+    const MeshPtr     meshB = makeMesh(*renderer, compatibleLayout());
+    const MeshPtr     meshC = indexed();
+    const MaterialPtr first = renderer->createMaterial({.shader = "WorldSpace"});
+    const MaterialPtr other = renderer->createMaterial({.shader = "ScreenSpacePositionColor"});
+
+    // Only the first frame draws, so the counts are those of one frame.
+    bool drawn = false;
+    renderer->addRenderable(std::make_shared<LambdaRenderable>(
+        [&](const FrameContext& /*context*/, RenderQueue& queue)
+        {
+            if (std::exchange(drawn, true))
+            {
+                return;
+            }
+            const Math::Matrix4x4f world{1.0f};
+            queue.submit(meshA, first, world);
+            queue.submit(meshA, first, world);
+            queue.submit(meshA, other, world);
+            queue.submit(meshB, other, world);
+            queue.submit(meshA, other, world);
+            queue.submit(meshC, other, world);
+        }));
+
+    {
+        const BindCounter counter{RendererTestAccess::dispatcher(*renderer)};
+        renderer->start();
+        renderer->submitFrame({});
+        renderer->submitFrame({});
+        EXPECT_FALSE(renderer->stop());
+        EXPECT_EQ(RendererTestAccess::pipelineCount(*renderer), 2u);
+        EXPECT_EQ(gPipelineBinds, 2);
+        EXPECT_EQ(gVertexBufferBinds, 4);
+        EXPECT_EQ(gIndexBufferBinds, 2);
+    }
 }
 
 // The score comes from the gtest assertion macros.
