@@ -163,6 +163,13 @@ step builds on the previous. Completed work is kept for context.
   `MaterialDescription::textures` (at most 4) and `parameters` (at most 16384 bytes, an immutable
   uniform block). The renderer pushes `mat4 mvp; uint material; uint textures[4]` with every
   draw. The example draws a textured checkerboard quad. See `ResourceOwnership.md`.
+- **Acquire semaphores per frame slot**: the acquire semaphore moves from the swapchain (one per image
+  plus a spare, swapped after each acquire) to `FrameObjects`, one per slot. The renderer prepares
+  the next slot (`FrameObjectManager::prepareNextFrame`, which waits the slot's fences) before it
+  acquires, and advances it (`advance`) once an image was acquired. The swap trick reused a semaphore
+  whose last wait the host had not seen complete when an image came back within one cycle of the
+  slots (`VUID-vkAcquireNextImageKHR-semaphore-01779`, 26 reports in 400 frames on lavapipe). See
+  `SwapchainSync.md`.
 
 ## Later milestones (in rough order)
 

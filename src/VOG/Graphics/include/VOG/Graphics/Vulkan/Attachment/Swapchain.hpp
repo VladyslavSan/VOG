@@ -117,7 +117,7 @@ private:
     Swapchain(DevicePtr device, const SwapchainParameters& parameters);
 
     /**
-     * Creates a swapchain, its image views and acquire semaphores for the given extent.
+     * Creates a swapchain and its image views for the given extent.
      *
      * @param oldSwapchain  Previous swapchain handle for driver resource reuse (may be null).
      */
@@ -125,10 +125,18 @@ private:
 
 public:
     /**
-     * @param timeout  How long to wait for a free image; negative values count as zero. A timeout
-     *                 gives eSkip, so a hidden window does not block the caller for good.
+     * @param timeout         How long to wait for a free image; negative values count as zero. A
+     *                        timeout gives eSkip, so a hidden window does not block the caller for
+     *                        good.
+     * @param imageAvailable  Signaled by the acquire when the image is free; the submit that
+     *                        renders it waits it. It must be unsignaled and have no operation
+     *                        pending, which is why the caller has to know that the wait of its
+     *                        last use is done: a fence of the submit that waited it signaled
+     *                        (VUID-vkAcquireNextImageKHR-semaphore-01779). It stays unaffected
+     *                        unless the status is eReady. The result keeps it.
      */
-    ImageAcquireResult acquireNextImage(std::chrono::nanoseconds timeout);
+    ImageAcquireResult acquireNextImage(std::chrono::nanoseconds timeout,
+                                        SemaphorePtr             imageAvailable);
 
     /**
      * Presents @p acquired, which releases its acquisition. The presentation waits

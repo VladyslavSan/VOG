@@ -27,25 +27,17 @@ FrameObjectManager::FrameObjectManager(const Vulkan::DevicePtr& device,
 }
 
 FrameObjectsPtr
-FrameObjectManager::getCurrentFrame()
+FrameObjectManager::prepareNextFrame()
 {
-    return mFrameObjects[getCurrentFrameIndex()];
-}
-
-FrameObjectsPtr
-FrameObjectManager::acquireNextFrame()
-{
-    ++mRenderFrame;
-
-    auto frame = getCurrentFrame();
+    const FrameObjectsPtr& frame = mFrameObjects[(mRenderFrame + 1u) % mFrameObjects.size()];
     frame->onFrameStart();
 
     return frame;
 }
 
-std::size_t
-FrameObjectManager::getCurrentFrameIndex() const
+void
+FrameObjectManager::advance()
 {
-    return mRenderFrame % mFrameObjects.size();
+    ++mRenderFrame;
 }
 } // namespace VOG::Graphics::Frame

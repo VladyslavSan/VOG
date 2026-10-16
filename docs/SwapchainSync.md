@@ -1,7 +1,7 @@
 # Swapchain Synchronization Design
 
 This document captures the synchronization model used by `Vulkan::Swapchain` — the
-rationale for semaphore ownership, the swap trick for per-image acquire semaphores, and
+rationale for semaphore ownership, why the acquire semaphores belong to the frame slots, and
 how `VK_EXT_swapchain_maintenance1` (required, no fallback) closes the gap between the
 presentation engine and the CPU.
 
@@ -10,16 +10,19 @@ presentation engine and the CPU.
 A Vulkan frame involves three independent indices that are easy to conflate:
 
 1. **Frame slot** (`FrameObjectManager::mRenderFrame % framesInFlight`) — CPU-side ring
-   for recycling command pools. Advanced by the renderer only when an image was acquired
-   and a submit will follow (skip / out-of-date paths do not advance). Gated by the
-   per-slot submit fence (waited in `CommandBufferPool::reset`, and in `~CommandBufferPool`)
-   and by the slot's present fence (waited by `~Presentation`, when
-   `FrameObjects::onFrameStart` drops the slot's `Presentation`).
+   for recycling command pools and the slot's semaphores. The renderer prepares the slot
+   (`FrameObjectManager::prepareNextFrame`) before it acquires an image, and advances it
+   (`advance`) only when an image was acquired and a submit will follow (skip / out-of-date
+   paths prepare but do not advance). Gated by the per-slot submit fence (waited in
+   `CommandBufferPool::reset`, and in `~CommandBufferPool`) and by the slot's present fence
+   (waited by `~Presentation`, when `FrameObjects::onFrameStart` drops the slot's
+   `Presentation`). These waits have no timeout.
 
 2. **Swapchain image index** — returned by `vkAcquireNextImageKHR`. The driver picks
    from images the presentation engine has released. Uncorrelated with the frame slot:
    with 2 frames in flight and 3 images, different slots can render to the same image on
-   consecutive cycles.
+   consecutive cycles. A headless lavapipe surface even hands out image 0 twice in a row
+   (0, 1, 0, 2, 0, 1, 0, 3, ...). This is why the acquire semaphore is keyed by slot, not by image.
 
 3. **Present order** — `vkQueuePresentKHR` calls may complete out of order under mailbox
    or immediate modes.
@@ -27,24 +30,40 @@ A Vulkan frame involves three independent indices that are easy to conflate:
 The frame fence (slot gate) proves only that the **GPU** finished work for that slot.
 It says nothing about the **presentation engine's** own activity.
 
-## Semaphore ownership: per image vs per frame slot
+## Semaphore ownership: per frame slot
 
-`imageAvailableSemaphore` lives in the `SwapchainGeneration` (its private
-`mAcquireSemaphores`: one per image, keyed by image index, plus the spare as the last entry).
-`AcquiredSwapchainImage::imageAvailableSemaphore()` hands it out, kept by value from the
-acquire, because the swap trick below rotates the list.
-`renderFinishedSemaphore` (`FrameObjects::getRenderFinishedSemaphore()`) lives in `FrameObjects`,
-keyed by frame-in-flight slot.
+Both semaphores of a frame live in its `FrameObjects`, keyed by frame-in-flight slot:
+`imageAvailableSemaphore` (`FrameObjects::getAcquireSemaphore()`) and `renderFinishedSemaphore`
+(`FrameObjects::getRenderFinishedSemaphore()`). The swapchain owns neither.
+`AcquiredSwapchainImage::imageAvailableSemaphore()` returns the semaphore that was passed to
+`Swapchain::acquireNextImage`.
 
 ### `imageAvailableSemaphore`
 
-Passed to `vkAcquireNextImageKHR` and signaled by the presentation engine once it has
-**finished displaying and released** the image. This IS the PE→GPU "presentation done"
-signal: the PE cannot signal it until the image is free to be written to again.
+Passed to `vkAcquireNextImageKHR` and signaled when the image is free to be written to again:
+the presentation engine may not have finished reading the image when the acquire returns its
+index, so the semaphore is the signal (Vulkan spec, `vkAcquireNextImageKHR`).
 
 The submit waits it on `eColorAttachmentOutput` stage. `Queue::submit` makes the submitted
-command buffers retain it until their fence signals, so dropping an old swapchain
-generation cannot destroy a semaphore that a pending submit still waits.
+command buffers retain it until their fence signals.
+
+**Reuse.** The semaphore may go to `vkAcquireNextImageKHR` again only when it is unsignaled
+(`VUID-vkAcquireNextImageKHR-semaphore-01286`) and has no operation pending
+(`VUID-vkAcquireNextImageKHR-semaphore-01779`). The wait of the previous submit is a pending
+operation until the host knows that the submit completed. The slot's submit fence is that
+knowledge: `FrameObjectManager::prepareNextFrame` returns the slot only after
+`CommandBufferPool::reset` waited the fences of the slot's submits, and the renderer calls it
+before the acquire. So the slot's previous submit, the only one that waited the semaphore, is
+complete when the semaphore is signaled again, whatever image the acquire returns and however many
+frame slots and images there are.
+
+**Why not one per image.** The index comes back from the acquire, after the semaphore went in.
+An earlier design kept one semaphore per image plus a spare, swapped the spare with the one at
+the returned index, and assumed that getting image K back showed that the submit which waited K's
+last semaphore had completed. It does not show that to the host: the acquire may return the index
+before the presentation engine is done, so the old submit may still wait the semaphore, which the
+validation layer reports as 01779. It happened whenever an image came back within one cycle of the
+frame slots, which lavapipe does (26 reports in 400 frames at 2 slots and 4 images).
 
 ### `renderFinishedSemaphore`
 
@@ -63,63 +82,8 @@ reset the payload of every wait semaphore. The slot keeps the `Presentation` (fe
 semaphore, swapchain generation) and drops it in `onFrameStart`, before the next submit
 signals the semaphore again; `~Presentation` waits for the fence. Conceptually the semaphore
 belongs with the frame because it tracks a submission's render-completion state, not the
-image's identity.
-
-## The swap trick for `imageAvailableSemaphore`
-
-**The chicken-and-egg problem:** you must pass the acquire semaphore *into*
-`vkAcquireNextImageKHR` before you know which image index comes back.  You cannot
-pre-select `mAcquireSemaphores[K]` because K is unknown.
-
-**Solution:** keep one spare semaphore (the last entry of `mAcquireSemaphores`) that is always
-unsignaled and ready to pass. After the call returns K, swap the spare with
-`mAcquireSemaphores[K]`:
-
-```
-vkAcquireNextImageKHR(mAcquireSemaphores.back()) → K
-std::swap(mAcquireSemaphores.back(), mAcquireSemaphores[K])
-```
-
-After the swap:
-
-| Slot | Contents | State | Used by |
-|---|---|---|---|
-| `mAcquireSemaphores[K]` | freshly-signaled spare | signaled | submit waits it |
-| `mAcquireSemaphores.back()` | evicted K-slot semaphore | unsignaled | next acquire |
-
-**Why the evicted semaphore is safely unsignaled:** The driver returning K means the PE
-finished displaying image K and released it. That can only happen after:
-
-1. The prior `mAcquireSemaphores[K]` was signaled (when K was last acquired).
-2. The graphics submit waited it (consuming the signal → semaphore goes unsignaled).
-3. Rendering completed and the submitting slot's `renderFinishedSemaphore` was signaled.
-4. `vkQueuePresentKHR` waited that `renderFinishedSemaphore`.
-5. The PE displayed image K.
-6. The PE released image K (now re-acquirable).
-
-After step 2 the semaphore is unsignaled; it has not been touched since. The new spare
-is therefore provably unsignaled and safe to hand to `vkAcquireNextImageKHR`, as long as
-every acquired image is presented (see the known gap below).
-
-### Concrete walkthrough (3 images: S[0], S[1], S[2], spare Sx)
-
-```
-Initial:  S[0]=unsig  S[1]=unsig  S[2]=unsig  Sx=unsig
-
-Frame 1:  acquire(Sx) → K=0.  PE signals Sx.
-          swap(Sx, S[0]):  S[0]=Sx(signaled)  Sx=old-S[0](unsig)
-          submit waits S[0].  present waits RF[0].
-
-Frame 2:  acquire(Sx=old-S[0]) → K=1.  PE signals it.
-          swap(Sx, S[1]):  S[1]=signaled  Sx=old-S[1](unsig)
-          submit waits S[1].  present waits RF[1].
-
-Frame 3:  acquire(Sx=old-S[1]) → K=0 again.
-          Re-acquiring K=0 proves frame 1's full cycle completed:
-            S[0] was waited by submit (now unsignaled).
-          swap(Sx, S[0]):  S[0]=signaled  Sx=old-S[0](unsig, proven safe)
-          submit waits S[0].  present waits RF[0].
-```
+image's identity. The same holds for the acquire semaphore, whose reuse is gated by the submit
+fence alone.
 
 ## The PE→CPU gap, present fences and `recreate()`
 
@@ -130,10 +94,8 @@ presentation when its fence signalled, and can destroy a swapchain when the fenc
 past presentations that refer to it signalled.
 
 Everything one `vkCreateSwapchainKHR` produces lives in a `SwapchainGeneration`: surface
-reference, swapchain, image views and the acquire semaphores (one per image plus the spare).
-It is private to the Graphics library and constant after construction, except for the
-acquire semaphores, which only `acquireNextImage()` rotates. Two kinds of holder keep a
-generation alive:
+reference, swapchain and image views. It is private to the Graphics library and constant after
+construction. Two kinds of holder keep a generation alive:
 
 - a `Presentation` (returned by `Swapchain::present()`, kept by the frame slot until the
   slot restarts): holds the generation, the semaphore the present waits, and the present
@@ -160,14 +122,17 @@ valid once the image's uses completed, which the command-buffer retention guaran
 out-of-date, suboptimal and surface-lost paths have no automated test (see the known gaps in
 `ResourceOwnership.md`).
 
-Known gap: an image released unpresented leaves its acquire semaphore signaled or pending.
-The next acquire's swap trick can then hand a signaled semaphore to `vkAcquireNextImageKHR`
-(`VUID-vkAcquireNextImageKHR-semaphore-01286`), and the generation destroys a semaphore
-with a signal pending (MoltenVK can crash there). Only an exception between acquire and
-present reaches it (a Vulkan error, or out of memory in a retain, a submit or a fence take):
-`Renderer::submitFrame` runs the renderables on the main thread, and the render thread looks up
-the pipelines of a frame before it acquires, so a renderable that throws and a vertex layout the
-shader cannot read both fail while no image is acquired.
+Known gap: an image released unpresented leaves its slot's acquire semaphore signaled or
+pending. The next acquire on that slot then hands a signaled semaphore to
+`vkAcquireNextImageKHR` (`VUID-vkAcquireNextImageKHR-semaphore-01286`), and `FrameObjects`
+destroys a semaphore with a signal pending (MoltenVK can crash there). Only an exception between
+acquire and submit reaches it (a Vulkan error, or out of memory in a retain or a fence take).
+An exception between submit and present (out of memory in a fence take, or a present error that
+enqueues nothing) is a separate case: the submit consumed the acquire semaphore, but the slot's
+`renderFinishedSemaphore` stays signaled with no present waiting it, so the slot's next submit
+signals it again. `Renderer::submitFrame` runs the renderables on the main thread, and the render
+thread looks up the pipelines of a frame before it acquires, so a renderable that throws and a
+vertex layout the shader cannot read both fail while no image is acquired.
 
 ## Resizing
 
@@ -191,7 +156,16 @@ waits while it is full, so the render thread paces the main thread. If an occlud
 no free image, the acquire waits up to its timeout (100 ms) per frame and the simulation runs at
 that rate; the main thread still pumps events between frames, so it can quit. On macOS with
 MoltenVK, a fully covered window kept presenting at about 60 frames per second, after one stall of
-about a second when the window became covered.
+about a second when the window became covered. That observation was made before the acquire
+semaphores moved to the frame slots and the descriptor-heap requirement (MoltenVK has no
+descriptor heaps), so it cannot be re-checked on this stack.
+
+**The slot waits have no timeout.** `FrameObjectManager::prepareNextFrame` waits the slot's submit
+fence and its present fence before every acquire, also for a frame whose acquire then skips. A
+presentation engine that holds a present fence (an occluded or hidden window, for instance) blocks
+the render thread there, and through the one-packet queue the main thread in `submitFrame`. The
+design assumes that the GPU and the presentation engine make progress; the 100 ms acquire timeout
+does not bound these waits.
 
 **The render thread never needs the main thread.** The main thread can be parked in `submitFrame`
 while the render thread acquires and presents, so a driver call that waits for the main thread

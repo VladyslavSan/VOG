@@ -350,7 +350,7 @@ TEST_F(DeviceLifetime, frameObjectManagerKeepsDeviceAlive)
                                manager,
                                [](Graphics::Frame::FrameObjectManager& manager)
                                {
-                                   manager.acquireNextFrame();
+                                   manager.prepareNextFrame();
                                });
 }
 

@@ -11,6 +11,7 @@ namespace VOG::Graphics::Frame
 {
 FrameObjects::FrameObjects(Vulkan::DevicePtr device, std::size_t threadCount)
     : mDevice{std::move(device)}
+    , mAcquireSemaphore{mDevice->createSemaphore()}
     , mRenderFinishedSemaphore{mDevice->createSemaphore()}
 {
     mCommandBufferPools.reserve(threadCount);
@@ -20,6 +21,12 @@ FrameObjects::FrameObjects(Vulkan::DevicePtr device, std::size_t threadCount)
                     {
                         return mDevice->createCommandBufferPool();
                     });
+}
+
+const Vulkan::SemaphorePtr&
+FrameObjects::getAcquireSemaphore() const
+{
+    return mAcquireSemaphore;
 }
 
 const Vulkan::SemaphorePtr&

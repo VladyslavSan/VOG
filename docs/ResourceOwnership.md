@@ -43,8 +43,8 @@ anything that flows through the tracked APIs.
    discard, which releases everything it retained at once. The command buffer
    — and therefore everything it retains — stays alive while the GPU works.
 
-3. **Fence wait releases.** When a frame slot is re-acquired
-   (`FrameObjectManager::acquireNextFrame` → `FrameObjects::onFrameStart` →
+3. **Fence wait releases.** When a frame slot is prepared
+   (`FrameObjectManager::prepareNextFrame` → `FrameObjects::onFrameStart` →
    `CommandBufferPool::reset`), the pool **waits on the fences first**, resets
    the Vulkan pool, then calls `CommandBuffer::releaseRetained`. Only at that
    point do retained resources drop their reference and (possibly) die.
@@ -254,11 +254,12 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
 ## Known gaps (intentional, to be addressed where they arise)
 
 - **Unpresented acquired image.** Dropping an `AcquiredSwapchainImage` without
-  presenting it releases the image but leaves its acquire semaphore signaled or
-  pending. The next acquire's swap trick can then get a signaled spare, and the
-  generation destroys a semaphore with a signal pending. Only an exception
-  between acquire and present (a Vulkan error, or out of memory) reaches it; see
-  `SwapchainSync.md`.
+  presenting it releases the image but leaves its slot's acquire semaphore signaled or
+  pending. The next acquire on that slot can then get a signaled semaphore, and
+  `FrameObjects` destroys a semaphore with a signal pending. Only an exception
+  between acquire and submit (a Vulkan error, or out of memory) reaches it. An exception
+  between submit and present is a separate case, which leaves the slot's render-finished
+  semaphore signaled; see `SwapchainSync.md`.
 
 - **Device vertex limits are not validated.** `createMesh` checks the stride against the
   attributes, but not against the device limits for vertex stride and attribute offset:

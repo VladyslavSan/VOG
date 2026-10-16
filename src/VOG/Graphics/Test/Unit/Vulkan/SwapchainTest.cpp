@@ -13,6 +13,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 
 #include "VulkanFixture.hpp"
 
@@ -77,15 +78,17 @@ struct Rig
     std::unique_ptr<Graphics::Frame::FrameObjectManager> frames;
 
     /**
-     * Acquire, record a barrier, submit, present, hand the presentation to the frame slot.
+     * Prepare the frame slot, acquire with its semaphore, record a barrier, submit, present, hand
+     * the presentation to the frame slot.
      *
-     * @return the acquire semaphore of the frame's image: its command buffer retains it until the
-     *         slot restarts, and the swapchain generation holds it until the generation is gone.
+     * @return the frame's image: its command buffer retains it until the slot restarts.
      */
-    std::weak_ptr<Semaphore>
+    std::weak_ptr<const AcquiredSwapchainImage>
     renderFrame()
     {
-        auto acquireResult = swapchain->acquireNextImage(gAcquireTimeout);
+        auto frame = frames->prepareNextFrame();
+        auto acquireResult =
+            swapchain->acquireNextImage(gAcquireTimeout, frame->getAcquireSemaphore());
         EXPECT_EQ(acquireResult.status, Swapchain::AcquireStatus::eReady);
         const AcquiredSwapchainImagePtr acquired = acquireResult.acquired;
         if (!acquired)
@@ -93,7 +96,7 @@ struct Rig
             return {};
         }
 
-        auto frame    = frames->acquireNextFrame();
+        frames->advance();
         auto recorder = frame->getCommandBufferPoolForThread(0u)->record();
         recorder.setImageBarrier(acquired, toPresentBarrier());
         auto executable = recorder.finish();
@@ -110,7 +113,7 @@ struct Rig
         EXPECT_EQ(presented.status, Swapchain::PresentStatus::eReady);
 
         frame->retainUntilPresented(std::move(presented.presentation));
-        return acquired->imageAvailableSemaphore();
+        return acquired;
     }
 };
 } // namespace
@@ -145,28 +148,41 @@ protected:
                 .extent         = gExtent};
     }
 
+    /**
+     * @param slotsAboveImages  One frame slot more than the swapchain has images, so that some
+     *                          image comes back within one cycle of the slots, whatever order the
+     *                          driver hands the images out in. The Renderer never does this.
+     */
     Rig
-    makeRig()
+    makeRig(bool slotsAboveImages = false)
     {
+        auto swapchain = mDevice->createSwapchain(headlessSwapchainParameters());
+        auto slots     = static_cast<std::size_t>(kFramesInFlight);
+        if (slotsAboveImages)
+        {
+            slots = swapchain->getImageCount() + 1u;
+        }
+
         return {.queue     = mDevice->getGraphicsQueue(),
                 .fencePool = FencePool::create(mDevice),
-                .swapchain = mDevice->createSwapchain(headlessSwapchainParameters()),
-                .frames    = std::make_unique<Graphics::Frame::FrameObjectManager>(
-                    mDevice, kFramesInFlight, 1u)};
+                .swapchain = std::move(swapchain),
+                .frames =
+                    std::make_unique<Graphics::Frame::FrameObjectManager>(mDevice, slots, 1u)};
     }
 };
 
 /**
- * The old generation is not visible from outside, so its acquire semaphore stands in for it: the
- * generation holds it, and so does the command buffer that waited it until its pool resets. The
- * semaphore must live until the frame slot that presented to the old swapchain restarts, and not
- * past it: then the presentation and the command buffer are dropped together.
+ * The old generation is not visible from outside. The acquired image of the frame is: it holds the
+ * generation, and so does the command buffer that recorded it until its pool resets. The image
+ * must live until the frame slot that presented to the old swapchain restarts, and not past it:
+ * then the presentation and the command buffer are dropped together. Nothing observable follows
+ * the presentation's hold on the generation alone.
  */
 TEST_F(SwapchainTest, recreateRetiresOldSwapchainWhenSlotRestarts)
 {
     Rig rig = makeRig();
 
-    const std::weak_ptr<Semaphore> old = rig.renderFrame();
+    const std::weak_ptr<const AcquiredSwapchainImage> old = rig.renderFrame();
     ASSERT_FALSE(old.expired());
     ASSERT_TRUE(rig.swapchain->recreate(gExtent));
     EXPECT_FALSE(old.expired());
@@ -186,23 +202,24 @@ TEST_F(SwapchainTest, recreateRetiresOldSwapchainWhenSlotRestarts)
 }
 
 /**
- * A presentation keeps the swapchain it presented to. Here nothing else holds the old generation's
- * acquire semaphore once the pool is reset, so it is a proxy for the generation alone: it must
- * survive recreate() and expire exactly when the presentation is dropped.
+ * A recreate() with a presentation outstanding, and dropping that presentation afterwards, raise no
+ * validation error. The command buffer lets go of the acquired image when its pool resets; the
+ * presentation then is the only holder of the old generation, which no test can observe.
  */
-TEST_F(SwapchainTest, presentationKeepsRecreatedSwapchainUntilDropped)
+TEST_F(SwapchainTest, recreateWithOutstandingPresentationRaisesNoValidationError)
 {
     auto swapchain      = mDevice->createSwapchain(headlessSwapchainParameters());
     auto fencePool      = FencePool::create(mDevice);
     auto pool           = mDevice->createCommandBufferPool();
+    auto imageAvailable = mDevice->createSemaphore();
     auto renderFinished = mDevice->createSemaphore();
 
-    std::weak_ptr<Semaphore>               imageAvailable;
-    std::optional<Swapchain::Presentation> presentation;
+    std::weak_ptr<const AcquiredSwapchainImage> acquiredImage;
+    std::optional<Swapchain::Presentation>      presentation;
     {
-        auto acquire = swapchain->acquireNextImage(gAcquireTimeout);
+        auto acquire = swapchain->acquireNextImage(gAcquireTimeout, imageAvailable);
         ASSERT_EQ(acquire.status, Swapchain::AcquireStatus::eReady);
-        imageAvailable = acquire.acquired->imageAvailableSemaphore();
+        acquiredImage = acquire.acquired;
 
         auto recorder = pool->record();
         recorder.setImageBarrier(acquire.acquired, toPresentBarrier());
@@ -211,7 +228,7 @@ TEST_F(SwapchainTest, presentationKeepsRecreatedSwapchainUntilDropped)
         mDevice->getGraphicsQueue()->submit(
             *fencePool,
             std::array{
-                Queue::SemaphoreWait{.semaphore = acquire.acquired->imageAvailableSemaphore(),
+                Queue::SemaphoreWait{.semaphore = imageAvailable,
                                      .stage = vk::PipelineStageFlagBits2::eColorAttachmentOutput}},
             std::span{&executable, 1u},
             std::array{renderFinished});
@@ -219,15 +236,12 @@ TEST_F(SwapchainTest, presentationKeepsRecreatedSwapchainUntilDropped)
         presentation.emplace(std::move(
             swapchain->present(acquire.acquired, renderFinished, *fencePool).presentation));
     }
-    // The command buffer let go of the semaphore and of the acquired image.
+    // The command buffer let go of the acquired image.
     pool->reset();
-    EXPECT_FALSE(imageAvailable.expired());
+    EXPECT_TRUE(acquiredImage.expired());
 
     ASSERT_TRUE(swapchain->recreate(gExtent));
-    EXPECT_FALSE(imageAvailable.expired());
-
     presentation.reset();
-    EXPECT_TRUE(imageAvailable.expired());
 
     EXPECT_TRUE(mValidationErrors.empty())
         << (mValidationErrors.empty() ? "" : mValidationErrors.front());
@@ -239,7 +253,7 @@ TEST_F(SwapchainTest, recreateUsesTheRequestedExtentAndSkipsAZeroOne)
     auto swapchain = mDevice->createSwapchain(headlessSwapchainParameters());
     ASSERT_TRUE(swapchain->recreate({.width = 128u, .height = 128u}));
 
-    auto acquire = swapchain->acquireNextImage(gAcquireTimeout);
+    auto acquire = swapchain->acquireNextImage(gAcquireTimeout, mDevice->createSemaphore());
     ASSERT_EQ(acquire.status, Swapchain::AcquireStatus::eReady);
     EXPECT_EQ(acquire.acquired->getExtent2D().width, 128u);
     EXPECT_EQ(acquire.acquired->getExtent2D().height, 128u);
@@ -295,6 +309,52 @@ TEST_F(SwapchainTest, shutdownAfterFramesAndRecreateRaisesNoValidationError)
 }
 
 /**
+ * An image that comes back within one cycle of the frame slots hands the next acquire the
+ * semaphore that its previous frame's submit waited. That wait must have completed, as far as the
+ * host knows, before the semaphore goes to vkAcquireNextImageKHR again
+ * (VUID-vkAcquireNextImageKHR-semaphore-01779). With a slot more than there are images, some image
+ * repeats within every cycle, on any driver.
+ */
+TEST_F(SwapchainTest, acquireSemaphoreIsReusedOnlyAfterItsWaitCompleted)
+{
+    if (!validationActive())
+        GTEST_SKIP() << "VK_LAYER_KHRONOS_validation not available";
+
+    Rig rig = makeRig(true);
+    // Several cycles of the slots, so every slot is reused and an image repeats.
+    const std::size_t frameCount = 4u * (rig.swapchain->getImageCount() + 1u);
+    for (std::size_t frame = 0u; frame < frameCount; ++frame)
+    {
+        rig.renderFrame();
+    }
+
+    EXPECT_TRUE(mValidationErrors.empty())
+        << mValidationErrors.size() << " validation errors, the first: "
+        << (mValidationErrors.empty() ? "" : mValidationErrors.front());
+}
+
+/**
+ * A frame that is dropped (skipped or out-of-date acquire) prepares its slot and does not advance,
+ * so the next frame gets the same slot; each slot has its own acquire semaphore.
+ */
+TEST_F(SwapchainTest, prepareNextFrameAdvancesOnlyOnAdvance)
+{
+    Graphics::Frame::FrameObjectManager frames{mDevice, 3u, 1u};
+
+    const auto first = frames.prepareNextFrame();
+    EXPECT_EQ(frames.prepareNextFrame().get(), first.get());
+
+    frames.advance();
+    const auto second = frames.prepareNextFrame();
+    EXPECT_NE(second.get(), first.get());
+    EXPECT_NE(second->getAcquireSemaphore().get(), first->getAcquireSemaphore().get());
+
+    frames.advance();
+    frames.advance();
+    EXPECT_EQ(frames.prepareNextFrame().get(), first.get());
+}
+
+/**
  * The Swapchain keeps the device alive. The call under test is recreate(), which creates a new
  * swapchain from the old one.
  */
@@ -318,7 +378,7 @@ TEST_F(SwapchainTest, swapchainKeepsDeviceAlive)
 TEST_F(SwapchainTest, acquiredImageKeepsSwapchainAlive)
 {
     auto swapchain = mDevice->createSwapchain(headlessSwapchainParameters());
-    auto acquire   = swapchain->acquireNextImage(gAcquireTimeout);
+    auto acquire   = swapchain->acquireNextImage(gAcquireTimeout, mDevice->createSemaphore());
     ASSERT_TRUE(acquire.acquired);
     // The image is never presented. Its acquire signal still has to be consumed before the
     // semaphore may be destroyed.

@@ -46,7 +46,11 @@ static_assert(std::atomic<Extent>::is_always_lock_free);
 namespace
 {
 constexpr std::chrono::milliseconds gZeroExtentBackoff{16};
-/** Upper bound on one wait for a free image, and so on stop latency (plus one frame). */
+/**
+ * Upper bound on one wait for a free image. Stop latency is this plus one frame, plus the fence
+ * waits of FrameObjectManager::prepareNextFrame, which have no timeout: they assume that the GPU
+ * and the presentation engine make progress.
+ */
 constexpr std::chrono::milliseconds gAcquireTimeout{100};
 constexpr std::size_t               gThreadId   = 0u;
 constexpr std::array                gClearColor = {0.0f, 0.0f, 0.0f, 1.0f};
@@ -139,6 +143,7 @@ Renderer::frameSlotCount(std::uint8_t framesInFlight, std::size_t imageCount)
             imageCount);
     }
 
+    // More slots than images would only queue frames behind the images, and so add latency.
     return static_cast<std::uint8_t>(std::min<std::size_t>(framesInFlight, imageCount));
 }
 
@@ -400,7 +405,12 @@ Renderer::renderFrame(FramePacket packet)
     // Before acquiring: a vertex layout the shader cannot read throws while no image is acquired.
     resolvePipelines(packet.draws);
 
-    const auto acquireResult = mSwapchain->acquireNextImage(gAcquireTimeout);
+    // Before the acquire: the slot's fences show that its semaphores are free to signal again. The
+    // waits have no timeout, unlike the acquire.
+    const auto frame = mFrameObjectManager->prepareNextFrame();
+
+    const auto acquireResult =
+        mSwapchain->acquireNextImage(gAcquireTimeout, frame->getAcquireSemaphore());
     if (acquireResult.status == Swapchain::AcquireStatus::eOutOfDate)
     {
         if (!applyExtent(mRequestedExtent.load()))
@@ -422,10 +432,10 @@ Renderer::renderFrame(FramePacket packet)
     const Math::Matrix4x4f viewProjection =
         packet.draws.mCamera.viewProjection({.width = extent.width, .height = extent.height});
 
-    // Advance the frame slot only when we will actually submit — skip/out-of-date must not
-    // burn a fence-keyed release slot.
-    auto frame = mFrameObjectManager->acquireNextFrame();
-    auto pool  = frame->getCommandBufferPoolForThread(gThreadId);
+    // Advance the frame slot only when we will actually submit: skip/out-of-date must not burn a
+    // fence-keyed release slot. Its pools were reset in prepareNextFrame().
+    mFrameObjectManager->advance();
+    auto pool = frame->getCommandBufferPoolForThread(gThreadId);
 
     auto recorder = pool->record();
     recorder.bindDescriptorHeap(mHeap);
