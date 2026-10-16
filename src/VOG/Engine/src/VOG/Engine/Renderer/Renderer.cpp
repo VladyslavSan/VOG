@@ -38,6 +38,7 @@
 #include <stdexcept>
 #include <thread>
 #include <utility>
+#include <variant>
 
 namespace VOG::Engine
 {
@@ -93,6 +94,7 @@ Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& con
       })}
     , mVulkanDevice{mVulkanInstance->makeDevice()}
     , mGraphicsQueue{mVulkanDevice->getGraphicsQueue()}
+    , mTransferQueue{mVulkanDevice->getTransferQueue()}
     , mFencePool{Graphics::Vulkan::FencePool::create(mVulkanDevice)}
     , mShaderProgramCache{std::make_shared<Graphics::ShaderProgramCache>(mVulkanDevice,
                                                                          config.shaderSourcePath)}
@@ -106,6 +108,7 @@ Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& con
           mVulkanDevice, frameSlotCount(mFramesInFlight, mSwapchain->getImageCount()), 1u)}
     , mRequestedExtent{config.extent}
     , mAppliedExtent{config.extent}
+    , mUploadTimeline{mVulkanDevice->createTimelineSemaphore()}
     , mPipelineCache{std::make_unique<PipelineCache>(mVulkanDevice)}
     , mPackets{std::make_unique<FramePacketQueue>()}
 {
@@ -217,12 +220,15 @@ Renderer::createMesh(const MeshDescription& description)
     const std::size_t indexOffset =
         alignUp(description.vertices.size_bytes(), sizeof(std::uint32_t));
 
-    Graphics::Vulkan::BufferPtr buffer = mVulkanDevice->createBuffer(
-        {.size  = indexOffset + description.indices.size_bytes(),
-         .usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eIndexBuffer},
+    const std::size_t size = indexOffset + description.indices.size_bytes();
+
+    // The staging buffer takes the bytes on this thread; the render thread copies them into the
+    // device-local buffer, which only the GPU reads.
+    Graphics::Vulkan::BufferPtr staging = mVulkanDevice->createBuffer(
+        {.size = size, .usage = vk::BufferUsageFlagBits::eTransferSrc},
         {.flags = Graphics::Vulkan::AllocationFlag::eHostSequentialWrite});
     {
-        auto mapping = buffer->mapForWrite();
+        auto mapping = staging->mapForWrite();
         std::memcpy(mapping.data, description.vertices.data(), description.vertices.size_bytes());
         if (!description.indices.empty())
         {
@@ -230,6 +236,18 @@ Renderer::createMesh(const MeshDescription& description)
                         description.indices.data(),
                         description.indices.size_bytes());
         }
+    }
+
+    Graphics::Vulkan::BufferPtr buffer = mVulkanDevice->createBuffer(
+        {.size  = size,
+         .usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eIndexBuffer |
+                  vk::BufferUsageFlagBits::eTransferDst},
+        {});
+
+    // After the buffer exists, so that a frame which draws the mesh finds its upload.
+    {
+        const std::scoped_lock lock{mUploadMutex};
+        mPendingUploads.push_back({.staging = std::move(staging), .destination = buffer});
     }
 
     return std::make_shared<const Mesh>(
@@ -277,7 +295,7 @@ Renderer::createTexture(const TextureDescription& description)
     // After the texture exists, so that a frame which draws it finds its upload.
     {
         const std::scoped_lock lock{mUploadMutex};
-        mPendingUploads.push_back({.staging = std::move(staging), .texture = texture});
+        mPendingUploads.push_back({.staging = std::move(staging), .destination = texture});
     }
 
     return std::make_shared<const Texture>(Texture{.texture = std::move(texture)});
@@ -440,16 +458,38 @@ Renderer::renderFrame(FramePacket packet)
     auto recorder = pool->record();
     recorder.bindDescriptorHeap(mHeap);
 
-    // Every upload that exists now, including those of textures that earlier dropped frames did not
-    // record. They stay in the list until the submit below returns.
+    // Every upload that exists now, including those of resources that earlier dropped frames did
+    // not record. They stay in the list until the graphics submit below returns.
     std::vector<PendingUpload> uploads;
     {
         const std::scoped_lock lock{mUploadMutex};
         uploads.assign(mPendingUploads.begin(), mPendingUploads.end());
     }
-    for (const PendingUpload& upload : uploads)
+
+    // The copies go to the transfer queue; the graphics recorder takes the resources over before
+    // the pass (nothing to record when the two queues share a family).
+    const std::uint32_t graphicsFamily = mGraphicsQueue->familyIndex;
+    const std::uint32_t transferFamily = mTransferQueue->familyIndex;
+
+    std::optional<ExecutableCommandBuffer> transferCommands;
+    if (!uploads.empty())
     {
-        recorder.copyBufferToTexture(upload.staging, upload.texture);
+        auto transferRecorder = frame->getTransferCommandBufferPool()->record();
+        for (const PendingUpload& upload : uploads)
+        {
+            if (const auto* buffer = std::get_if<Graphics::Vulkan::BufferPtr>(&upload.destination))
+            {
+                transferRecorder.copyBuffer(upload.staging, *buffer, graphicsFamily);
+                recorder.acquire(*buffer, transferFamily);
+            }
+            else
+            {
+                const auto& texture = std::get<Graphics::Vulkan::TexturePtr>(upload.destination);
+                transferRecorder.copyBufferToTexture(upload.staging, texture, graphicsFamily);
+                recorder.acquire(texture, transferFamily);
+            }
+        }
+        transferCommands.emplace(transferRecorder.finish());
     }
 
     {
@@ -557,15 +597,40 @@ Renderer::renderFrame(FramePacket packet)
 
     auto executable = recorder.finish();
 
-    mGraphicsQueue->submit(*mFencePool,
-                           std::array{Queue::SemaphoreWait{
-                               .semaphore = acquired->imageAvailableSemaphore(),
-                               .stage     = vk::PipelineStageFlagBits2::eColorAttachmentOutput}},
-                           std::span{&executable, 1u},
-                           std::array{frame->getRenderFinishedSemaphore()});
+    // The transfer submit goes first. Its value is committed once the submit returned, so a
+    // submit that throws leaves the value and the pending uploads as they were. It waits for the
+    // previous value too: after a frame whose graphics submit threw, the uploads are recorded
+    // again while the first copy of them may still run.
+    if (transferCommands)
+    {
+        const std::uint64_t next = mUploadValue + 1u;
+        mTransferQueue->submit(
+            *mFencePool,
+            {},
+            std::span{&*transferCommands, 1u},
+            {},
+            std::array{Queue::TimelineWait{.semaphore = mUploadTimeline,
+                                           .value     = mUploadValue,
+                                           .stage     = vk::PipelineStageFlagBits2::eAllCommands}},
+            std::array{Queue::TimelineSignal{.semaphore = mUploadTimeline, .value = next}});
+        mUploadValue = next;
+    }
 
-    // Only now: the command buffer retains the uploads. Until the submit returns they stay
-    // pending, so a frame that fails before it records them again.
+    // Every graphics submit waits for the last upload, not only one that uploads: a draw of a
+    // resource that an earlier frame uploaded is ordered after that copy by this wait.
+    mGraphicsQueue->submit(
+        *mFencePool,
+        std::array{
+            Queue::SemaphoreWait{.semaphore = acquired->imageAvailableSemaphore(),
+                                 .stage     = vk::PipelineStageFlagBits2::eColorAttachmentOutput}},
+        std::span{&executable, 1u},
+        std::array{frame->getRenderFinishedSemaphore()},
+        std::array{Queue::TimelineWait{.semaphore = mUploadTimeline,
+                                       .value     = mUploadValue,
+                                       .stage     = vk::PipelineStageFlagBits2::eAllCommands}});
+
+    // Only now: the transfer command buffer retains the uploads. Until the graphics submit returns
+    // they stay pending, so a frame that fails before it records them again.
     {
         const std::scoped_lock lock{mUploadMutex};
         mPendingUploads.erase(mPendingUploads.begin(),

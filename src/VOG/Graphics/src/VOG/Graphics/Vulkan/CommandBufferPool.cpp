@@ -29,11 +29,10 @@ ExecutableCommandBuffer::~ExecutableCommandBuffer() noexcept
     }
 }
 
-CommandBufferPool::CommandBufferPool(const DevicePtr& device)
+CommandBufferPool::CommandBufferPool(const DevicePtr& device, std::uint32_t familyIndex)
     : mDevice{device}
-    , mVulkanPool{
-          mDevice->raii(),
-          vk::CommandPoolCreateInfo{.queueFamilyIndex = mDevice->queueInfos.graphics.familyIndex}}
+    , mFamilyIndex{familyIndex}
+    , mVulkanPool{mDevice->raii(), vk::CommandPoolCreateInfo{.queueFamilyIndex = mFamilyIndex}}
 {
 }
 

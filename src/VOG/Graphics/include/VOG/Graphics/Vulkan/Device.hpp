@@ -44,6 +44,27 @@ public:
 
     PhysicalDevice(InstancePtr instance, vk::raii::PhysicalDevice physicalDevice);
 
+    /**
+     * Whether the transfer queue is taken from a family of its own when the device has one.
+     * Off until an upload has run on a device with such a family (an NVIDIA or AMD GPU): the
+     * cross-family path of CommandBufferRecorder::copyBuffer() and copyBufferToTexture() is only
+     * checked by value (UploadBarriers.hpp), because no driver the tests run on has two families.
+     * Then the transfer queue is the graphics family's queue.
+     */
+    static constexpr bool kDedicatedTransferFamily = false;
+
+    /**
+     * Picks the queue families from @p families, indexed as
+     * vkGetPhysicalDeviceQueueFamilyProperties returns them. Graphics is the first family with the
+     * graphics bit. Transfer is that same family, or with @p dedicatedTransfer the first family
+     * that has the transfer bit and neither the graphics nor the compute bit (a DMA engine), if
+     * there is one. A compute family is never picked for transfer.
+     *
+     * @throws std::runtime_error if no family has the graphics bit.
+     */
+    static QueueInfos selectQueueFamilies(std::span<const vk::QueueFamilyProperties> families,
+                                          bool dedicatedTransfer);
+
     using vk::raii::PhysicalDevice::getMemoryProperties;
     using vk::raii::PhysicalDevice::getQueueFamilyProperties;
     using vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR;
@@ -113,13 +134,20 @@ public:
     createGraphicsPipeline(GraphicsPipeline::Parameters createInfo);
 
     /**
-     * Creates a command buffer pool for recording GPU commands.
+     * Creates a command buffer pool for recording GPU commands for the graphics queue.
      *
      * @note Each pool should be used from a single thread at a time.
      *
      * @return Command buffer pool.
      */
     std::shared_ptr<CommandBufferPool> createCommandBufferPool();
+
+    /**
+     * Like createCommandBufferPool(), for the queue family @p queueFamilyIndex, which must be the
+     * family of the graphics or of the transfer queue. Queue::submit takes only command buffers
+     * of its own family.
+     */
+    std::shared_ptr<CommandBufferPool> createCommandBufferPool(std::uint32_t queueFamilyIndex);
 
     /**
      * Creates a swapchain for presenting rendered frames to a window surface.
@@ -209,12 +237,12 @@ public:
     SemaphorePtr createSemaphore();
 
     /**
-     * Creates a timeline semaphore for ordered multi-stage GPU synchronization.
-     * The counter starts at zero and increments on each signal operation.
+     * Creates a timeline semaphore at value zero. Pass it to Queue::submit as a Queue::TimelineWait
+     * or Queue::TimelineSignal: the command buffers retain it until the GPU is done with it.
      *
      * @return Timeline semaphore.
      */
-    TimelineSemaphore createTimelineSemaphore();
+    TimelineSemaphorePtr createTimelineSemaphore();
 
     /**
      * Hands out the graphics queue. The returned pointer shares ownership of this Device, so the

@@ -67,6 +67,14 @@ public:
      */
     Vulkan::CommandBufferPoolPtr getCommandBufferPoolForThread(std::size_t threadId);
 
+    /**
+     * The pool of the slot for command buffers of the transfer queue's family. Reset together
+     * with the other pools when the slot starts again.
+     *
+     * @note Render thread only, like the other pools.
+     */
+    const Vulkan::CommandBufferPoolPtr& getTransferCommandBufferPool() const;
+
 protected:
     /**
      * Frame cleanups from previous usage like resetting the command buffers and command pools, and
@@ -96,6 +104,10 @@ protected:
 
     /** Per working thread command buffer pools */
     std::vector<Vulkan::CommandBufferPoolPtr> mCommandBufferPools;
+
+    /** Command buffers of the transfer queue's family; the graphics family when the device has no
+     *  family of its own for transfer. */
+    Vulkan::CommandBufferPoolPtr mTransferCommandBufferPool;
 
     /** The last presentation of this slot; it holds the swapchain the presentation uses. */
     std::optional<Vulkan::Swapchain::Presentation> mPresentation;

@@ -292,7 +292,7 @@ TEST_F(VulkanValidationFixture, DescriptorHeap_texturedDrawIsValidationClean)
     auto pool      = mDevice->createCommandBufferPool();
     auto recorder  = pool->record();
     recorder.bindDescriptorHeap(heap);
-    recorder.copyBufferToTexture(staging, texture);
+    recorder.copyBufferToTexture(staging, texture, mDevice->queueInfos.graphics.familyIndex);
     recorder.setImageBarrier(target, VulkanFixture::toColorAttachmentBarrier());
     {
         auto pass = recorder.beginRendering({{.attachment = target}});

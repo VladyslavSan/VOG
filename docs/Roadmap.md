@@ -170,11 +170,20 @@ step builds on the previous. Completed work is kept for context.
   whose last wait the host had not seen complete when an image came back within one cycle of the
   slots (`VUID-vkAcquireNextImageKHR-semaphore-01779`, 26 reports in 400 frames on lavapipe). See
   `SwapchainSync.md`.
+- **Engine API S6: device-local uploads through staging on the transfer queue**: `createMesh` stages
+  its bytes like `createTexture`, and the render thread copies both into device-local memory on a
+  command buffer of a per-slot transfer pool. The transfer submit signals a timeline semaphore
+  (`TimelineSemaphore` is now a retained `shared_ptr` without a counter; `Queue::submit` takes
+  `TimelineWait` / `TimelineSignal`), and every graphics submit waits for its last value. Graphics
+  gets `copyBuffer`, `acquire`, `createCommandBufferPool(familyIndex)`, `selectQueueFamilies` and
+  the pure `UploadBarriers`. Queue family ownership transfer code ships, but the transfer queue stays
+  the graphics family's queue (`PhysicalDevice::kDedicatedTransferFamily` is `false`) until an
+  upload has run on a GPU with a transfer-only family; the cross-family path is value-tested
+  only. Uniform blocks stay host-visible. See `ResourceOwnership.md`.
 
 ## Later milestones (in rough order)
 
-1. **Engine API (S6-S7)**: continues S5 (see Done).
-   - S6: device-local uploads through staging on the transfer queue.
+1. **Engine API (S7)**: continues S6 (see Done).
    - S7: parallel recording.
 2. **Render graph**: declared passes with reads/writes; derives barriers,
    layouts and transient attachment lifetimes. Deletes the hand-written

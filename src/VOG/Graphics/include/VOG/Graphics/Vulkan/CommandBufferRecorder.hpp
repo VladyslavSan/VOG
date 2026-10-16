@@ -155,13 +155,42 @@ public:
     void bindDescriptorHeap(DescriptorHeapPtr heap);
 
     /**
-     * Copies @p staging, tightly packed rows of the texture's format, into mip 0 of @p texture and
-     * leaves the texture ready for shaders to sample. Retains both. The texture is undefined
-     * before: this is its one initial upload, which overwrites it whole. Uploading again would race
-     * the draws that sample it, because the first barrier waits for nothing. Outside a rendering
-     * pass.
+     * Copies all of @p staging to offset 0 of @p destination, for the queue family @p usageFamily
+     * to read as vertices and indices. Retains both. The destination is undefined before: this is
+     * its one initial upload. @p destination needs the transfer-dst usage and at least the size of
+     * @p staging. Outside a rendering pass.
+     *
+     * With a @p usageFamily other than the family of this recorder's pool, the copy ends with the
+     * release half of a queue family ownership transfer, and the recorder of the usage family must
+     * acquire() the destination before it reads it (UploadBarriers.hpp).
      */
-    void copyBufferToTexture(const BufferPtr& staging, const TexturePtr& texture);
+    void
+    copyBuffer(const BufferPtr& staging, const BufferPtr& destination, std::uint32_t usageFamily);
+
+    /**
+     * Copies @p staging, tightly packed rows of the texture's format, into mip 0 of @p texture and
+     * leaves the texture ready for shaders of the queue family @p usageFamily to sample. Retains
+     * both. The texture is undefined before: this is its one initial upload, which overwrites it
+     * whole. Uploading again would race the draws that sample it, because the first barrier waits
+     * for nothing. Outside a rendering pass.
+     *
+     * Ownership transfer as for copyBuffer().
+     */
+    void copyBufferToTexture(const BufferPtr&  staging,
+                             const TexturePtr& texture,
+                             std::uint32_t     usageFamily);
+
+    /**
+     * The acquire half of the ownership transfer that copyBuffer() or copyBufferToTexture()
+     * released from the family @p uploadFamily: records it, and retains the resource. Records
+     * nothing when @p uploadFamily is the family of this recorder's pool, because the copy then
+     * made the resource ready itself. The submit of this command buffer must wait for the submit
+     * of the copy at the all-commands stage. Outside a rendering pass.
+     */
+    void acquire(const BufferPtr& buffer, std::uint32_t uploadFamily);
+
+    /** As for a buffer. */
+    void acquire(const TexturePtr& texture, std::uint32_t uploadFamily);
 
     /**
      * Image barrier that retains @p attachment until the command buffer's fence fires. Fills

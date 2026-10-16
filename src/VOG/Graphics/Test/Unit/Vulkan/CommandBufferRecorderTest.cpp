@@ -10,6 +10,7 @@
 #include <memory>
 #include <span>
 #include <type_traits>
+#include <vector>
 
 #include "VulkanFixture.hpp"
 #include "VulkanValidationFixture.hpp"
@@ -213,45 +214,74 @@ TEST_F(VulkanValidationFixture, CommandBufferRecorder_bindDescriptorHeapRetainsH
 }
 
 /**
- * The upload retains the staging buffer and the texture. Under the validation layer, so that the
- * two barriers and the copy are checked too.
+ * The upload commands retain what they reference: the staging buffers and the destinations of the
+ * copies, and the resources that acquire() takes over (which it retains even where the families
+ * are equal and it records no barrier). Under the validation layer, so that the barriers and the
+ * copies are checked too.
  */
-TEST_F(VulkanValidationFixture, CommandBufferRecorder_copyBufferToTextureRetainsBoth)
+TEST_F(VulkanValidationFixture, CommandBufferRecorder_uploadCommandsRetainTheirResources)
 {
-    auto                     heap    = createHeap();
-    std::shared_ptr<Buffer>  staging = createStaging(gBlockBytes);
+    const std::uint32_t family = mDevice->queueInfos.graphics.familyIndex;
+
+    auto                     heap          = createHeap();
+    std::shared_ptr<Buffer>  imageStaging  = createStaging(gBlockBytes);
+    std::shared_ptr<Buffer>  bufferStaging = createStaging(gBlockBytes);
     std::shared_ptr<Texture> texture =
         mDevice->createTexture(heap, {.width = 2u, .height = 2u}, vk::Format::eR8G8B8A8Srgb);
-    const std::weak_ptr<Buffer>  weakStaging = staging;
-    const std::weak_ptr<Texture> weakTexture = texture;
+    std::shared_ptr<Buffer> buffer = mDevice->createBuffer(
+        {.size = gBlockBytes.size(), .usage = vk::BufferUsageFlagBits::eTransferDst}, {});
+    std::shared_ptr<Texture> acquiredTexture =
+        mDevice->createTexture(heap, {.width = 2u, .height = 2u}, vk::Format::eR8G8B8A8Srgb);
+    std::shared_ptr<Buffer> acquiredBuffer = mDevice->createBuffer(
+        {.size = gBlockBytes.size(), .usage = vk::BufferUsageFlagBits::eVertexBuffer}, {});
+    const std::array<std::weak_ptr<const void>, 6> weakResources{
+        imageStaging, bufferStaging, texture, buffer, acquiredTexture, acquiredBuffer};
 
     auto fencePool = FencePool::create(mDevice);
     auto pool      = mDevice->createCommandBufferPool();
 
-    auto recorder = pool->record();
-    recorder.copyBufferToTexture(staging, texture);
-    auto executable = recorder.finish();
+    auto copier = pool->record();
+    copier.copyBufferToTexture(imageStaging, texture, family);
+    copier.copyBuffer(bufferStaging, buffer, family);
+    auto copying = copier.finish();
 
-    staging.reset();
+    auto acquirer = pool->record();
+    acquirer.acquire(acquiredTexture, family);
+    acquirer.acquire(acquiredBuffer, family);
+    auto acquiring = acquirer.finish();
+
+    imageStaging.reset();
+    bufferStaging.reset();
     texture.reset();
-    EXPECT_FALSE(weakStaging.expired());
-    EXPECT_FALSE(weakTexture.expired());
+    buffer.reset();
+    acquiredTexture.reset();
+    acquiredBuffer.reset();
+    const auto expectAlive = [&](bool alive)
+    {
+        for (std::size_t i = 0u; i < weakResources.size(); ++i)
+        {
+            EXPECT_EQ(!weakResources[i].expired(), alive)
+                << "resource " << i << " (in the order imageStaging, bufferStaging, texture, "
+                << "buffer, acquiredTexture, acquiredBuffer)";
+        }
+    };
+    expectAlive(true);
 
-    submitAlone(mDevice, *fencePool, executable);
-    EXPECT_FALSE(weakStaging.expired());
-    EXPECT_FALSE(weakTexture.expired());
+    submitAlone(mDevice, *fencePool, copying);
+    submitAlone(mDevice, *fencePool, acquiring);
+    expectAlive(true);
 
     pool->reset();
-    EXPECT_TRUE(weakStaging.expired());
-    EXPECT_TRUE(weakTexture.expired());
+    expectAlive(false);
     EXPECT_TRUE(mValidationErrors.empty())
         << (mValidationErrors.empty() ? "" : mValidationErrors.front());
 }
 
 /**
- * Queue::submit makes the command buffers retain the semaphores they wait and signal, so the
- * caller can drop them. A semaphore dies when the last command buffer that used it is reset: the
- * wait semaphore outlives the signalling command buffer, and the signal-only one dies with it.
+ * Queue::submit makes the command buffers retain the semaphores they wait and signal, binary and
+ * timeline, so the caller can drop them. A semaphore dies when the last command buffer that used it
+ * is reset: the wait semaphore outlives the signalling command buffer, and the signal-only one dies
+ * with it.
  */
 TEST_F(VulkanFixture, Queue_submitRetainsSemaphoresUntilPoolReset)
 {
@@ -260,33 +290,170 @@ TEST_F(VulkanFixture, Queue_submitRetainsSemaphoresUntilPoolReset)
     auto signaller = mDevice->createCommandBufferPool();
     auto waiter    = mDevice->createCommandBufferPool();
 
-    SemaphorePtr                   chained        = mDevice->createSemaphore();
-    SemaphorePtr                   signalOnly     = mDevice->createSemaphore();
-    const std::weak_ptr<Semaphore> weakChained    = chained;
-    const std::weak_ptr<Semaphore> weakSignalOnly = signalOnly;
+    SemaphorePtr                           chained          = mDevice->createSemaphore();
+    SemaphorePtr                           signalOnly       = mDevice->createSemaphore();
+    TimelineSemaphorePtr                   timeline         = mDevice->createTimelineSemaphore();
+    TimelineSemaphorePtr                   timelineOnly     = mDevice->createTimelineSemaphore();
+    const std::weak_ptr<Semaphore>         weakChained      = chained;
+    const std::weak_ptr<Semaphore>         weakSignalOnly   = signalOnly;
+    const std::weak_ptr<TimelineSemaphore> weakTimeline     = timeline;
+    const std::weak_ptr<TimelineSemaphore> weakTimelineOnly = timelineOnly;
 
     auto first = recordEmpty(signaller);
-    queue->submit(
-        *fencePool, {}, std::span{&first, 1u}, std::array<SemaphorePtr, 2>{chained, signalOnly});
+    queue->submit(*fencePool,
+                  {},
+                  std::span{&first, 1u},
+                  std::array<SemaphorePtr, 2>{chained, signalOnly},
+                  {},
+                  std::array{Queue::TimelineSignal{.semaphore = timeline, .value = 1u},
+                             Queue::TimelineSignal{.semaphore = timelineOnly, .value = 1u}});
 
     auto second = recordEmpty(waiter);
-    queue->submit(*fencePool,
-                  std::array{Queue::SemaphoreWait{
-                      .semaphore = chained, .stage = vk::PipelineStageFlagBits2::eAllCommands}},
-                  std::span{&second, 1u},
-                  {});
+    queue->submit(
+        *fencePool,
+        std::array{Queue::SemaphoreWait{.semaphore = chained,
+                                        .stage     = vk::PipelineStageFlagBits2::eAllCommands}},
+        std::span{&second, 1u},
+        {},
+        std::array{Queue::TimelineWait{.semaphore = timeline,
+                                       .value     = 1u,
+                                       .stage     = vk::PipelineStageFlagBits2::eAllCommands}});
 
     chained.reset();
     signalOnly.reset();
+    timeline.reset();
+    timelineOnly.reset();
     EXPECT_FALSE(weakChained.expired());
     EXPECT_FALSE(weakSignalOnly.expired());
+    EXPECT_FALSE(weakTimeline.expired());
+    EXPECT_FALSE(weakTimelineOnly.expired());
 
     signaller->reset();
     EXPECT_FALSE(weakChained.expired());
     EXPECT_TRUE(weakSignalOnly.expired());
+    EXPECT_FALSE(weakTimeline.expired());
+    EXPECT_TRUE(weakTimelineOnly.expired());
 
     waiter->reset();
     EXPECT_TRUE(weakChained.expired());
+    EXPECT_TRUE(weakTimeline.expired());
+}
+
+namespace
+{
+/**
+ * Copies @p staging into a device-local buffer on a pool of the transfer family, signalling the
+ * timeline at 1, then on the graphics queue reads it back into a host buffer and returns the
+ * bytes. The graphics submit waits for the timeline at 1 only if @p waitForUpload.
+ *
+ * The host buffer is read through mapForWrite(), which is meant for writing: that is legal on
+ * lavapipe, whose host memory is coherent, and no production code needs a readback.
+ */
+std::vector<std::byte>
+uploadAndReadBack(const DevicePtr& device, const BufferPtr& staging, bool waitForUpload)
+{
+    const std::uint32_t  graphicsFamily = device->queueInfos.graphics.familyIndex;
+    const std::uint32_t  transferFamily = device->queueInfos.transfer.familyIndex;
+    const vk::DeviceSize size           = staging->byteSize();
+
+    BufferPtr deviceLocal = device->createBuffer(
+        {.size  = size,
+         .usage = vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eTransferSrc},
+        {});
+    BufferPtr readBack =
+        device->createBuffer({.size = size, .usage = vk::BufferUsageFlagBits::eTransferDst},
+                             {.flags = AllocationFlag::eHostSequentialWrite});
+
+    auto fencePool    = FencePool::create(device);
+    auto transferPool = device->createCommandBufferPool(transferFamily);
+    auto graphicsPool = device->createCommandBufferPool(graphicsFamily);
+    auto timeline     = device->createTimelineSemaphore();
+
+    auto transferRecorder = transferPool->record();
+    transferRecorder.copyBuffer(staging, deviceLocal, graphicsFamily);
+    auto transferCommands = transferRecorder.finish();
+    device->getTransferQueue()->submit(
+        *fencePool,
+        {},
+        std::span{&transferCommands, 1u},
+        {},
+        {},
+        std::array{Queue::TimelineSignal{.semaphore = timeline, .value = 1u}});
+
+    auto graphicsRecorder = graphicsPool->record();
+    graphicsRecorder.acquire(deviceLocal, transferFamily);
+    graphicsRecorder.copyBuffer(deviceLocal, readBack, graphicsFamily);
+    graphicsRecorder.setBufferBarrier(readBack,
+                                      {.srcStageMask        = vk::PipelineStageFlagBits2::eCopy,
+                                       .srcAccessMask       = vk::AccessFlagBits2::eTransferWrite,
+                                       .dstStageMask        = vk::PipelineStageFlagBits2::eHost,
+                                       .dstAccessMask       = vk::AccessFlagBits2::eHostRead,
+                                       .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                       .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                       .offset              = 0u,
+                                       .size                = VK_WHOLE_SIZE});
+    auto             graphicsCommands = graphicsRecorder.finish();
+    const std::array waits{Queue::TimelineWait{
+        .semaphore = timeline, .value = 1u, .stage = vk::PipelineStageFlagBits2::eAllCommands}};
+    device->getGraphicsQueue()->submit(*fencePool,
+                                       {},
+                                       std::span{&graphicsCommands, 1u},
+                                       {},
+                                       waitForUpload ? std::span{waits}
+                                                     : std::span<const Queue::TimelineWait>{});
+
+    // Resetting the pools waits for their fences.
+    transferPool->reset();
+    graphicsPool->reset();
+
+    const auto mapping = readBack->mapForWrite();
+    return {mapping.data, mapping.data + size};
+}
+
+std::vector<std::byte>
+sequenceBytes(std::size_t count)
+{
+    std::vector<std::byte> bytes(count);
+    for (std::size_t i = 0u; i < count; ++i)
+    {
+        bytes[i] = static_cast<std::byte>(i + 1u);
+    }
+    return bytes;
+}
+} // namespace
+
+/**
+ * An upload on the transfer queue, read back on the graphics queue behind the timeline wait, is
+ * ordered and complete: the synchronization validation reports no hazard and the bytes arrive.
+ *
+ * On lavapipe the transfer and the graphics queue are one VkQueue of one family, so this checks the
+ * value wiring of the timeline (a signal or wait with the value dropped is a validation error or a
+ * hazard) and that a pool of the transfer family submits on the transfer queue. It cannot check
+ * the release and acquire barriers of two families, or a pool of the wrong family: there is only
+ * one. The negative control below shows that the hazard check can see a missing wait.
+ */
+TEST_F(VulkanSyncValidationFixture, Queue_timelineWaitOrdersTransferCopyBeforeGraphicsRead)
+{
+    const auto bytes   = sequenceBytes(gBufferSize);
+    const auto staging = createStaging(bytes);
+
+    EXPECT_EQ(uploadAndReadBack(mDevice, staging, true), bytes);
+    EXPECT_TRUE(mValidationErrors.empty())
+        << (mValidationErrors.empty() ? "" : mValidationErrors.front());
+}
+
+/**
+ * Negative control of the test above: the same work without the wait must be reported as a
+ * READ_AFTER_WRITE hazard. If the layer stayed silent, the silence above would mean nothing.
+ */
+TEST_F(VulkanSyncValidationFixture, Queue_missingTimelineWaitIsReportedBySyncval)
+{
+    const auto staging = createStaging(sequenceBytes(gBufferSize));
+
+    (void)uploadAndReadBack(mDevice, staging, false);
+    ASSERT_FALSE(mValidationErrors.empty()) << "synchronization validation reported nothing";
+    EXPECT_NE(mValidationErrors.front().find("READ_AFTER_WRITE hazard"), std::string::npos)
+        << mValidationErrors.front();
 }
 
 /**

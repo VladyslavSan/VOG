@@ -61,7 +61,8 @@ struct RendererTestAccess
         return *renderer.mPackets;
     }
 
-    /** Uploads that createTexture() queued and no submitted frame has recorded yet. */
+    /** Uploads that createMesh() and createTexture() queued and no submitted frame has recorded
+     *  yet. */
     static std::size_t
     pendingUploadCount(Renderer& renderer)
     {
@@ -732,6 +733,8 @@ TEST_F(RendererTest, createMeshRejectsMalformedIndices)
  * MoltenVK only draws strides that are a multiple of 4, and no test draws an unaligned stride, so
  * this test is the padding's only coverage.
  */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST_F(RendererTest, createMeshAlignsIndicesAfterVertices)
 {
     constexpr std::size_t kStride = 10u;
@@ -752,7 +755,15 @@ TEST_F(RendererTest, createMeshAlignsIndicesAfterVertices)
     ASSERT_TRUE(mesh);
     EXPECT_EQ(mesh->indexOffset, 32u);
 
-    const auto mapping = mesh->buffer->mapForWrite();
+    // The bytes wait in the staging buffer, which the render thread copies into the device-local
+    // buffer of the mesh. Reading it back through mapForWrite() is meant for writing; it is legal
+    // on lavapipe, whose host memory is coherent.
+    ASSERT_EQ(RendererTestAccess::pendingUploadCount(*renderer), 1u);
+    const auto staging = RendererTestAccess::pendingStaging(*renderer, 0u).lock();
+    ASSERT_TRUE(staging);
+    EXPECT_EQ(staging->byteSize(), mesh->indexOffset + sizeof(indices));
+    EXPECT_EQ(mesh->buffer->byteSize(), staging->byteSize());
+    const auto mapping = staging->mapForWrite();
     ASSERT_GE(mapping.size, mesh->indexOffset + sizeof(indices));
     EXPECT_EQ(std::memcmp(mapping.data, vertices.data(), vertices.size()), 0);
     EXPECT_EQ(std::memcmp(mapping.data + mesh->indexOffset, indices, sizeof(indices)), 0);
@@ -857,38 +868,49 @@ TEST_F(RendererTest, createTextureRejectsMalformedDescription)
 /**
  * A frame in flight keeps the mesh's buffer alive after the renderer let go of the mesh: the frame
  * that drew it is rendered and gone, but its slot is not reused yet. Once the slot is reused,
- * nothing holds the buffer.
+ * nothing holds the buffer. The upload went in frames before, and is released by then (the
+ * staging buffer has expired), so only the draw's recording holds the buffer: the copy and the
+ * acquire of the upload frame would otherwise hide a missing retention of the draw.
  *
  * A popped packet is rendered unless the acquire skips it; on a headless surface only an acquire
  * timeout does, and the first frames find a free image. Submitting N+1 returns only once N has been
- * popped. The test submits no third frame, and reusing the slot of N takes one (the renderer has
- * two frame slots).
+ * popped. The test submits no third frame after the draw, and reusing the slot of the draw takes
+ * one (the renderer has two frame slots).
  *
  * It proves that Engine records the buffer through the retaining path and the renderer holds
  * nothing on top. GPU safety rests on the Graphics retention tests; validation errors do not fail
  * a test here.
  */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST_F(RendererTest, meshBufferOutlivesMeshWhileFrameInFlight)
 {
     auto renderer = makeRenderer();
 
-    std::weak_ptr<const Mesh>               weakMesh;
-    std::weak_ptr<Graphics::Vulkan::Buffer> weakBuffer;
-    {
-        MeshPtr mesh = makeMesh(*renderer, compatibleLayout());
-        weakMesh     = mesh;
-        weakBuffer   = mesh->buffer;
-        renderer->addRenderable(std::make_shared<LambdaRenderable>(
-            [mesh = std::move(mesh), material = renderer->createMaterial({.shader = "WorldSpace"})](
-                const FrameContext& /*context*/, RenderQueue& queue) mutable
-            {
-                // The first frame draws the mesh and lets go of it; later frames draw nothing.
-                queue.submit(mesh, material, Math::Matrix4x4f{1.0f});
-                mesh.reset();
-            }));
-    }
+    MeshPtr mesh        = makeMesh(*renderer, compatibleLayout());
+    auto    weakMesh    = std::weak_ptr<const Mesh>{mesh};
+    auto    weakBuffer  = std::weak_ptr<Graphics::Vulkan::Buffer>{mesh->buffer};
+    auto    weakStaging = RendererTestAccess::pendingStaging(*renderer, 0u);
 
+    // Upload first, and wait for the frame that recorded it to be gone: its staging buffer is
+    // released with it, and so is every hold of the upload on the buffer.
     renderer->start();
+    EXPECT_TRUE(becomesTrue(
+        [&]
+        {
+            renderer->submitFrame({});
+            return weakStaging.expired();
+        }));
+
+    renderer->addRenderable(std::make_shared<LambdaRenderable>(
+        [mesh = std::move(mesh), material = renderer->createMaterial({.shader = "WorldSpace"})](
+            const FrameContext& /*context*/, RenderQueue& queue) mutable
+        {
+            // The first frame draws the mesh and lets go of it; later frames draw nothing.
+            queue.submit(mesh, material, Math::Matrix4x4f{1.0f});
+            mesh.reset();
+        }));
+    mesh.reset();
     renderer->submitFrame({});
     renderer->submitFrame({});
     EXPECT_FALSE(renderer->stop());
@@ -896,15 +918,15 @@ TEST_F(RendererTest, meshBufferOutlivesMeshWhileFrameInFlight)
     EXPECT_TRUE(weakMesh.expired());
     EXPECT_FALSE(weakBuffer.expired());
 
-    // Frames that draw nothing cycle through the slots until the first frame's slot is reused; the
+    // Frames that draw nothing cycle through the slots until the draw's slot is reused; the
     // deadline keeps a leak from hanging the test.
     renderer->start();
-    const auto deadline = std::chrono::steady_clock::now() + gDeadline;
-    while (!weakBuffer.expired() && std::chrono::steady_clock::now() < deadline)
-    {
-        renderer->submitFrame({});
-    }
-    EXPECT_TRUE(weakBuffer.expired());
+    EXPECT_TRUE(becomesTrue(
+        [&]
+        {
+            renderer->submitFrame({});
+            return weakBuffer.expired();
+        }));
     EXPECT_FALSE(renderer->stop());
 }
 
@@ -1006,16 +1028,17 @@ TEST_F(RendererTest, parameterBlockOutlivesMaterialWhileFrameInFlight)
 }
 
 /**
- * A frame that is dropped does not consume the uploads: a zero-sized window ends each frame
- * before it records anything, and the upload is still pending. Once the window has a size again,
- * the next frame records it and the list drains.
+ * A frame that is dropped does not consume the uploads, of a texture and of a mesh: a zero-sized
+ * window ends each frame before it records anything, and the uploads are still pending. Once the
+ * window has a size again, the next frame records them and the list drains.
  */
 // The score comes from the gtest assertion macros.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-TEST_F(RendererTest, textureUploadSurvivesDroppedFrame)
+TEST_F(RendererTest, uploadsSurviveDroppedFrame)
 {
     auto renderer = makeRenderer();
     auto texture  = makeTexture(*renderer);
+    auto mesh     = makeMesh(*renderer, compatibleLayout());
 
     renderer->resize({});
     renderer->start();
@@ -1023,7 +1046,7 @@ TEST_F(RendererTest, textureUploadSurvivesDroppedFrame)
     renderer->submitFrame({});
     renderer->submitFrame({});
     EXPECT_FALSE(renderer->stop());
-    EXPECT_EQ(RendererTestAccess::pendingUploadCount(*renderer), 1u);
+    EXPECT_EQ(RendererTestAccess::pendingUploadCount(*renderer), 2u);
 
     renderer->resize(gStartExtent);
     renderer->start();
@@ -1037,15 +1060,21 @@ TEST_F(RendererTest, textureUploadSurvivesDroppedFrame)
 }
 
 /**
- * The staging buffer lives in the pending list until the frame that recorded the upload has been
- * submitted, then in that frame's command buffer, and is gone once the frame's slot is reused.
+ * The staging buffer of a texture and of a mesh lives in the pending list until the frame that
+ * recorded the upload has been submitted, then in that frame's transfer command buffer, and is gone
+ * once the frame's slot is reused.
  */
-TEST_F(RendererTest, textureUploadIsRecordedAndStagingReleased)
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, uploadsAreRecordedAndStagingReleased)
 {
-    auto renderer = makeRenderer();
-    auto texture  = makeTexture(*renderer);
-    auto staging  = RendererTestAccess::pendingStaging(*renderer, 0u);
-    EXPECT_FALSE(staging.expired());
+    auto renderer       = makeRenderer();
+    auto texture        = makeTexture(*renderer);
+    auto mesh           = makeMesh(*renderer, compatibleLayout());
+    auto textureStaging = RendererTestAccess::pendingStaging(*renderer, 0u);
+    auto meshStaging    = RendererTestAccess::pendingStaging(*renderer, 1u);
+    EXPECT_FALSE(textureStaging.expired());
+    EXPECT_FALSE(meshStaging.expired());
 
     // Stops at the first frame after which the list is empty, before the frame slot of the upload
     // can be reused.
@@ -1056,20 +1085,21 @@ TEST_F(RendererTest, textureUploadIsRecordedAndStagingReleased)
             renderer->submitFrame({});
             return RendererTestAccess::pendingUploadCount(*renderer) == 0u;
         }));
-    EXPECT_FALSE(staging.expired());
+    EXPECT_FALSE(textureStaging.expired());
+    EXPECT_FALSE(meshStaging.expired());
 
     EXPECT_TRUE(becomesTrue(
         [&]
         {
             renderer->submitFrame({});
-            return staging.expired();
+            return textureStaging.expired() && meshStaging.expired();
         }));
     EXPECT_FALSE(renderer->stop());
 }
 
 /**
  * A render thread that fails in resolvePipelines, before it records anything, leaves the uploads
- * pending, and they are recorded after stop() and start().
+ * (a texture and two meshes) pending, and they are recorded after stop() and start().
  */
 // The score comes from the gtest assertion macros.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -1095,7 +1125,7 @@ TEST_F(RendererTest, pendingUploadsSurviveRenderThreadFailureAndRestart)
         {
             return renderer->getState() == Renderer::State::eFailed;
         }));
-    EXPECT_EQ(RendererTestAccess::pendingUploadCount(*renderer), 1u);
+    EXPECT_EQ(RendererTestAccess::pendingUploadCount(*renderer), 3u);
 
     ASSERT_TRUE(renderer->stop());
     renderer->start();

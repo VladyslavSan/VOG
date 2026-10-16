@@ -1,5 +1,6 @@
 #include "VOG/Graphics/Vulkan/Device.hpp"
 
+#include <VOG/Common/Assert.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/RenderBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
@@ -22,57 +23,6 @@ namespace VOG::Graphics::Vulkan
 namespace
 {
 const char* gPortabilityExtensionName = "VK_KHR_portability_subset";
-
-PhysicalDevice::QueueInfos
-findGraphicsTransferQueues(const vk::raii::PhysicalDevice& device)
-{
-    constexpr vk::QueueFlags kGraphicsFamily = vk::QueueFlagBits::eGraphics;
-    constexpr vk::QueueFlags kTransferOrComputeFamily =
-        vk::QueueFlagBits::eTransfer | vk::QueueFlagBits::eCompute;
-
-    auto queueFamilies = device.getQueueFamilyProperties();
-    for (std::uint32_t i = 0; i < queueFamilies.size(); ++i)
-    {
-        const auto& queue = queueFamilies[i];
-        if ((queue.queueFlags & kGraphicsFamily) && (queue.queueFlags & kTransferOrComputeFamily))
-        {
-            return {.graphics = {i, queue}, .transfer = {i, queue}};
-        }
-    }
-
-    std::uint32_t graphicsIndex = std::numeric_limits<std::uint32_t>::max();
-    std::uint32_t transferIndex = std::numeric_limits<std::uint32_t>::max();
-    for (std::uint32_t i = 0; i < queueFamilies.size(); ++i)
-    {
-        const auto& queue = queueFamilies[i];
-        if (graphicsIndex == std::numeric_limits<std::uint32_t>::max() &&
-            (queue.queueFlags & kGraphicsFamily))
-        {
-            graphicsIndex = i;
-        }
-
-        if (transferIndex == std::numeric_limits<std::uint32_t>::max() &&
-            (queue.queueFlags & kTransferOrComputeFamily))
-        {
-            transferIndex = i;
-        }
-
-        if (graphicsIndex != std::numeric_limits<std::uint32_t>::max() &&
-            transferIndex != std::numeric_limits<std::uint32_t>::max())
-        {
-            break;
-        }
-    }
-
-    if (graphicsIndex == std::numeric_limits<std::uint32_t>::max() ||
-        transferIndex == std::numeric_limits<std::uint32_t>::max())
-    {
-        throw std::runtime_error{"Could not find the Graphics and transfer queues"};
-    }
-
-    return {.graphics = {graphicsIndex, queueFamilies[graphicsIndex]},
-            .transfer = {transferIndex, queueFamilies[transferIndex]}};
-}
 
 /**
  * Descriptor heaps are only usable if the dispatcher resolved their entry points. A device that
@@ -153,8 +103,52 @@ makeDevice(const vk::raii::PhysicalDevice& physicalDevice, const PhysicalDevice:
 PhysicalDevice::PhysicalDevice(InstancePtr _instance, vk::raii::PhysicalDevice physicalDevice)
     : vk::raii::PhysicalDevice{std::move(physicalDevice)}
     , instance{std::move(_instance)}
-    , queueInfos{findGraphicsTransferQueues(*this)}
+    , queueInfos{selectQueueFamilies(getQueueFamilyProperties(), kDedicatedTransferFamily)}
 {
+}
+
+PhysicalDevice::QueueInfos
+PhysicalDevice::selectQueueFamilies(std::span<const vk::QueueFamilyProperties> families,
+                                    bool                                       dedicatedTransfer)
+{
+    const auto info = [&families](std::ptrdiff_t index)
+    {
+        return QueueFamilyInfo{.familyIndex      = static_cast<std::uint32_t>(index),
+                               .familyProperties = families[static_cast<std::size_t>(index)]};
+    };
+
+    // Every graphics family also supports transfer operations, whether or not it reports the bit.
+    const auto graphics = std::ranges::find_if(
+        families,
+        [](const vk::QueueFamilyProperties& family)
+        {
+            return static_cast<bool>(family.queueFlags & vk::QueueFlagBits::eGraphics);
+        });
+    if (graphics == families.end())
+    {
+        throw std::runtime_error{"Could not find a graphics queue family"};
+    }
+
+    QueueInfos infos{.graphics = info(graphics - families.begin()),
+                     .transfer = info(graphics - families.begin())};
+    if (dedicatedTransfer)
+    {
+        // A DMA engine: transfer, and neither graphics nor compute. A compute family is skipped.
+        const auto dma =
+            std::ranges::find_if(families,
+                                 [](const vk::QueueFamilyProperties& family)
+                                 {
+                                     return (family.queueFlags & vk::QueueFlagBits::eTransfer) &&
+                                            !(family.queueFlags & (vk::QueueFlagBits::eGraphics |
+                                                                   vk::QueueFlagBits::eCompute));
+                                 });
+        if (dma != families.end())
+        {
+            infos.transfer = info(dma - families.begin());
+        }
+    }
+
+    return infos;
 }
 
 const vk::raii::PhysicalDevice&
@@ -193,10 +187,10 @@ Device::createSemaphore()
     return SemaphorePtr{new Semaphore{shared_from_this()}};
 }
 
-TimelineSemaphore
+TimelineSemaphorePtr
 Device::createTimelineSemaphore()
 {
-    return TimelineSemaphore{shared_from_this()};
+    return TimelineSemaphorePtr{new TimelineSemaphore{shared_from_this()}};
 }
 
 std::shared_ptr<const Queue>
@@ -214,7 +208,20 @@ Device::getTransferQueue()
 std::shared_ptr<CommandBufferPool>
 Device::createCommandBufferPool()
 {
-    return std::shared_ptr<CommandBufferPool>(new CommandBufferPool{shared_from_this()});
+    return createCommandBufferPool(queueInfos.graphics.familyIndex);
+}
+
+std::shared_ptr<CommandBufferPool>
+Device::createCommandBufferPool(std::uint32_t queueFamilyIndex)
+{
+    // The device made queues for these two families only; a pool of another family has no queue to
+    // submit to.
+    VOG_ASSERT_MSG(queueFamilyIndex == queueInfos.graphics.familyIndex ||
+                       queueFamilyIndex == queueInfos.transfer.familyIndex,
+                   "A command buffer pool needs the family of the graphics or the transfer queue.");
+
+    return std::shared_ptr<CommandBufferPool>(
+        new CommandBufferPool{shared_from_this(), queueFamilyIndex});
 }
 
 std::unique_ptr<GraphicsPipeline>

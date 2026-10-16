@@ -66,7 +66,7 @@ class CommandBufferPool : public std::enable_shared_from_this<CommandBufferPool>
     friend class Device;
     friend class Queue;
 
-    explicit CommandBufferPool(const DevicePtr& device);
+    CommandBufferPool(const DevicePtr& device, std::uint32_t familyIndex);
 
     struct Submitted
     {
@@ -118,6 +118,9 @@ private:
     void grow();
 
     DevicePtr mDevice;
+
+    /** Queue family of the pool; only a queue of that family submits its command buffers. */
+    const std::uint32_t mFamilyIndex;
 
     /** Declared before the buffers: members are destroyed in reverse, so the buffers are freed
      *  while the Vulkan pool still exists. */

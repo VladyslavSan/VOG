@@ -169,7 +169,7 @@ MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
     vk::raii::Buffer owningBuffer{mDevice.raii(), buffer};
 
     return std::unique_ptr<Buffer>(
-        new Buffer{std::move(owningAllocation), std::move(owningBuffer)});
+        new Buffer{std::move(owningAllocation), std::move(owningBuffer), createInfo.size});
 }
 
 std::unique_ptr<Texture>

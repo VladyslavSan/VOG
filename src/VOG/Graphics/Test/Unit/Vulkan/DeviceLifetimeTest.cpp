@@ -276,9 +276,8 @@ TEST_F(DeviceLifetime, semaphoreKeepsDeviceAlive)
 
 TEST_F(DeviceLifetime, timelineSemaphoreKeepsDeviceAlive)
 {
-    auto semaphore =
-        std::make_unique<Graphics::Vulkan::TimelineSemaphore>(mDevice->createTimelineSemaphore());
-    const auto released = releaseDevice();
+    auto       semaphore = mDevice->createTimelineSemaphore();
+    const auto released  = releaseDevice();
 
     expectDependentHoldsDevice(released,
                                semaphore,
@@ -290,11 +289,9 @@ TEST_F(DeviceLifetime, timelineSemaphoreKeepsDeviceAlive)
 
 /**
  * The queue is owned by the device; the handle it hands out shares ownership of the device. The
- * transfer queue is kept for future uploads, and no Vulkan call can reach it yet because there is
- * no transfer-family command buffer pool. The test checks ownership only; no Vulkan call is
- * involved: the graphics handle goes first, so the transfer handle alone must keep the device
- * alive. A real submit through the graphics handle is covered by
- * submittedCommandBufferKeepsDeviceAlive.
+ * test checks ownership only; no Vulkan call is involved: the graphics handle goes first, so the
+ * transfer handle alone must keep the device alive. A real submit through the graphics handle is
+ * covered by submittedCommandBufferKeepsDeviceAlive.
  */
 TEST_F(DeviceLifetime, queueKeepsDeviceAlive)
 {

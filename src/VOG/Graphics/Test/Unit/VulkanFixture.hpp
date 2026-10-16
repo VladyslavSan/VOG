@@ -14,6 +14,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdlib>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -47,6 +49,12 @@ public:
         /** Enable VK_EXT_headless_surface so tests can build a Swapchain without a window. Falls
          *  back to off when the instance does not offer it; check headlessSurfaceActive(). */
         bool headlessSurface = false;
+
+        /** Turn on the synchronization validation of the layer, which reports a missing
+         *  dependency between two accesses (core validation cannot see one). Needs validation. The
+         *  setting reaches the layer through an environment variable that only the layer's
+         *  version may know, so a negative control must show that it works. */
+        bool syncValidation = false;
     };
 
     VulkanFixture()
@@ -87,13 +95,15 @@ protected:
         : mValidationActive{options.validation && validationInstalled()}
         , mHeadlessSurfaceActive{options.headlessSurface &&
                                  instanceExtensionInstalled(kHeadlessSurfaceExtension)}
-        , mInstance{Graphics::Vulkan::Instance::create({
-              .appName    = "VOG Test",
-              .engineName = "Test",
-              .layers     = mValidationActive ? std::vector<std::string>{kValidationLayer}
-                                              : std::vector<std::string>{},
-              .extensions = enabledExtensions(),
-          })}
+        , mInstance{createInstance(options.syncValidation && mValidationActive,
+                                   {
+                                       .appName    = "VOG Test",
+                                       .engineName = "Test",
+                                       .layers     = mValidationActive
+                                                       ? std::vector<std::string>{kValidationLayer}
+                                                       : std::vector<std::string>{},
+                                       .extensions = enabledExtensions(),
+                                   })}
         , mMessenger{mValidationActive ? makeMessenger()
                                        : vk::raii::DebugUtilsMessengerEXT{nullptr}}
         , mDevice{mInstance->makeDevice()}
@@ -222,6 +232,66 @@ private:
     static constexpr const char* kValidationLayer          = "VK_LAYER_KHRONOS_validation";
     static constexpr const char* kDebugUtilsExtension      = "VK_EXT_debug_utils";
     static constexpr const char* kHeadlessSurfaceExtension = "VK_EXT_headless_surface";
+    static constexpr const char* kSyncValidationVariable   = "VK_KHRONOS_VALIDATION_VALIDATE_SYNC";
+
+    /**
+     * The layer reads its settings in vkCreateInstance. The environment is process-wide, so the
+     * variable is set for that call only and then restored to what it was: a test binary that runs
+     * later fixtures does not inherit the setting.
+     */
+    static Graphics::Vulkan::InstancePtr
+    createInstance(bool                                                  syncValidation,
+                   const Graphics::Vulkan::Instance::InstanceParameters& parameters)
+    {
+        struct Setting
+        {
+            explicit Setting(bool active)
+                : mActive{active}
+            {
+                if (mActive)
+                {
+                    if (const char* previous = std::getenv(kSyncValidationVariable))
+                    {
+                        mPrevious = previous;
+                    }
+                    set("true");
+                }
+            }
+
+            ~Setting()
+            {
+                if (mActive)
+                {
+                    set(mPrevious ? mPrevious->c_str() : nullptr);
+                }
+            }
+
+            Setting(const Setting&)            = delete;
+            Setting& operator=(const Setting&) = delete;
+
+            static void
+            set(const char* value)
+            {
+#ifdef _WIN32
+                _putenv_s(kSyncValidationVariable, value != nullptr ? value : "");
+#else
+                if (value != nullptr)
+                {
+                    setenv(kSyncValidationVariable, value, 1);
+                }
+                else
+                {
+                    unsetenv(kSyncValidationVariable);
+                }
+#endif
+            }
+
+            bool                       mActive;
+            std::optional<std::string> mPrevious;
+        } const setting{syncValidation};
+
+        return Graphics::Vulkan::Instance::create(parameters);
+    }
 
     static bool
     instanceExtensionInstalled(std::string_view name)

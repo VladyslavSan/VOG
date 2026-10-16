@@ -8,9 +8,12 @@
 
 namespace VOG::Graphics::Vulkan
 {
-Buffer::Buffer(MemoryAllocator::Allocation allocation, vk::raii::Buffer buffer)
+Buffer::Buffer(MemoryAllocator::Allocation allocation,
+               vk::raii::Buffer            buffer,
+               vk::DeviceSize              byteSize)
     : MemoryAllocator::Allocation{std::move(allocation)}
     , vk::raii::Buffer{std::move(buffer)}
+    , mByteSize{byteSize}
 {
 }
 

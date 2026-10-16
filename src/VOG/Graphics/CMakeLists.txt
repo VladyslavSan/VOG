@@ -60,6 +60,7 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Vulkan/Texture.hpp
             include/VOG/Graphics/Vulkan/TimelineSemaphore.hpp
             include/VOG/Graphics/Vulkan/UniformBlock.hpp
+            include/VOG/Graphics/Vulkan/UploadBarriers.hpp
             include/VOG/Graphics/ShaderProgramCache.hpp
             include/VOG/Graphics/Typedefs.hpp
 
@@ -97,6 +98,7 @@ target_sources(VOG.Graphics
         src/VOG/Graphics/Vulkan/Texture.cpp
         src/VOG/Graphics/Vulkan/TimelineSemaphore.cpp
         src/VOG/Graphics/Vulkan/UniformBlock.cpp
+        src/VOG/Graphics/Vulkan/UploadBarriers.cpp
         src/VOG/Graphics/Vulkan/VmaConfig.hpp
         src/VOG/Graphics/ShaderProgramCache.cpp
 )

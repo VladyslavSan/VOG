@@ -17,6 +17,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <variant>
 #include <vector>
 
 namespace VOG::Graphics
@@ -40,6 +41,7 @@ class GraphicsPipeline;
 class Queue;
 class Swapchain;
 class Texture;
+class TimelineSemaphore;
 } // namespace VOG::Graphics::Vulkan
 
 namespace VOG::Engine
@@ -108,8 +110,11 @@ public:
     void addRenderable(std::shared_ptr<Renderable> renderable);
 
     /**
-     * Uploads the vertices of @p description. Any thread: the allocator is internally
-     * synchronized.
+     * Copies the vertices and indices of @p description into staging memory. The render thread
+     * copies them into the device-local memory of the mesh on the transfer queue, in the first
+     * frame it renders after this call, and a draw of the mesh in that frame waits for the copy on
+     * the GPU. The upload stays pending through frames that are dropped or fail. Any thread: the
+     * allocator is internally synchronized.
      * @throws std::invalid_argument if the description is empty, its size is not a multiple of the
      *         stride, an attribute overruns the stride, or it has more attributes than a pipeline
      *         can take.
@@ -118,9 +123,9 @@ public:
 
     /**
      * Copies the pixels of @p description. Any thread: the allocator is internally synchronized.
-     * The image is uploaded by the render thread, in the first frame it renders after this call,
-     * and a draw of the texture in that frame is recorded after the upload. The upload stays
-     * pending through frames that are dropped or fail.
+     * The image is uploaded by the render thread on the transfer queue, in the first frame it
+     * renders after this call, and a draw of the texture in that frame waits on the GPU for the
+     * upload's timeline signal. The upload stays pending through frames that are dropped or fail.
      * @throws std::invalid_argument if the extent is zero, or the pixels are not exactly
      *         width * height * 4 bytes.
      * @throws std::runtime_error if the renderer's descriptor heap is full or the image cannot be
@@ -202,11 +207,14 @@ private:
     /** Render thread. One frame; an exception ends the thread. */
     void renderFrame(FramePacket packet);
 
-    /** A texture's pixels, waiting for the render thread to copy them into the image. */
+    /** The bytes of a mesh or of a texture, waiting for the render thread to copy them from
+     *  staging into the device-local buffer or image. */
     struct PendingUpload
     {
-        std::shared_ptr<Graphics::Vulkan::Buffer>  staging;
-        std::shared_ptr<Graphics::Vulkan::Texture> texture;
+        std::shared_ptr<Graphics::Vulkan::Buffer> staging;
+        std::variant<std::shared_ptr<Graphics::Vulkan::Buffer>,
+                     std::shared_ptr<Graphics::Vulkan::Texture>>
+            destination;
     };
 
     const std::uint8_t mFramesInFlight;
@@ -214,6 +222,7 @@ private:
     std::shared_ptr<Graphics::Vulkan::Instance>          mVulkanInstance;
     std::shared_ptr<Graphics::Vulkan::Device>            mVulkanDevice;
     std::shared_ptr<const Graphics::Vulkan::Queue>       mGraphicsQueue;
+    std::shared_ptr<const Graphics::Vulkan::Queue>       mTransferQueue;
     std::shared_ptr<Graphics::Vulkan::FencePool>         mFencePool;
     std::shared_ptr<Graphics::ShaderProgramCache>        mShaderProgramCache;
     std::shared_ptr<Graphics::Vulkan::DescriptorHeap>    mHeap;
@@ -228,8 +237,17 @@ private:
      *  own size ignore the request, so this is not necessarily the size of the images. */
     Extent mAppliedExtent;
 
-    /** Appended by createTexture() on any thread, copied and erased by the render thread. Entries
-     *  leave only after the submit that recorded them returned. */
+    /** Signaled by the transfer submit of every frame that uploads, waited by the graphics submit
+     * of every frame. */
+    std::shared_ptr<Graphics::Vulkan::TimelineSemaphore> mUploadTimeline;
+
+    /** Render thread only: the last value the upload timeline was signaled with. Raised after the
+     *  submit that signals it returned, so a submit that throws leaves it unchanged. It lives as
+     *  long as the renderer, across stop() and start(), so it only ever grows. */
+    std::uint64_t mUploadValue = 0u;
+
+    /** Appended by createMesh() and createTexture() on any thread, copied and erased by the render
+     * thread. Entries leave only after the submit that recorded them returned. */
     std::mutex                mUploadMutex;
     std::deque<PendingUpload> mPendingUploads;
 
