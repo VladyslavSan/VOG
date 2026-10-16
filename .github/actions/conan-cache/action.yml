@@ -22,15 +22,22 @@ inputs:
 runs:
   using: composite
   steps:
+    # The runner image changes the compiler, so it belongs in the key; ImageOS is a machine
+    # variable, not in the `env` context.
+    - name: Name the runner image
+      id: image
+      shell: bash
+      run: echo "name=${ImageOS:-${{ runner.os }}-unknown-image}" >> "$GITHUB_OUTPUT"
+
     - name: Restore Conan cache
       id: conan-cache
       uses: actions/cache/restore@v4
       with:
         path: ~/.conan2
-        key: conan-${{ runner.os }}-${{ inputs.build-type }}-${{ hashFiles(inputs.lockfile) }}
+        key: conan-${{ steps.image.outputs.name }}-${{ inputs.build-type }}-${{ hashFiles(inputs.lockfile) }}
         restore-keys: |
-          conan-${{ runner.os }}-${{ inputs.build-type }}-
-          conan-${{ runner.os }}-
+          conan-${{ steps.image.outputs.name }}-${{ inputs.build-type }}-
+          conan-${{ steps.image.outputs.name }}-
 
     - name: Install dependencies (Linux)
       if: inputs.warm == 'true' && runner.os == 'Linux'
@@ -54,4 +61,4 @@ runs:
       uses: actions/cache/save@v4
       with:
         path: ~/.conan2
-        key: conan-${{ runner.os }}-${{ inputs.build-type }}-${{ hashFiles(inputs.lockfile) }}
+        key: conan-${{ steps.image.outputs.name }}-${{ inputs.build-type }}-${{ hashFiles(inputs.lockfile) }}

@@ -27,33 +27,6 @@ constexpr vk::Extent2D gExtent{.width = 64u, .height = 64u};
 /** A headless surface has a free image at once; the timeout only guards against a hang. */
 constexpr std::chrono::seconds gAcquireTimeout{1};
 
-/**
- * Why a test that drops an acquired image unpresented must skip on this driver, or null. Mesa
- * before 26.0.0 never sets the release hook of its headless swapchain, so
- * vkReleaseSwapchainImagesEXT calls a null pointer (fixed by Mesa commit c3763b12e2c6,
- * "vulkan/wsi/headless: implement vkReleaseSwapchainImagesKHR for headless").
- * Remove this once CI's Mesa is 26.0.0 or newer.
- */
-const char*
-unpresentedReleaseCrashReason(const Device& device)
-{
-    const auto properties =
-        device.raiiPhysicalDevice()
-            .getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceDriverProperties>();
-    const auto& driver = properties.get<vk::PhysicalDeviceDriverProperties>();
-    const auto& base   = properties.get<vk::PhysicalDeviceProperties2>().properties;
-
-    // Mesa packs driverVersion like VK_MAKE_API_VERSION.
-    if (driver.driverID == vk::DriverId::eMesaLlvmpipe &&
-        VK_API_VERSION_MAJOR(base.driverVersion) < 26u)
-    {
-        return "Mesa before 26.0.0 crashes in vkReleaseSwapchainImagesEXT on a headless "
-               "surface (fixed by Mesa commit c3763b12e2c6).";
-    }
-
-    return nullptr;
-}
-
 /** Takes a freshly acquired image to the layout vkQueuePresentKHR expects. */
 vk::ImageMemoryBarrier2
 toPresentBarrier()
@@ -263,11 +236,6 @@ TEST_F(SwapchainTest, presentationKeepsRecreatedSwapchainUntilDropped)
 /** The size passed to recreate() is the size of the new images where the application chooses. */
 TEST_F(SwapchainTest, recreateUsesTheRequestedExtentAndSkipsAZeroOne)
 {
-    if (const char* reason = unpresentedReleaseCrashReason(*mDevice))
-    {
-        GTEST_SKIP() << reason;
-    }
-
     auto swapchain = mDevice->createSwapchain(headlessSwapchainParameters());
     ASSERT_TRUE(swapchain->recreate({.width = 128u, .height = 128u}));
 
@@ -349,11 +317,6 @@ TEST_F(SwapchainTest, swapchainKeepsDeviceAlive)
  */
 TEST_F(SwapchainTest, acquiredImageKeepsSwapchainAlive)
 {
-    if (const char* reason = unpresentedReleaseCrashReason(*mDevice))
-    {
-        GTEST_SKIP() << reason;
-    }
-
     auto swapchain = mDevice->createSwapchain(headlessSwapchainParameters());
     auto acquire   = swapchain->acquireNextImage(gAcquireTimeout);
     ASSERT_TRUE(acquire.acquired);
