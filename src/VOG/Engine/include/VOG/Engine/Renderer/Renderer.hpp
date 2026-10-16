@@ -5,6 +5,7 @@
 #include <VOG/Engine/Renderer/Material.hpp>
 #include <VOG/Engine/Renderer/Mesh.hpp>
 #include <VOG/Engine/Renderer/Renderable.hpp>
+#include <VOG/Engine/Renderer/Texture.hpp>
 
 #include <atomic>
 #include <cstdint>
@@ -31,12 +32,14 @@ class FrameObjectManager;
 namespace VOG::Graphics::Vulkan
 {
 class Instance;
+class Buffer;
 class Device;
 class DescriptorHeap;
 class FencePool;
 class GraphicsPipeline;
 class Queue;
 class Swapchain;
+class Texture;
 } // namespace VOG::Graphics::Vulkan
 
 namespace VOG::Engine
@@ -114,9 +117,24 @@ public:
     MeshPtr createMesh(const MeshDescription& description);
 
     /**
-     * Looks up the shader of @p description. Any thread: the shader cache is only read.
-     * @throws std::invalid_argument for an unknown shader, more than 64 bytes of parameters, or a
-     *         push-constant range of the shader that ends past the parameters.
+     * Copies the pixels of @p description. Any thread: the allocator is internally synchronized.
+     * The image is uploaded by the render thread, in the first frame it renders after this call,
+     * and a draw of the texture in that frame is recorded after the upload. The upload stays
+     * pending through frames that are dropped or fail.
+     * @throws std::invalid_argument if the extent is zero, or the pixels are not exactly
+     *         width * height * 4 bytes.
+     * @throws std::runtime_error if the renderer's descriptor heap is full or the image cannot be
+     *         created.
+     */
+    TexturePtr createTexture(const TextureDescription& description);
+
+    /**
+     * Looks up the shader of @p description and copies the parameters into a uniform block. Any
+     * thread: the shader cache is only read, and the allocator is internally synchronized.
+     * @throws std::invalid_argument for an unknown shader, more than 16384 bytes of parameters,
+     *         more than 4 textures, a null texture, or a push-constant range of the shader that
+     *         ends past the 84 bytes the renderer pushes.
+     * @throws std::runtime_error if the renderer's descriptor heap is full.
      */
     MaterialPtr createMaterial(MaterialDescription description);
 
@@ -161,8 +179,8 @@ public:
     State getState() const;
 
 private:
-    /** Lets RendererTest read the swapchain, the packet queue and the pipeline cache; nothing else
-     *  uses it. */
+    /** Lets RendererTest read the swapchain, the packet queue, the pipeline cache and the pending
+     *  uploads; nothing else uses it. */
     friend struct RendererTestAccess;
 
     /** min(framesInFlight, imageCount); logs when it clamps. */
@@ -184,6 +202,13 @@ private:
     /** Render thread. One frame; an exception ends the thread. */
     void renderFrame(FramePacket packet);
 
+    /** A texture's pixels, waiting for the render thread to copy them into the image. */
+    struct PendingUpload
+    {
+        std::shared_ptr<Graphics::Vulkan::Buffer>  staging;
+        std::shared_ptr<Graphics::Vulkan::Texture> texture;
+    };
+
     const std::uint8_t mFramesInFlight;
 
     std::shared_ptr<Graphics::Vulkan::Instance>          mVulkanInstance;
@@ -202,6 +227,11 @@ private:
     /** Render thread only: the last requested extent that was applied. Surfaces that report their
      *  own size ignore the request, so this is not necessarily the size of the images. */
     Extent mAppliedExtent;
+
+    /** Appended by createTexture() on any thread, copied and erased by the render thread. Entries
+     *  leave only after the submit that recorded them returned. */
+    std::mutex                mUploadMutex;
+    std::deque<PendingUpload> mPendingUploads;
 
     /** Written by any thread, drained by the submitting thread. No callback runs under it. */
     std::mutex                              mPendingMutex;

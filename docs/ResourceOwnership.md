@@ -69,7 +69,8 @@ after the fence of the frame that referenced the resource has signaled.
 
 ## Meshes and materials
 
-The Engine hands out `MeshPtr` and `MaterialPtr`; the chain behind them is the same one:
+The Engine hands out `MeshPtr`, `TexturePtr` and `MaterialPtr`; the chain behind them is the same
+one:
 
 - A `Mesh` owns a `BufferPtr`. The packet that `Renderer::submitFrame` queues holds each draw, and
   so its mesh, from `submitFrame` until the render thread has recorded the frame; the queue holds
@@ -78,8 +79,19 @@ The Engine hands out `MeshPtr` and `MaterialPtr`; the chain behind them is the s
   the indices of a mesh are in one buffer. Dropping the last `MeshPtr` while a frame
   is in flight frees the CPU object; the buffer dies when that frame's slot is reused and its
   fence has signalled (`meshBufferOutlivesMeshWhileFrameInFlight`).
-- A `Material` owns a `ShaderProgramPtr`. Its parameters are copied into push constants while
-  recording, so no GPU-side object is retained for them.
+- A `Material` owns a `ShaderProgramPtr`, a `UniformBlock` that holds its parameters, and the
+  `TexturePtr`s it samples. A draw pushes the heap indices of the block and the textures, and
+  records them with `RenderingPass::useResource`, which retains them: dropping the last
+  `MaterialPtr` while a frame is in flight frees the CPU object, and the block and the images
+  die when that frame's slot is reused (`textureOutlivesMaterialWhileFrameInFlight`,
+  `parameterBlockOutlivesMaterialWhileFrameInFlight`).
+- `Renderer::createTexture` copies the pixels into a staging buffer and queues the upload with the
+  new image. The render thread records every pending upload (`copyBufferToTexture`) in the first
+  frame it renders after the acquire, before the draws, and erases them only after the
+  `Queue::submit` of that frame returned. A frame that is dropped (zero-sized window, out-of-date
+  or skipped acquire) or fails before the submit leaves them pending for the next frame, also
+  after `stop()` and `start()`. The staging buffer is released when the frame's slot is reused
+  (`textureUploadIsRecordedAndStagingReleased`).
 - The `PipelineCache` holds its pipelines until `~Renderer`; `bindPipeline` retains them per frame.
 
 ## Self-sufficient handles
@@ -185,9 +197,11 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    The pending-renderable list is shared between the callers of `addRenderable` and the submitting
    thread; it has a mutex. The `Scene`, its `GameObject`s and its `Behaviour`s are main-thread
    state: `Application` updates the scene and runs `onDraw` on the main thread, and only the packet
-   crosses to the render thread. `createMesh` and `createMaterial` are safe from any thread: VMA is
-   created without `EXTERNALLY_SYNCHRONIZED`, so the allocator locks internally, and the shader
-   cache is only read after its constructor. A packet holds meshes, materials and a camera view,
+   crosses to the render thread. `createMesh`, `createTexture` and `createMaterial` are safe from any thread: VMA is
+   created without `EXTERNALLY_SYNCHRONIZED`, so the allocator locks internally, the shader
+   cache is only read after its constructor, the heap's free list has a mutex, and the pending
+   uploads (`mPendingUploads`) are shared between `createTexture` and the render thread under
+   `mUploadMutex`. A packet holds meshes, materials and a camera view,
    none of the objects above, so it may die on any thread. `onDraw` may run inside an SDL event
    watch on the main thread (`SwapchainSync.md`, "Live resize"): no renderer lock is held, but it
    must not wait for a thread that pushes SDL events.
@@ -255,7 +269,7 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
 
 - **Heap-referenced resources** (textures and uniform blocks on the descriptor heap): a draw that
   references one by heap index must retain it through `RenderingPass::useResource`, which
-  nothing enforces. The `Renderer` draws with none yet.
+  nothing enforces. The `Renderer` calls it for the block and the textures of every draw.
 
 - **Out-of-date and suboptimal paths are untested.** A headless surface never
   reports them, so no automated test reaches the acquire/present

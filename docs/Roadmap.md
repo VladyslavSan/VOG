@@ -153,11 +153,20 @@ step builds on the previous. Completed work is kept for context.
   the vertices, after them and aligned to 4 bytes. `RenderingPass` gains `bindIndexBuffer`
   (retains the buffer) and `drawIndexed`, and the renderer draws a mesh with indices through them.
   Device selection requires `fullDrawIndexUint32`. A mesh without indices draws as before.
+- **Engine API S5: textures and parameter blocks on descriptor heaps**: Graphics gets
+  `DescriptorHeap`, `Texture` and `UniformBlock` (descriptors written into host-visible heap
+  buffers, slots freed when the resource dies), pipelines without a layout, and
+  `RenderingPass::useResource` / `pushData` and `CommandBufferRecorder::bindDescriptorHeap` /
+  `copyBufferToTexture`; shaders with a set and a binding are rejected. Device selection requires
+  `VK_EXT_descriptor_heap`. The Engine gets `Renderer::createTexture` (uploaded by the render
+  thread in the next frame, through a pending list that survives dropped frames),
+  `MaterialDescription::textures` (at most 4) and `parameters` (at most 16384 bytes, an immutable
+  uniform block). The renderer pushes `mat4 mvp; uint material; uint textures[4]` with every
+  draw. The example draws a textured checkerboard quad. See `ResourceOwnership.md`.
 
 ## Later milestones (in rough order)
 
-1. **Engine API (S5-S7)**: continues S4 (see Done).
-   - S5: textures and parameter blocks on descriptor heaps.
+1. **Engine API (S6-S7)**: continues S5 (see Done).
    - S6: device-local uploads through staging on the transfer queue.
    - S7: parallel recording.
 2. **Render graph**: declared passes with reads/writes; derives barriers,

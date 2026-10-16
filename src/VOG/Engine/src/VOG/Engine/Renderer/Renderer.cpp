@@ -5,6 +5,7 @@
 #include "VOG/Engine/Renderer/MaterialDefinition.hpp"
 #include "VOG/Engine/Renderer/MeshDefinition.hpp"
 #include "VOG/Engine/Renderer/PipelineCache.hpp"
+#include "VOG/Engine/Renderer/TextureDefinition.hpp"
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Frame/FrameObjectManager.hpp>
 #include <VOG/Graphics/ShaderProgramCache.hpp>
@@ -21,6 +22,8 @@
 #include <VOG/Graphics/Vulkan/Instance.hpp>
 #include <VOG/Graphics/Vulkan/Limits.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
+#include <VOG/Graphics/Vulkan/Texture.hpp>
+#include <VOG/Graphics/Vulkan/UniformBlock.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -59,9 +62,6 @@ alignUp(std::size_t value, std::size_t alignment)
 {
     return (value + alignment - 1u) / alignment * alignment;
 }
-
-/** Push constants the renderer fills: the matrix, then the material's parameters. */
-constexpr std::size_t gPushConstantsSize = gParametersOffset + gMaxParametersSize;
 
 /**
  * Images and uniform blocks the descriptor heap holds at once.
@@ -236,6 +236,48 @@ Renderer::createMesh(const MeshDescription& description)
              .indexOffset = indexOffset});
 }
 
+TexturePtr
+Renderer::createTexture(const TextureDescription& description)
+{
+    if (description.width == 0u || description.height == 0u)
+    {
+        throw std::invalid_argument{std::format("A texture needs a non-zero extent; got {}x{}.",
+                                                description.width,
+                                                description.height)};
+    }
+
+    constexpr std::uint64_t kBytesPerPixel = 4u;
+    const std::uint64_t     size =
+        std::uint64_t{description.width} * description.height * kBytesPerPixel;
+    if (description.pixels.size() != size)
+    {
+        throw std::invalid_argument{std::format("A {}x{} texture takes {} bytes of pixels; got {}.",
+                                                description.width,
+                                                description.height,
+                                                size,
+                                                description.pixels.size())};
+    }
+
+    Graphics::Vulkan::BufferPtr staging = mVulkanDevice->createBuffer(
+        {.size = size, .usage = vk::BufferUsageFlagBits::eTransferSrc},
+        {.flags = Graphics::Vulkan::AllocationFlag::eHostSequentialWrite});
+    {
+        auto mapping = staging->mapForWrite();
+        std::ranges::copy(description.pixels, mapping.data);
+    }
+
+    Graphics::Vulkan::TexturePtr texture = mVulkanDevice->createTexture(
+        mHeap, {description.width, description.height}, toVk(description.format));
+
+    // After the texture exists, so that a frame which draws it finds its upload.
+    {
+        const std::scoped_lock lock{mUploadMutex};
+        mPendingUploads.push_back({.staging = std::move(staging), .texture = texture});
+    }
+
+    return std::make_shared<const Texture>(Texture{.texture = std::move(texture)});
+}
+
 MaterialPtr
 Renderer::createMaterial(MaterialDescription description)
 {
@@ -246,28 +288,42 @@ Renderer::createMaterial(MaterialDescription description)
                         gMaxParametersSize,
                         description.parameters.size())};
     }
+    if (description.textures.size() > gMaxTextures)
+    {
+        throw std::invalid_argument{std::format("A material takes at most {} textures; got {}.",
+                                                gMaxTextures,
+                                                description.textures.size())};
+    }
+    if (std::ranges::any_of(description.textures,
+                            [](const TexturePtr& texture)
+                            {
+                                return !texture;
+                            }))
+    {
+        throw std::invalid_argument{"A material texture is null."};
+    }
 
     Graphics::Vulkan::ShaderProgramPtr program = mShaderProgramCache->get(description.shader);
 
-    const std::size_t pushedSize = gParametersOffset + description.parameters.size();
     for (const Graphics::Vulkan::ShaderProgram::PushConstants::Range& range :
          program->pushConstants.ranges)
     {
-        if (std::size_t{range.offset} + range.size > pushedSize)
+        if (std::size_t{range.offset} + range.size > gPushDataSize)
         {
             throw std::invalid_argument{std::format(
-                "Shader \"{}\" has a push-constant range [{}, {}) past the {} bytes the renderer "
-                "pushes for {} bytes of parameters.",
+                "Shader \"{}\" has a push-constant range [{}, {}) past the {} bytes of push data "
+                "that the renderer pushes.",
                 description.shader,
                 range.offset,
                 range.offset + range.size,
-                pushedSize,
-                description.parameters.size())};
+                gPushDataSize)};
         }
     }
 
     return std::make_shared<const Material>(
-        Material{.program = std::move(program), .parameters = std::move(description.parameters)});
+        Material{.program  = std::move(program),
+                 .block    = mVulkanDevice->createUniformBlock(mHeap, description.parameters),
+                 .textures = std::move(description.textures)});
 }
 
 void
@@ -374,6 +430,18 @@ Renderer::renderFrame(FramePacket packet)
     auto recorder = pool->record();
     recorder.bindDescriptorHeap(mHeap);
 
+    // Every upload that exists now, including those of textures that earlier dropped frames did not
+    // record. They stay in the list until the submit below returns.
+    std::vector<PendingUpload> uploads;
+    {
+        const std::scoped_lock lock{mUploadMutex};
+        uploads.assign(mPendingUploads.begin(), mPendingUploads.end());
+    }
+    for (const PendingUpload& upload : uploads)
+    {
+        recorder.copyBufferToTexture(upload.staging, upload.texture);
+    }
+
     {
         recorder.setImageBarrier(
             acquired,
@@ -422,20 +490,29 @@ Renderer::renderFrame(FramePacket packet)
                 const RenderQueue::Draw& draw     = packet.draws.mDraws[i];
                 const Material&          material = *draw.material;
 
-                // The matrix first, then the parameters; createMaterial checked that the shader's
-                // ranges end inside what is filled here.
-                const Math::Matrix4x4f                    mvp = viewProjection * draw.world;
-                std::array<std::byte, gPushConstantsSize> pushConstants{};
-                std::memcpy(pushConstants.data(), &mvp, sizeof(mvp));
-                std::ranges::copy(material.parameters, pushConstants.begin() + gParametersOffset);
+                // The matrix, then the heap indices of the parameter block and the textures;
+                // createMaterial checked that the shader's ranges end inside what is filled here.
+                const Math::Matrix4x4f               mvp = viewProjection * draw.world;
+                std::array<std::byte, gPushDataSize> pushData{};
+                std::memcpy(pushData.data(), &mvp, sizeof(mvp));
+                const std::uint32_t blockIndex = material.block->heapIndex();
+                std::memcpy(
+                    pushData.data() + gMaterialIndexOffset, &blockIndex, sizeof(blockIndex));
 
                 pass.bindPipeline(mPipelines[i]);
-                for (const ShaderProgram::PushConstants::Range& range :
-                     material.program->pushConstants.ranges)
+                pass.useResource(material.block);
+                for (std::size_t textureIndex = 0u; textureIndex < material.textures.size();
+                     ++textureIndex)
                 {
-                    pass.pushData(range.offset,
-                                  std::span{pushConstants}.subspan(range.offset, range.size));
+                    const std::shared_ptr<Graphics::Vulkan::Texture>& texture =
+                        material.textures[textureIndex]->texture;
+                    const std::uint32_t index = texture->heapIndex();
+                    std::memcpy(pushData.data() + gTexturesOffset + (textureIndex * sizeof(index)),
+                                &index,
+                                sizeof(index));
+                    pass.useResource(texture);
                 }
+                pass.pushData(0u, pushData);
                 pass.bindVertexBuffers(0u, {{.buffer = draw.mesh->buffer, .offset = 0u}});
                 if (draw.mesh->indexCount == 0u)
                 {
@@ -476,6 +553,15 @@ Renderer::renderFrame(FramePacket packet)
                                .stage     = vk::PipelineStageFlagBits2::eColorAttachmentOutput}},
                            std::span{&executable, 1u},
                            std::array{frame->getRenderFinishedSemaphore()});
+
+    // Only now: the command buffer retains the uploads. Until the submit returns they stay
+    // pending, so a frame that fails before it records them again.
+    {
+        const std::scoped_lock lock{mUploadMutex};
+        mPendingUploads.erase(mPendingUploads.begin(),
+                              mPendingUploads.begin() +
+                                  static_cast<std::ptrdiff_t>(uploads.size()));
+    }
 
     auto presented =
         mSwapchain->present(acquired, frame->getRenderFinishedSemaphore(), *mFencePool);

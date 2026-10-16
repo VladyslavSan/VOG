@@ -1,13 +1,18 @@
 #include "VOG/Engine/Renderer/FramePacketQueue.hpp"
+#include "VOG/Engine/Renderer/MaterialDefinition.hpp"
 #include "VOG/Engine/Renderer/MeshDefinition.hpp"
 #include "VOG/Engine/Renderer/PipelineCache.hpp"
+#include "VOG/Engine/Renderer/TextureDefinition.hpp"
 #include <VOG/Engine/Renderer/Renderer.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/DeviceRequirements.hpp>
+#include <VOG/Graphics/Vulkan/Texture.hpp>
+#include <VOG/Graphics/Vulkan/UniformBlock.hpp>
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -18,6 +23,7 @@
 #include <functional>
 #include <future>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -53,6 +59,24 @@ struct RendererTestAccess
     packets(Renderer& renderer)
     {
         return *renderer.mPackets;
+    }
+
+    /** Uploads that createTexture() queued and no submitted frame has recorded yet. */
+    static std::size_t
+    pendingUploadCount(Renderer& renderer)
+    {
+        const std::scoped_lock lock{renderer.mUploadMutex};
+
+        return renderer.mPendingUploads.size();
+    }
+
+    /** The staging buffer of pending upload @p index; it must exist. */
+    static std::weak_ptr<Graphics::Vulkan::Buffer>
+    pendingStaging(Renderer& renderer, std::size_t index)
+    {
+        const std::scoped_lock lock{renderer.mUploadMutex};
+
+        return renderer.mPendingUploads.at(index).staging;
     }
 };
 } // namespace VOG::Engine
@@ -208,6 +232,44 @@ incompatibleLayout()
     return {{VertexFormat::eFloat2, 0u}};
 }
 
+constexpr std::size_t gTexturedStride = 16u;
+/** Bytes of a tint, the parameters of the Textured shader (four floats). */
+constexpr std::size_t gTintSize  = 16u;
+constexpr std::size_t gPixelSize = 4u;
+
+/** As the Textured shader reads them: a position and a uv, two floats each. */
+std::vector<VertexAttribute>
+texturedLayout()
+{
+    return {{VertexFormat::eFloat2, 0u}, {VertexFormat::eFloat2, sizeOf(VertexFormat::eFloat2)}};
+}
+
+MeshPtr
+makeTexturedMesh(Renderer& renderer)
+{
+    return renderer.createMesh({.vertices   = std::vector<std::byte>(3u * gTexturedStride),
+                                .stride     = gTexturedStride,
+                                .attributes = texturedLayout()});
+}
+
+/** A black 2x2 texture. */
+TexturePtr
+makeTexture(Renderer& renderer)
+{
+    const std::vector<std::byte> pixels(std::size_t{2u} * 2u * gPixelSize);
+
+    return renderer.createTexture({.pixels = pixels, .width = 2u, .height = 2u});
+}
+
+/** The Textured shader with a 16-byte tint and @p texture. */
+MaterialPtr
+makeTexturedMaterial(Renderer& renderer, TexturePtr texture)
+{
+    return renderer.createMaterial({.shader     = "Textured",
+                                    .parameters = std::vector<std::byte>(gTintSize),
+                                    .textures   = {std::move(texture)}});
+}
+
 MeshPtr
 makeMesh(Renderer& renderer, const std::vector<VertexAttribute>& attributes)
 {
@@ -228,7 +290,10 @@ drawing(MeshPtr mesh, MaterialPtr material)
         });
 }
 
-/** A shader directory with one shader whose push-constant block is two matrices, 128 bytes. */
+/**
+ * A shader directory with one shader whose push-constant block is two matrices, 128 bytes: more
+ * than the 84 bytes of push data that the renderer pushes.
+ */
 class WideShaderDirectory
 {
 public:
@@ -717,27 +782,76 @@ TEST_F(RendererTest, indexedMeshIsDrawn)
 
 // The score comes from the gtest assertion macros.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-TEST_F(RendererTest, createMaterialRejectsUnknownShaderAndShortParameters)
+TEST_F(RendererTest, createMaterialChecksShaderTexturesAndParameterSize)
 {
     auto renderer = makeRenderer();
 
     EXPECT_THROW(renderer->createMaterial({.shader = "NoSuchShader"}), std::invalid_argument);
-    EXPECT_THROW(renderer->createMaterial(
-                     {.shader = "WorldSpace", .parameters = std::vector<std::byte>(65u)}),
-                 std::invalid_argument);
-    // The parameters need no range of the shader to read them.
-    EXPECT_TRUE(renderer->createMaterial(
-        {.shader = "WorldSpace", .parameters = std::vector<std::byte>(4u)}));
 
-    // The shader reads 128 bytes of push constants, the matrix and 64 bytes of parameters.
+    // The parameters are a uniform block, not push constants: size 0 to 16384 bytes are fine.
+    for (const std::size_t size :
+         {std::size_t{0u}, std::size_t{4u}, std::size_t{65u}, gMaxParametersSize})
+    {
+        EXPECT_TRUE(renderer->createMaterial(
+            {.shader = "WorldSpace", .parameters = std::vector<std::byte>(size)}))
+            << size << " bytes";
+    }
+    EXPECT_THROW(
+        renderer->createMaterial({.shader     = "WorldSpace",
+                                  .parameters = std::vector<std::byte>(gMaxParametersSize + 1u)}),
+        std::invalid_argument);
+
+    // At most four textures, none null.
+    const TexturePtr texture = makeTexture(*renderer);
+    EXPECT_TRUE(renderer->createMaterial(
+        {.shader = "Textured", .textures = std::vector<TexturePtr>(gMaxTextures, texture)}));
+    EXPECT_THROW(
+        renderer->createMaterial({.shader   = "Textured",
+                                  .textures = std::vector<TexturePtr>(gMaxTextures + 1u, texture)}),
+        std::invalid_argument);
+    EXPECT_THROW(renderer->createMaterial({.shader = "Textured", .textures = {texture, nullptr}}),
+                 std::invalid_argument);
+
+    // The shader reads 128 bytes of push constants, more than the 84 the renderer pushes, however
+    // many parameters the material has.
     const WideShaderDirectory wide;
     auto                      wideRenderer = makeRenderer(wide.path());
     EXPECT_THROW(wideRenderer->createMaterial({.shader = "Wide"}), std::invalid_argument);
     EXPECT_THROW(
-        wideRenderer->createMaterial({.shader = "Wide", .parameters = std::vector<std::byte>(63u)}),
+        wideRenderer->createMaterial({.shader = "Wide", .parameters = std::vector<std::byte>(64u)}),
         std::invalid_argument);
-    EXPECT_TRUE(wideRenderer->createMaterial(
-        {.shader = "Wide", .parameters = std::vector<std::byte>(64u)}));
+}
+
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, createTextureRejectsMalformedDescription)
+{
+    auto renderer = makeRenderer();
+
+    const std::vector<std::byte> pixels(std::size_t{2u} * 3u * gPixelSize);
+    EXPECT_NO_THROW(renderer->createTexture({.pixels = pixels, .width = 2u, .height = 3u}));
+    EXPECT_NO_THROW(renderer->createTexture(
+        {.pixels = pixels, .width = 2u, .height = 3u, .format = TextureFormat::eRGBA8Unorm}));
+
+    EXPECT_THROW(renderer->createTexture({.width = 2u, .height = 3u}), std::invalid_argument);
+    // No pixels for no extent are still no texture.
+    EXPECT_THROW(renderer->createTexture({}), std::invalid_argument);
+    EXPECT_THROW(renderer->createTexture({.pixels = pixels, .width = 0u, .height = 3u}),
+                 std::invalid_argument);
+    EXPECT_THROW(renderer->createTexture({.pixels = pixels, .width = 2u, .height = 0u}),
+                 std::invalid_argument);
+    // One byte too few, one byte too many, and the right size for the other extent.
+    EXPECT_THROW(
+        renderer->createTexture(
+            {.pixels = std::span{pixels}.first(pixels.size() - 1u), .width = 2u, .height = 3u}),
+        std::invalid_argument);
+    EXPECT_THROW(renderer->createTexture({.pixels = pixels, .width = 2u, .height = 2u}),
+                 std::invalid_argument);
+    EXPECT_THROW(renderer->createTexture({.pixels = pixels, .width = 6u, .height = 6u}),
+                 std::invalid_argument);
+
+    // Only the two valid calls left an upload.
+    EXPECT_EQ(RendererTestAccess::pendingUploadCount(*renderer), 2u);
 }
 
 /**
@@ -791,6 +905,276 @@ TEST_F(RendererTest, meshBufferOutlivesMeshWhileFrameInFlight)
         renderer->submitFrame({});
     }
     EXPECT_TRUE(weakBuffer.expired());
+    EXPECT_FALSE(renderer->stop());
+}
+
+/**
+ * A frame in flight keeps the image of a texture alive after the renderer let go of the material:
+ * the draw recorded the texture, and the frame's slot is not reused yet. The upload went in a
+ * frame before, and is released by then, so only the draw's recording holds the image.
+ *
+ * It proves that the draw loop records the texture of a material (useResource) and the renderer
+ * holds nothing on top. GPU safety rests on the Graphics retention tests.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, textureOutlivesMaterialWhileFrameInFlight)
+{
+    auto renderer = makeRenderer();
+
+    TexturePtr texture     = makeTexture(*renderer);
+    auto       weakTexture = std::weak_ptr<const Texture>{texture};
+    auto       weakImage   = std::weak_ptr<Graphics::Vulkan::Texture>{texture->texture};
+    auto       weakStaging = RendererTestAccess::pendingStaging(*renderer, 0u);
+
+    // Upload first, and wait for the frame that recorded it to be gone: its staging buffer is
+    // released with it.
+    renderer->start();
+    EXPECT_TRUE(becomesTrue(
+        [&]
+        {
+            renderer->submitFrame({});
+            return weakStaging.expired();
+        }));
+
+    renderer->addRenderable(std::make_shared<LambdaRenderable>(
+        [mesh     = makeTexturedMesh(*renderer),
+         material = makeTexturedMaterial(*renderer, std::move(texture))](
+            const FrameContext& /*context*/, RenderQueue& queue) mutable
+        {
+            // The first frame draws the mesh and lets go of it and the material; later frames
+            // draw nothing.
+            queue.submit(mesh, material, Math::Matrix4x4f{1.0f});
+            mesh.reset();
+            material.reset();
+        }));
+    renderer->submitFrame({});
+    renderer->submitFrame({});
+    EXPECT_FALSE(renderer->stop());
+
+    EXPECT_TRUE(weakTexture.expired());
+    EXPECT_FALSE(weakImage.expired());
+
+    // Frames that draw nothing cycle through the slots until the draw's slot is reused.
+    renderer->start();
+    EXPECT_TRUE(becomesTrue(
+        [&]
+        {
+            renderer->submitFrame({});
+            return weakImage.expired();
+        }));
+    EXPECT_FALSE(renderer->stop());
+}
+
+/** As for the texture, for the parameter block of a material. */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, parameterBlockOutlivesMaterialWhileFrameInFlight)
+{
+    auto renderer = makeRenderer();
+
+    std::weak_ptr<Graphics::Vulkan::UniformBlock> weakBlock;
+    {
+        MaterialPtr material = renderer->createMaterial(
+            {.shader = "WorldSpace", .parameters = std::vector<std::byte>(gTintSize)});
+        weakBlock = material->block;
+        renderer->addRenderable(std::make_shared<LambdaRenderable>(
+            [mesh = makeMesh(*renderer, compatibleLayout()), material = std::move(material)](
+                const FrameContext& /*context*/, RenderQueue& queue) mutable
+            {
+                queue.submit(mesh, material, Math::Matrix4x4f{1.0f});
+                mesh.reset();
+                material.reset();
+            }));
+    }
+
+    renderer->start();
+    renderer->submitFrame({});
+    renderer->submitFrame({});
+    EXPECT_FALSE(renderer->stop());
+
+    EXPECT_FALSE(weakBlock.expired());
+
+    renderer->start();
+    EXPECT_TRUE(becomesTrue(
+        [&]
+        {
+            renderer->submitFrame({});
+            return weakBlock.expired();
+        }));
+    EXPECT_FALSE(renderer->stop());
+}
+
+/**
+ * A frame that is dropped does not consume the uploads: a zero-sized window ends each frame
+ * before it records anything, and the upload is still pending. Once the window has a size again,
+ * the next frame records it and the list drains.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, textureUploadSurvivesDroppedFrame)
+{
+    auto renderer = makeRenderer();
+    auto texture  = makeTexture(*renderer);
+
+    renderer->resize({});
+    renderer->start();
+    // The second call returns only after the render thread took, and dropped, the first frame.
+    renderer->submitFrame({});
+    renderer->submitFrame({});
+    EXPECT_FALSE(renderer->stop());
+    EXPECT_EQ(RendererTestAccess::pendingUploadCount(*renderer), 1u);
+
+    renderer->resize(gStartExtent);
+    renderer->start();
+    EXPECT_TRUE(becomesTrue(
+        [&]
+        {
+            renderer->submitFrame({});
+            return RendererTestAccess::pendingUploadCount(*renderer) == 0u;
+        }));
+    EXPECT_FALSE(renderer->stop());
+}
+
+/**
+ * The staging buffer lives in the pending list until the frame that recorded the upload has been
+ * submitted, then in that frame's command buffer, and is gone once the frame's slot is reused.
+ */
+TEST_F(RendererTest, textureUploadIsRecordedAndStagingReleased)
+{
+    auto renderer = makeRenderer();
+    auto texture  = makeTexture(*renderer);
+    auto staging  = RendererTestAccess::pendingStaging(*renderer, 0u);
+    EXPECT_FALSE(staging.expired());
+
+    // Stops at the first frame after which the list is empty, before the frame slot of the upload
+    // can be reused.
+    renderer->start();
+    EXPECT_TRUE(becomesTrue(
+        [&]
+        {
+            renderer->submitFrame({});
+            return RendererTestAccess::pendingUploadCount(*renderer) == 0u;
+        }));
+    EXPECT_FALSE(staging.expired());
+
+    EXPECT_TRUE(becomesTrue(
+        [&]
+        {
+            renderer->submitFrame({});
+            return staging.expired();
+        }));
+    EXPECT_FALSE(renderer->stop());
+}
+
+/**
+ * A render thread that fails in resolvePipelines, before it records anything, leaves the uploads
+ * pending, and they are recorded after stop() and start().
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, pendingUploadsSurviveRenderThreadFailureAndRestart)
+{
+    auto renderer = makeRenderer();
+    auto texture  = makeTexture(*renderer);
+    auto material = renderer->createMaterial({.shader = "WorldSpace"});
+    auto bad      = makeMesh(*renderer, incompatibleLayout());
+    auto good     = makeMesh(*renderer, compatibleLayout());
+
+    bool first = true;
+    renderer->addRenderable(std::make_shared<LambdaRenderable>(
+        [&](const FrameContext& /*context*/, RenderQueue& queue)
+        {
+            queue.submit(first ? bad : good, material, Math::Matrix4x4f{1.0f});
+            first = false;
+        }));
+    renderer->start();
+    renderer->submitFrame({});
+    ASSERT_TRUE(becomesTrue(
+        [&]
+        {
+            return renderer->getState() == Renderer::State::eFailed;
+        }));
+    EXPECT_EQ(RendererTestAccess::pendingUploadCount(*renderer), 1u);
+
+    ASSERT_TRUE(renderer->stop());
+    renderer->start();
+    EXPECT_TRUE(becomesTrue(
+        [&]
+        {
+            renderer->submitFrame({});
+            return RendererTestAccess::pendingUploadCount(*renderer) == 0u;
+        }));
+    EXPECT_EQ(renderer->getState(), Renderer::State::eRunning);
+    EXPECT_FALSE(renderer->stop());
+}
+
+/**
+ * Another thread creates and drops textures and materials while the main thread submits frames
+ * that draw them. The creator ends without an exception, nothing deadlocks (a hang here ends at
+ * the test timeout), and the pending list drains.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, createTextureWhileRendering)
+{
+    constexpr int kTextures = 64;
+
+    auto renderer = makeRenderer();
+    auto mesh     = makeTexturedMesh(*renderer);
+
+    std::mutex  currentMutex;
+    MaterialPtr current;
+    renderer->addRenderable(std::make_shared<LambdaRenderable>(
+        [&](const FrameContext& /*context*/, RenderQueue& queue)
+        {
+            MaterialPtr material;
+            {
+                const std::scoped_lock lock{currentMutex};
+                material = current;
+            }
+            queue.submit(mesh, material, Math::Matrix4x4f{1.0f});
+        }));
+    renderer->start();
+
+    std::atomic<bool>  done{false};
+    std::exception_ptr failure;
+    std::thread        creator{[&]
+                               {
+                            try
+                            {
+                                for (int i = 0; i < kTextures; ++i)
+                                {
+                                    MaterialPtr material =
+                                        makeTexturedMaterial(*renderer, makeTexture(*renderer));
+                                    const std::scoped_lock lock{currentMutex};
+                                    current = std::move(material);
+                                }
+                            }
+                            catch (...)
+                            {
+                                failure = std::current_exception();
+                            }
+                            done = true;
+                               }};
+    while (!done)
+    {
+        renderer->submitFrame({});
+    }
+    creator.join();
+    EXPECT_FALSE(failure);
+
+    {
+        const std::scoped_lock lock{currentMutex};
+        current.reset();
+    }
+    EXPECT_TRUE(becomesTrue(
+        [&]
+        {
+            renderer->submitFrame({});
+            return RendererTestAccess::pendingUploadCount(*renderer) == 0u;
+        }));
+    EXPECT_EQ(renderer->getState(), Renderer::State::eRunning);
     EXPECT_FALSE(renderer->stop());
 }
 

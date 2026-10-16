@@ -8,6 +8,10 @@
       "vertex": "src/TestVertexAttribute.vert.glsl",
       "fragment": "src/TestVertexAttribute.frag.glsl"
     },
+    "Textured": {
+      "vertex": "src/Textured.vert.glsl",
+      "fragment": "src/Textured.frag.glsl"
+    },
     "TestDescriptorHeap": {
       "vertex": "src/TestDescriptorHeap.vert.glsl",
       "fragment": "src/TestDescriptorHeap.frag.glsl"

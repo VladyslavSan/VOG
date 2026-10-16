@@ -175,6 +175,7 @@ public:
      * @param samplers       Samplers to write into the sampler heap; shaders read them by their
      *                       position in the span.
      *
+     * @throws std::invalid_argument if @p resourceSlots is zero or @p samplers is empty.
      * @throws std::runtime_error if the device limits do not allow the heap.
      */
     DescriptorHeapPtr createDescriptorHeap(std::uint32_t                          resourceSlots,
