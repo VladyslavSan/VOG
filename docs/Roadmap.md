@@ -137,7 +137,11 @@ step builds on the previous. Completed work is kept for context.
 - **Engine API S3: ECS and GameObject**: `Scene` (a `Renderable`) holds a homegrown entity-component
   registry behind a `GameObject` handle: `Transform` (every object has one), `MeshRenderer` and
   `Camera` components, and `Behaviour` scripts with `start()`, `update()` and `onDestroy()`. A
-  component keeps its address until it is removed. `Application::run` calls `Scene::update` in
+  component keeps its address until it is removed: the registry stores components in pages that
+  never move. `Scene::each` allows every structural change in its visitor, including `update`,
+  `clear` and `createGameObject`; it does not visit an object the visitor creates or a first-type
+  component it adds, it looks the other types up at each visit, and it destroys a component the
+  visitor removes when the outermost `each` returns. `Application::run` calls `Scene::update` in
   each frame, also in the frames of the live-resize event watch, and `FrameContext::deltaSeconds`
   carries the step. `Scene::onDraw` extracts the draws and sets the camera with
   `RenderQueue::setCamera`; the renderer-side `Camera` is now `CameraView`, and

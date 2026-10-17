@@ -35,6 +35,7 @@ target_link_libraries(VOG.Engine.Unit
         GTest::gtest_main
     PRIVATE
         ${PROJECT_NAME}::Graphics
+        spdlog::spdlog
 )
 
 include(GoogleTest)

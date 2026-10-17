@@ -27,6 +27,8 @@ class Scene;
  * something throw std::logic_error. A default-constructed object is invalid.
  *
  * A component reference stays valid until that component is removed or its object is flushed.
+ * Inside Scene::each(), a component that removeComponent() removes, and the components of objects
+ * that update() or clear() flush, stay valid until the outermost each() returns.
  */
 class GameObject final
 {
@@ -46,7 +48,7 @@ public:
 
     /**
      * @throws std::logic_error if the object is invalid or has a T; for a Camera, also if the
-     *         Scene has one already; if T is queried by a running Scene::each().
+     *         Scene has one already.
      */
     template <class T, class... Args>
     T& addComponent(Args&&... args);
@@ -55,8 +57,7 @@ public:
     template <class T>
     T* getComponent();
 
-    /** Not for Transform: every object has one. @throws std::logic_error if T is queried by a
-     *  running Scene::each(). */
+    /** Not for Transform: every object has one. */
     template <class T>
     void removeComponent();
 
@@ -151,7 +152,7 @@ public:
     Scene(const Scene&)            = delete;
     Scene& operator=(const Scene&) = delete;
 
-    /** An object with a Transform. @throws std::logic_error inside each<Transform...>. */
+    /** An object with a Transform. */
     GameObject createGameObject();
 
     /**
@@ -159,7 +160,7 @@ public:
      * the objects that destroy() marked, each with onDestroy() of its started behaviours first.
      * An exception from start() or update() leaves the flush for the next update.
      * @throws std::logic_error before it changes anything, if called from start(), update(),
-     *         onDestroy() or clear() of this Scene or from inside each().
+     *         onDestroy() or clear() of this Scene.
      */
     void update(const FrameContext& frame);
 
@@ -169,9 +170,13 @@ public:
      */
     void clear();
 
-    /** Calls visitor(GameObject, First&, Rest&...) for every object that has all the types,
-     * including objects marked by destroy(). Adding or removing a queried type inside visitor
-     * throws. */
+    /**
+     * Calls visitor(GameObject, First&, Rest&...) for every object that has all the types,
+     * including objects marked by destroy(). It walks the First components present when it starts
+     * and looks the other types up at each visit, so a change to an object it has not reached yet
+     * counts. An object that visitor creates, or a First component it adds, is not visited by this
+     * call. A component that visitor removes is destroyed when the outermost each() returns.
+     */
     template <class First, class... Rest, class F>
     void
     each(F&& visitor)
@@ -189,6 +194,12 @@ private:
     friend class GameObject;
 
     class BusyScope;
+
+    /** Marks an entity whose GameObject::destroy() ran and whose flush has not. Never walked by
+     * each(). */
+    struct PendingDestroy
+    {
+    };
 
     /** Binds @p behaviour to @p object and appends it; it starts at the next update(). */
     void adopt(GameObject object, std::unique_ptr<Behaviour> behaviour);
@@ -213,7 +224,6 @@ template <class T, class... Args>
 T&
 GameObject::addComponent(Args&&... args)
 {
-    static_assert(!std::is_same_v<T, Detail::PendingDestroy>);
     if (!isValid())
     {
         throw std::logic_error{"Cannot add a component to an invalid GameObject."};
@@ -241,7 +251,6 @@ void
 GameObject::removeComponent()
 {
     static_assert(!std::is_same_v<T, Transform>, "Every GameObject keeps its Transform.");
-    static_assert(!std::is_same_v<T, Detail::PendingDestroy>);
     if (isValid())
     {
         mScene->mRegistry.remove<T>(mEntity);

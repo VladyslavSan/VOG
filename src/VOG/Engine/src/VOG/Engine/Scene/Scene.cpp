@@ -43,10 +43,6 @@ public:
                 "Scene::update() and Scene::clear() cannot run while either "
                 "already runs on the Scene."};
         }
-        if (scene.mRegistry.isIterating())
-        {
-            throw std::logic_error{"Scene::update() and Scene::clear() cannot run inside each()."};
-        }
         mScene.mBusy = true;
     }
 
@@ -117,12 +113,6 @@ Scene::~Scene()
 GameObject
 Scene::createGameObject()
 {
-    // Checked first, so that a throw does not leave an object without a Transform.
-    if (mRegistry.isLocked<Transform>())
-    {
-        throw std::logic_error{"Cannot create a GameObject inside each() over Transform."};
-    }
-
     const Detail::Entity entity = mRegistry.create();
     mRegistry.emplace<Transform>(entity);
 
@@ -139,9 +129,9 @@ Scene::adopt(GameObject object, std::unique_ptr<Behaviour> behaviour)
 void
 Scene::markDestroyed(Detail::Entity entity)
 {
-    if (mRegistry.tryGet<Detail::PendingDestroy>(entity) == nullptr)
+    if (mRegistry.tryGet<PendingDestroy>(entity) == nullptr)
     {
-        mRegistry.emplace<Detail::PendingDestroy>(entity);
+        mRegistry.emplace<PendingDestroy>(entity);
         mDestroyQueue.push_back(entity);
     }
 }
@@ -149,7 +139,7 @@ Scene::markDestroyed(Detail::Entity entity)
 bool
 Scene::isDying(const Behaviour& behaviour)
 {
-    return mRegistry.tryGet<Detail::PendingDestroy>(behaviour.mGameObject.mEntity) != nullptr;
+    return mRegistry.tryGet<PendingDestroy>(behaviour.mGameObject.mEntity) != nullptr;
 }
 
 void

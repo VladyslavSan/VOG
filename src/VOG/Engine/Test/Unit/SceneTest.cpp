@@ -438,30 +438,83 @@ TEST(SceneTest, clearOrUpdateFromOnDestroyDuringClearIsRejected)
     EXPECT_EQ(log, (Log{"a.destroy"}));
 }
 
-TEST(SceneTest, updateOrClearInsideEachThrows)
+TEST(SceneTest, updateAndClearInsideEachRun)
 {
     Log        log;
     Scene      scene;
-    GameObject object = startedObject(scene, log, "a");
-    object.destroy();
+    auto       mesh   = std::make_shared<const Mesh>();
+    GameObject first  = startedObject(scene, log, "a");
+    GameObject second = scene.createGameObject();
+    second.addComponent<MeshRenderer>(MeshRenderer{.mesh = mesh});
+    first.destroy();
 
     int visited = 0;
     scene.each<Transform>(
         [&](GameObject, Transform&)
         {
             ++visited;
-            EXPECT_THROW(scene.update(gFrame), std::logic_error);
-            EXPECT_THROW(scene.clear(), std::logic_error);
-            EXPECT_THROW(scene.createGameObject(), std::logic_error);
+
+            scene.update(gFrame);
+            EXPECT_FALSE(first.isValid());
+            EXPECT_TRUE(second.isValid());
+            EXPECT_EQ(log, (Log{"a.destroy"}));
+
+            // The objects are gone at once, their components when the each() returns.
+            scene.clear();
+            EXPECT_FALSE(second.isValid());
+            EXPECT_EQ(mesh.use_count(), 2);
         });
 
-    // All three threw before they changed anything: the queued destroy still drains.
+    // clear() destroyed the second object before the walk reached it.
     EXPECT_EQ(visited, 1);
-    EXPECT_TRUE(object.isValid());
-    EXPECT_TRUE(log.empty());
-    scene.update(gFrame);
-    EXPECT_FALSE(object.isValid());
-    EXPECT_EQ(log, (Log{"a.destroy"}));
+    EXPECT_EQ(mesh.use_count(), 1);
+}
+
+TEST(SceneTest, createGameObjectInsideEach)
+{
+    Scene scene;
+    for (int i = 0; i < 3; ++i)
+    {
+        scene.createGameObject();
+    }
+
+    int                     visited = 0;
+    std::vector<GameObject> created;
+    scene.each<Transform>(
+        [&](GameObject, Transform&)
+        {
+            ++visited;
+            created.push_back(scene.createGameObject());
+        });
+
+    // The each() does not visit what it creates.
+    EXPECT_EQ(visited, 3);
+    ASSERT_EQ(created.size(), 3u);
+    for (GameObject object : created)
+    {
+        EXPECT_TRUE(object.isValid());
+        EXPECT_NE(object.getComponent<Transform>(), nullptr);
+    }
+}
+
+TEST(SceneTest, removeComponentInsideEachKeepsReference)
+{
+    Scene      scene;
+    auto       mesh   = std::make_shared<const Mesh>();
+    GameObject object = scene.createGameObject();
+    object.addComponent<MeshRenderer>(MeshRenderer{.mesh = mesh});
+
+    scene.each<MeshRenderer>(
+        [&](GameObject visited, MeshRenderer& renderer)
+        {
+            visited.removeComponent<MeshRenderer>();
+
+            EXPECT_EQ(visited.getComponent<MeshRenderer>(), nullptr);
+            EXPECT_EQ(renderer.mesh, mesh);
+            EXPECT_EQ(mesh.use_count(), 2);
+        });
+
+    EXPECT_EQ(mesh.use_count(), 1);
 }
 
 TEST(SceneTest, destroyInsideEachIsDeferred)

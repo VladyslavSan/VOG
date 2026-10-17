@@ -41,6 +41,7 @@ target_sources(Engine
         src/VOG/Engine/Renderer/PipelineCache.cpp
         src/VOG/Engine/Renderer/PipelineCache.hpp
         src/VOG/Engine/Renderer/Renderer.cpp
+        src/VOG/Engine/Scene/Registry.cpp
         src/VOG/Engine/Scene/Scene.cpp
 )
 
