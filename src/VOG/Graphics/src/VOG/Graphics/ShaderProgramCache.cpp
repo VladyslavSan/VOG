@@ -125,7 +125,7 @@ ShaderProgramCache::ShaderProgramCache(const Vulkan::DevicePtr&     device,
         }
 
         std::shared_ptr<Vulkan::ShaderProgram> program =
-            mDevice->createShaderProgram(std::move(stages));
+            Vulkan::ShaderProgram::create(std::move(stages));
 
         mCache.emplace(shaderName, std::move(program));
     }
@@ -134,7 +134,7 @@ ShaderProgramCache::ShaderProgramCache(const Vulkan::DevicePtr&     device,
 ShaderProgramCache::~ShaderProgramCache() = default;
 
 std::shared_ptr<Vulkan::ShaderProgram>
-ShaderProgramCache::get(const std::string& name)
+ShaderProgramCache::get(const std::string& name) const
 {
     const auto found = mCache.find(name);
     if (found == mCache.end()) [[unlikely]]

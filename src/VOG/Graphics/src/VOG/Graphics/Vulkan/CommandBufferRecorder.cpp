@@ -4,7 +4,11 @@
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/CommandBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Common.hpp>
+#include <VOG/Graphics/Vulkan/DescriptorHeap.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
+#include <VOG/Graphics/Vulkan/Texture.hpp>
+#include <VOG/Graphics/Vulkan/UniformBlock.hpp>
+#include <VOG/Graphics/Vulkan/UploadBarriers.hpp>
 
 #include <array>
 
@@ -177,6 +181,17 @@ CommandBufferRecorder::RenderingPass::bindVertexBuffers(
 }
 
 void
+CommandBufferRecorder::RenderingPass::bindIndexBuffer(std::shared_ptr<Buffer> buffer,
+                                                      vk::DeviceSize          offset,
+                                                      vk::IndexType           type)
+{
+    CommandBuffer& commandBuffer = *mRecorder.mCommandBuffer;
+
+    commandBuffer.bindIndexBuffer(**buffer, offset, type);
+    commandBuffer.retain(std::move(buffer));
+}
+
+void
 CommandBufferRecorder::RenderingPass::setViewport(std::uint32_t                      firstViewport,
                                                   vk::ArrayProxy<const vk::Viewport> viewports)
 {
@@ -191,12 +206,143 @@ CommandBufferRecorder::RenderingPass::setScissor(std::uint32_t                  
 }
 
 void
+CommandBufferRecorder::RenderingPass::pushData(std::uint32_t              offset,
+                                               std::span<const std::byte> data)
+{
+    mRecorder.mCommandBuffer->pushDataEXT(
+        {.offset = offset, .data = {.address = data.data(), .size = data.size()}});
+}
+
+void
+CommandBufferRecorder::RenderingPass::useResource(std::shared_ptr<const Texture> texture)
+{
+    mRecorder.mCommandBuffer->retain(std::move(texture));
+}
+
+void
+CommandBufferRecorder::RenderingPass::useResource(std::shared_ptr<const UniformBlock> block)
+{
+    mRecorder.mCommandBuffer->retain(std::move(block));
+}
+
+void
 CommandBufferRecorder::RenderingPass::draw(std::uint32_t vertexCount,
                                            std::uint32_t instanceCount,
                                            std::uint32_t firstVertex,
                                            std::uint32_t firstInstance)
 {
     mRecorder.mCommandBuffer->draw(vertexCount, instanceCount, firstVertex, firstInstance);
+}
+
+void
+CommandBufferRecorder::RenderingPass::drawIndexed(std::uint32_t indexCount,
+                                                  std::uint32_t instanceCount,
+                                                  std::uint32_t firstIndex,
+                                                  std::int32_t  vertexOffset,
+                                                  std::uint32_t firstInstance)
+{
+    mRecorder.mCommandBuffer->drawIndexed(
+        indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+}
+
+void
+CommandBufferRecorder::bindDescriptorHeap(DescriptorHeapPtr heap)
+{
+    VOG_ASSERT_MSG(!mRenderingActive, "bindDescriptorHeap needs to be outside a RenderingPass.");
+
+    mCommandBuffer->bindSamplerHeapEXT(heap->mSamplerBind);
+    mCommandBuffer->bindResourceHeapEXT(heap->mResourceBind);
+    mCommandBuffer->retain(std::move(heap));
+}
+
+void
+CommandBufferRecorder::copyBuffer(const BufferPtr& staging,
+                                  const BufferPtr& destination,
+                                  std::uint32_t    usageFamily)
+{
+    VOG_ASSERT_MSG(!mRenderingActive, "copyBuffer needs to be outside a RenderingPass.");
+    VOG_ASSERT_MSG(staging->byteSize() <= destination->byteSize(),
+                   "The destination of copyBuffer is smaller than the staging buffer.");
+
+    mCommandBuffer->retain(staging);
+    mCommandBuffer->retain(destination);
+
+    mCommandBuffer->copyBuffer(
+        **staging, **destination, vk::BufferCopy{.size = staging->byteSize()});
+
+    const BufferUploadBarriers barriers =
+        bufferUploadBarriers(**destination, mPool->mFamilyIndex, usageFamily);
+    if (barriers.release)
+    {
+        unsafeSetBarriers({}, {*barriers.release}, {});
+    }
+}
+
+void
+CommandBufferRecorder::copyBufferToTexture(const BufferPtr&  staging,
+                                           const TexturePtr& texture,
+                                           std::uint32_t     usageFamily)
+{
+    VOG_ASSERT_MSG(!mRenderingActive, "copyBufferToTexture needs to be outside a RenderingPass.");
+
+    constexpr vk::ImageSubresourceRange kColor{
+        .aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = 1u, .layerCount = 1u};
+
+    mCommandBuffer->retain(staging);
+    mCommandBuffer->retain(texture);
+
+    vk::ImageMemoryBarrier2 barrier{.srcStageMask        = vk::PipelineStageFlagBits2::eTopOfPipe,
+                                    .dstStageMask        = vk::PipelineStageFlagBits2::eCopy,
+                                    .dstAccessMask       = vk::AccessFlagBits2::eTransferWrite,
+                                    .oldLayout           = vk::ImageLayout::eUndefined,
+                                    .newLayout           = vk::ImageLayout::eTransferDstOptimal,
+                                    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                    .image               = **texture,
+                                    .subresourceRange    = kColor};
+    unsafeSetBarriers({}, {}, {barrier});
+
+    const vk::Extent2D extent = texture->extent();
+    mCommandBuffer->copyBufferToImage(
+        **staging,
+        **texture,
+        vk::ImageLayout::eTransferDstOptimal,
+        vk::BufferImageCopy{
+            .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .layerCount = 1u},
+            .imageExtent      = {.width = extent.width, .height = extent.height, .depth = 1u}});
+
+    barrier = textureUploadBarriers(**texture, mPool->mFamilyIndex, usageFamily).release;
+    unsafeSetBarriers({}, {}, {barrier});
+}
+
+void
+CommandBufferRecorder::acquire(const BufferPtr& buffer, std::uint32_t uploadFamily)
+{
+    VOG_ASSERT_MSG(!mRenderingActive, "acquire needs to be outside a RenderingPass.");
+
+    mCommandBuffer->retain(buffer);
+
+    const BufferUploadBarriers barriers =
+        bufferUploadBarriers(**buffer, uploadFamily, mPool->mFamilyIndex);
+    if (barriers.acquire)
+    {
+        unsafeSetBarriers({}, {*barriers.acquire}, {});
+    }
+}
+
+void
+CommandBufferRecorder::acquire(const TexturePtr& texture, std::uint32_t uploadFamily)
+{
+    VOG_ASSERT_MSG(!mRenderingActive, "acquire needs to be outside a RenderingPass.");
+
+    mCommandBuffer->retain(texture);
+
+    const TextureUploadBarriers barriers =
+        textureUploadBarriers(**texture, uploadFamily, mPool->mFamilyIndex);
+    if (barriers.acquire)
+    {
+        unsafeSetBarriers({}, {}, {*barriers.acquire});
+    }
 }
 
 void

@@ -2,6 +2,9 @@
 
 #include <VOG/Application/SDL.hpp>
 #include <VOG/Engine/Renderer/Renderer.hpp>
+#include <VOG/Engine/Scene/Scene.hpp>
+
+#include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <exception>
@@ -14,9 +17,6 @@ namespace VOG::Application
 {
 namespace
 {
-/** How often run() looks at the render thread when no event arrives. */
-constexpr Sint32 gEventTimeoutMs = 100;
-
 void
 validateConfig(const Application::ApplicationConfig& config)
 {
@@ -37,6 +37,69 @@ toPixels(Sint32 size)
 {
     return static_cast<std::uint32_t>(std::max(size, Sint32{0}));
 }
+
+/** Sets a flag for its lifetime. */
+class FlagScope
+{
+public:
+    explicit FlagScope(bool& flag)
+        : mFlag{flag}
+    {
+        mFlag = true;
+    }
+
+    ~FlagScope() { mFlag = false; }
+
+    FlagScope(const FlagScope&)            = delete;
+    FlagScope& operator=(const FlagScope&) = delete;
+
+private:
+    bool& mFlag;
+};
+
+/** An SDL event watch for its lifetime. */
+class EventWatch
+{
+public:
+    EventWatch(SDL_EventFilter filter, void* userdata)
+        : mFilter{filter}
+        , mUserdata{userdata}
+    {
+        if (!SDL_AddEventWatch(mFilter, mUserdata))
+        {
+            throw std::runtime_error(std::format("SDL_AddEventWatch failed: {}", SDL_GetError()));
+        }
+    }
+
+    ~EventWatch() { SDL_RemoveEventWatch(mFilter, mUserdata); }
+
+    EventWatch(const EventWatch&)            = delete;
+    EventWatch& operator=(const EventWatch&) = delete;
+
+private:
+    SDL_EventFilter mFilter;
+    void*           mUserdata;
+};
+
+/** Logs a render-thread failure that run() cannot rethrow, worded like ~Renderer. */
+void
+logFailure(const std::exception_ptr& failure)
+{
+    try
+    {
+        std::rethrow_exception(failure);
+    }
+    catch (const std::exception& exception)
+    {
+        spdlog::error("The render thread failed while run() was unwinding: {}", exception.what());
+    }
+    catch (...)
+    {
+        spdlog::error(
+            "The render thread failed with an unknown exception while run() was "
+            "unwinding.");
+    }
+}
 } // namespace
 
 Application::Application(const ApplicationConfig& config)
@@ -49,7 +112,10 @@ Application::Application(const ApplicationConfig& config, Validated /*validated*
     , mWindow{std::make_unique<SDLWindow>(config.title.c_str(),
                                           static_cast<int>(config.width),
                                           static_cast<int>(config.height),
-                                          SDL_WINDOW_RESIZABLE)}
+                                          config.hidden ? SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN
+                                                        : SDL_WINDOW_RESIZABLE)}
+    , mStartTime{std::chrono::steady_clock::now()}
+    , mScene{std::make_shared<Engine::Scene>()}
     , mRenderer{std::make_unique<Engine::Renderer>(mWindow->getSurfaceHandle(),
                                                    Engine::Renderer::Config{
                                                        .appName          = config.title,
@@ -61,9 +127,15 @@ Application::Application(const ApplicationConfig& config, Validated /*validated*
                                                        .extent           = mWindow->sizeInPixels(),
                                                    })}
 {
+    mRenderer->addRenderable(mScene);
 }
 
-Application::~Application() = default;
+Application::~Application()
+{
+    // Here, not in ~Scene: onDestroy() may use the renderer, which is alive and stopped (run()
+    // stops it) until this body ends. Without it the scene would die after the renderer.
+    mScene->clear();
+}
 
 void
 Application::addRenderable(std::shared_ptr<Engine::Renderable> renderable)
@@ -71,35 +143,136 @@ Application::addRenderable(std::shared_ptr<Engine::Renderable> renderable)
     mRenderer->addRenderable(std::move(renderable));
 }
 
+Engine::Renderer&
+Application::getRenderer()
+{
+    return *mRenderer;
+}
+
+Engine::Scene&
+Application::getScene()
+{
+    return *mScene;
+}
+
+void
+Application::frame(Wait wait)
+{
+    const FlagScope inFrame{mInFrame};
+
+    const auto now   = std::chrono::steady_clock::now();
+    float      delta = 0.0f;
+    if (mLastFrameTime)
+    {
+        delta = Engine::frameDelta(std::chrono::duration<double>{now - *mLastFrameTime}.count());
+    }
+    mLastFrameTime = now;
+    const Engine::FrameContext frameContext{
+        .timeSeconds  = std::chrono::duration<double>{now - mStartTime}.count(),
+        .deltaSeconds = delta};
+
+    // Here, not in onDraw(): a frame the renderer skips for want of room does not call onDraw().
+    mScene->update(frameContext);
+    if (wait == Wait::eYes)
+    {
+        mRenderer->submitFrame(frameContext);
+    }
+    else
+    {
+        mRenderer->trySubmitFrame(frameContext);
+    }
+}
+
+bool
+Application::onEvent(void* application, SDL_Event* event)
+{
+    auto& self = *static_cast<Application*>(application);
+
+    // SDL calls a watch on the thread that pushes the event. Everything here belongs to the main
+    // thread.
+    if (!SDL_IsMainThread())
+    {
+        return true;
+    }
+
+    switch (event->type)
+    {
+    case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+        self.mRenderer->resize(
+            {.width = toPixels(event->window.data1), .height = toPixels(event->window.data2)});
+        break;
+    // data1 is 1 for the tick of a live resize: macOS and Windows keep the main thread in their
+    // resize loop and send this event from it about 60 times a second.
+    case SDL_EVENT_WINDOW_EXPOSED:
+        if (event->window.data1 == 1 && !self.mInFrame && !self.mWatchFailure &&
+            self.mRenderer->getState() == Engine::Renderer::State::eRunning)
+        {
+            try
+            {
+                // Never waits: the tick must not stall the resize loop.
+                self.frame(Wait::eNo);
+            }
+            catch (...)
+            {
+                self.mWatchFailure = std::current_exception();
+            }
+        }
+        break;
+    default:
+        break;
+    }
+
+    return true;
+}
+
 void
 Application::run()
 {
+    mWatchFailure = nullptr;
+    mLastFrameTime.reset();
+    // Resizes before the watch exists are not seen by it.
+    mRenderer->resize(mWindow->sizeInPixels());
     mRenderer->start();
 
-    // Wakes every gEventTimeoutMs, so a render thread that failed is noticed without an event.
-    bool quit = false;
-    while (!quit && mRenderer->getState() == Engine::Renderer::State::eRunning)
+    try
     {
-        SDL_Event event;
-        if (!SDL_WaitEventTimeout(&event, gEventTimeoutMs))
-        {
-            continue;
-        }
+        const EventWatch watch{&Application::onEvent, this};
 
-        switch (event.type)
+        bool quit = false;
+        while (mRenderer->getState() == Engine::Renderer::State::eRunning)
         {
-        // SDL_EVENT_QUIT is Cmd+Q, Dock "Quit" and SIGTERM/SIGINT.
-        case SDL_EVENT_QUIT:
-        case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
-            quit = true;
-            break;
-        case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
-            mRenderer->resize(
-                {.width = toPixels(event.window.data1), .height = toPixels(event.window.data2)});
-            break;
-        default:
-            break;
+            SDL_Event event;
+            while (SDL_PollEvent(&event))
+            {
+                // SDL_EVENT_QUIT is Cmd+Q, Dock "Quit" and SIGTERM/SIGINT.
+                if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED)
+                {
+                    quit = true;
+                }
+            }
+
+            // The watch cannot throw through SDL; it left the exception here.
+            if (mWatchFailure)
+            {
+                std::rethrow_exception(std::exchange(mWatchFailure, nullptr));
+            }
+            if (quit)
+            {
+                break;
+            }
+
+            // Waits for the render thread, which paces the loop. A render thread that failed
+            // drains, so this does not hang, and getState() ends the loop.
+            frame(Wait::eYes);
         }
+    }
+    catch (...)
+    {
+        if (const std::exception_ptr failure = mRenderer->stop())
+        {
+            logFailure(failure);
+        }
+        throw;
     }
 
     if (const std::exception_ptr failure = mRenderer->stop())

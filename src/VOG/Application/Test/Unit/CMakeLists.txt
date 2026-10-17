@@ -8,6 +8,12 @@ target_sources(VOG.Application.Unit
         ApplicationTest.cpp
 )
 
+# The tests that call run() build a real Application, which compiles the shaders of this directory.
+target_compile_definitions(VOG.Application.Unit
+    PRIVATE
+        VOG_TEST_SHADER_PATH="${PROJECT_SOURCE_DIR}/src/VOG/Graphics/resources/shaders"
+)
+
 target_link_libraries(VOG.Application.Unit
     PUBLIC
         ${PROJECT_NAME}::Application
@@ -16,4 +22,6 @@ target_link_libraries(VOG.Application.Unit
 )
 
 include(GoogleTest)
-gtest_discover_tests(VOG.Application.Unit)
+# A run() that is never told to quit hangs; the tests have a watchdog of their own, this is the
+# backstop.
+gtest_discover_tests(VOG.Application.Unit PROPERTIES TIMEOUT 60)

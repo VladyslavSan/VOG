@@ -7,7 +7,7 @@ Common
   ├─ Math          (glm wrappers; consumed by Engine)
   ├─ CVarSystem    (SHARED; parked — only its unit tests link it today)
   └─ Graphics      (Vulkan wrappers; links Common only)
-       └─ Engine   (Renderer, Renderable / RenderItem)
+       └─ Engine   (Renderer, Renderable, Mesh, Material, CameraView, Scene (ECS, GameObject, Behaviour); links Graphics PRIVATE)
             └─ Application (SDL3 shell)
                  └─ Examples
 ```
@@ -39,9 +39,14 @@ Details: `docs/ResourceOwnership.md`, `docs/SwapchainSync.md`.
 - Build: `cmake --build build/build/Debug`
 - Test: `ctest --test-dir build/build/Debug --output-on-failure` (gtest
   units per module; the Graphics tests run headless through `VulkanFixture` and the Engine tests
-  render into a headless surface, so both need a Vulkan driver)
+  render into a headless surface, so both need a driver with `VK_EXT_descriptor_heap`: lavapipe,
+  ANV or RADV from Mesa 26.2. On macOS set
+  `VK_DRIVER_FILES=/opt/homebrew/opt/mesa/share/vulkan/icd.d/lvp_icd.aarch64.json`, because
+  MoltenVK has no heaps; on a driver without `VK_EXT_descriptor_heap` the tests fail at
+  device selection)
 - Run example: `./build/build/Debug/src/VOG/Examples/ApplicationExample/ApplicationExample --shader-storage-path src/VOG/Graphics/resources/shaders`
-  (Windows / macOS / Linux with Wayland or X11; Linux WSI is selected from the SDL window backend)
+  (Windows / macOS / Linux with Wayland or X11; Linux WSI is selected from the SDL window backend;
+  macOS needs the same `VK_DRIVER_FILES`)
 
 ## Conventions
 

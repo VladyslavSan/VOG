@@ -222,9 +222,16 @@ Swapchain::getFormat() const
 }
 
 Swapchain::ImageAcquireResult
-Swapchain::acquireNextImage(std::chrono::nanoseconds timeout)
+Swapchain::acquireNextImage(std::chrono::nanoseconds timeout, SemaphorePtr imageAvailable)
 {
-    auto [result, index, imageAvailable] = mGeneration->acquireNextImage(timeout);
+    VOG_ASSERT_MSG(imageAvailable, "Swapchain::acquireNextImage needs a semaphore to signal.");
+
+    const auto nanoseconds = static_cast<std::uint64_t>(std::max(timeout.count(), std::int64_t{0}));
+
+    // VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS makes eErrorOutOfDateKHR a returned result
+    // instead of a thrown vk::OutOfDateKHRError.
+    const auto [result, index] =
+        mGeneration->swapchain.acquireNextImage(nanoseconds, **imageAvailable, {});
 
     if (result == vk::Result::eErrorOutOfDateKHR)
     {

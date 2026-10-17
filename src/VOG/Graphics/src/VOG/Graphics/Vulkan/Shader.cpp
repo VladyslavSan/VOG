@@ -4,9 +4,12 @@
 #include <VOG/Graphics/Vulkan/Device.hpp>
 
 #include <spirv_reflect.hpp>
+#include <vulkan/vulkan_format_traits.hpp>
 
 #include <format>
 #include <ranges>
+#include <string_view>
+#include <utility>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -68,9 +71,18 @@ processStageResources(const spirv_cross::Compiler&   compiler,
             compiler.get_decoration(resource.id, spv::Decoration::DecorationLocation);
 
         const auto& resourceType = compiler.get_type(resource.base_type_id);
-        result.push_back({.location = static_cast<std::uint8_t>(location),
-                          .name     = resource.name,
-                          .format   = attributeSpirVTypeToVulkanType(resourceType)});
+
+        // The base type has no array dimensions; the variable's own type does.
+        std::uint32_t locationCount = std::max<std::uint32_t>(resourceType.columns, 1u);
+        for (const std::uint32_t size : compiler.get_type(resource.type_id).array)
+        {
+            locationCount *= size;
+        }
+
+        result.push_back({.location      = static_cast<std::uint8_t>(location),
+                          .name          = resource.name,
+                          .format        = attributeSpirVTypeToVulkanType(resourceType),
+                          .locationCount = locationCount});
     }
 
     std::ranges::sort(result,
@@ -124,20 +136,34 @@ parseStructMembers(const spirv_cross::Compiler& compiler, const spirv_cross::Res
     return members;
 }
 
+/**
+ * Pipelines have no layout, so a resource declared with a set and a binding could never be bound.
+ * SPIRV-Cross lists none of the heap resources here (ShaderTest, Shader_heapShaderReflects...).
+ */
 void
-checkResourceLocation(const Shader::Reflection::ResourceLocation& location)
+rejectDescriptorSetResources(const spirv_cross::ShaderResources& resources)
 {
-    if (location.set > Limits::gMaxNumDescriptorSets)
+    const std::pair<const char*, const spirv_cross::SmallVector<spirv_cross::Resource>&> kinds[] = {
+        {"uniform buffer", resources.uniform_buffers},
+        {"storage buffer", resources.storage_buffers},
+        {"sampled image", resources.sampled_images},
+        {"separate image", resources.separate_images},
+        {"separate sampler", resources.separate_samplers},
+        {"storage image", resources.storage_images},
+        {"acceleration structure", resources.acceleration_structures},
+        {"subpass input", resources.subpass_inputs},
+    };
+    for (const auto& [kind, list] : kinds)
     {
-        throw Shader::ShaderError{std::format("Resource set \"{}\" exceeds the limit of \"{}\"",
-                                              location.set,
-                                              Limits::gMaxNumDescriptorSets)};
-    }
-    if (location.binding > Limits::gMaxNumDescriptorBindings)
-    {
-        throw Shader::ShaderError{std::format("Resource binding \"{}\" exceeds the limit of \"{}\"",
-                                              location.binding,
-                                              Limits::gMaxNumDescriptorBindings)};
+        if (!list.empty())
+        {
+            throw Shader::ShaderError{
+                std::format("The shader declares the {} \"{}\" with a set and a binding. Shaders "
+                            "reach their resources through the descriptor heap "
+                            "(layout(descriptor_heap)); pipelines have no layout.",
+                            kind,
+                            list.front().name)};
+        }
     }
 }
 
@@ -146,6 +172,7 @@ reflect(std::span<const std::uint32_t> binary)
 {
     const spirv_cross::Compiler        compiler{binary.data(), binary.size()};
     const spirv_cross::ShaderResources resources = compiler.get_shader_resources();
+    rejectDescriptorSetResources(resources);
 
     Shader::Reflection reflection{};
 
@@ -162,27 +189,6 @@ reflect(std::span<const std::uint32_t> binary)
         reflection.pushConstants.variables = parseStructMembers(compiler, pushConstantsBlock);
     }
 
-    for (const spirv_cross::Resource& resource : resources.uniform_buffers)
-    {
-        const Shader::Reflection::ResourceLocation location = {
-            .set = compiler.get_decoration(resource.id, spv::Decoration::DecorationDescriptorSet),
-            .binding = compiler.get_decoration(resource.id, spv::Decoration::DecorationBinding)};
-        checkResourceLocation(location);
-
-        const auto& baseType = compiler.get_type(resource.base_type_id);
-        const auto  size     = compiler.get_declared_struct_size(baseType);
-
-        reflection.uniformBuffers.push_back({.location = location,
-                                             .size     = size,
-                                             .members  = parseStructMembers(compiler, resource)});
-    }
-    std::sort(reflection.uniformBuffers.begin(),
-              reflection.uniformBuffers.end(),
-              [](const auto& left, const auto& right)
-              {
-                  return left.location < right.location;
-              });
-
     return reflection;
 }
 } // namespace
@@ -190,8 +196,26 @@ reflect(std::span<const std::uint32_t> binary)
 bool
 Shader::vertexFormatCompatible(Shader::Reflection::BaseType shaderVertexFormat, vk::Format provided)
 {
-    // Todo: implement compatibility checking.
-    return true;
+    using Type = Shader::Reflection::BaseType::Type;
+
+    constexpr std::uint8_t kDoubleBits = 64u;
+    if (shaderVertexFormat.type == Type::eDouble || provided == vk::Format::eUndefined ||
+        vk::componentBits(provided, 0u) == kDoubleBits)
+    {
+        return false;
+    }
+
+    // The same split as the numeric type of a format: only SINT and UINT are integers.
+    const std::string_view numeric = vk::componentNumericFormat(provided, 0u);
+    switch (shaderVertexFormat.type)
+    {
+    case Type::eInt:
+        return numeric == "SINT";
+    case Type::eUInt:
+        return numeric == "UINT";
+    default:
+        return numeric != "SINT" && numeric != "UINT";
+    }
 }
 
 Shader::Shader(DevicePtr _device, Shader::ShadingStage stage, std::span<const std::uint32_t> binary)

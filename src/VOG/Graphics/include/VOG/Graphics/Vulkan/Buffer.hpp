@@ -52,7 +52,21 @@ public:
      */
     [[nodiscard]] MemoryMapping mapForWrite();
 
+    /** The size the buffer was created with; the memory behind it may be larger. */
+    vk::DeviceSize
+    byteSize() const noexcept
+    {
+        return mByteSize;
+    }
+
+    /** GPU address of the buffer. Only for a buffer created with eShaderDeviceAddress usage. */
+    [[nodiscard]] vk::DeviceAddress deviceAddress() const;
+
 private:
-    Buffer(MemoryAllocator::Allocation allocation, vk::raii::Buffer buffer);
+    Buffer(MemoryAllocator::Allocation allocation,
+           vk::raii::Buffer            buffer,
+           vk::DeviceSize              byteSize);
+
+    vk::DeviceSize mByteSize;
 };
 } // namespace VOG::Graphics::Vulkan

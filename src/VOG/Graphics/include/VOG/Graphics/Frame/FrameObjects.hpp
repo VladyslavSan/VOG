@@ -39,6 +39,14 @@ public:
     const Vulkan::SemaphorePtr& getRenderFinishedSemaphore() const;
 
     /**
+     * The semaphore the swapchain acquire of this slot's frame signals and the frame's submit
+     * waits. It is unsignaled with no pending operation once FrameObjectManager::prepareNextFrame
+     * returned this slot: the wait of the slot's previous submit is done, as its fence showed.
+     * An image dropped between acquire and submit leaves it signaled (SwapchainSync.md, known gap).
+     */
+    const Vulkan::SemaphorePtr& getAcquireSemaphore() const;
+
+    /**
      * Keeps @p presentation until this frame slot starts again. The slot's render-finished
      * semaphore is waited by that presentation, so the slot must not signal it again before the
      * presentation fence signalled; onFrameStart() drops the presentation, and
@@ -59,11 +67,19 @@ public:
      */
     Vulkan::CommandBufferPoolPtr getCommandBufferPoolForThread(std::size_t threadId);
 
+    /**
+     * The pool of the slot for command buffers of the transfer queue's family. Reset together
+     * with the other pools when the slot starts again.
+     *
+     * @note Render thread only, like the other pools.
+     */
+    const Vulkan::CommandBufferPoolPtr& getTransferCommandBufferPool() const;
+
 protected:
     /**
      * Frame cleanups from previous usage like resetting the command buffers and command pools, and
      * dropping the previous presentation of this slot, whose destructor waits for its present
-     * fence.
+     * fence. Calling it again before the slot is used changes nothing.
      */
     void onFrameStart();
 
@@ -75,6 +91,11 @@ protected:
     /** Vulkan device provider */
     Vulkan::DevicePtr mDevice;
 
+    /** Signaled by the swapchain acquire; waited by the graphics submit. The submit fence, which
+     *  onFrameStart() waits, shows that the wait is done, so the next acquire may signal it again.
+     */
+    Vulkan::SemaphorePtr mAcquireSemaphore;
+
     /** Signaled by the graphics submit; waited by vkQueuePresentKHR. The submit fence does not
      *  prove the presentation engine consumed the wait, so the semaphore is safe to signal again
      *  only after mPresentation was dropped in onFrameStart(), which waits for its present fence.
@@ -83,6 +104,10 @@ protected:
 
     /** Per working thread command buffer pools */
     std::vector<Vulkan::CommandBufferPoolPtr> mCommandBufferPools;
+
+    /** Command buffers of the transfer queue's family; the graphics family when the device has no
+     *  family of its own for transfer. */
+    Vulkan::CommandBufferPoolPtr mTransferCommandBufferPool;
 
     /** The last presentation of this slot; it holds the swapchain the presentation uses. */
     std::optional<Vulkan::Swapchain::Presentation> mPresentation;

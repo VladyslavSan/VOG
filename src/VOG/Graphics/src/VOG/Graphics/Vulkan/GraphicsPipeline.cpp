@@ -4,39 +4,94 @@
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 
+#include <algorithm>
+#include <format>
 #include <stdexcept>
+#include <string>
 
 namespace VOG::Graphics::Vulkan
 {
 namespace
 {
-bool
-validateVertexAttributes(const ShaderProgram& shaderProgram, const VertexLayout& vertexLayout)
+/** "vec3", "ivec4", "mat4", "float": how the shader declares the input. */
+std::string
+describe(Shader::Reflection::BaseType type)
 {
-    const auto& vertexAttributes = shaderProgram.stages.vertex.shader->reflection.inAttributes;
-    if (vertexAttributes.size() != vertexLayout.attributeDescription.size()) [[unlikely]]
+    using Type = Shader::Reflection::BaseType::Type;
+
+    const char* prefix = "";
+    const char* scalar = "float";
+    switch (type.type)
     {
-        return false;
+    case Type::eInt:
+        prefix = "i";
+        scalar = "int";
+        break;
+    case Type::eUInt:
+        prefix = "u";
+        scalar = "uint";
+        break;
+    case Type::eDouble:
+        prefix = "d";
+        scalar = "double";
+        break;
+    default:
+        break;
     }
 
-    for (const auto& vertexAttribute : vertexAttributes)
+    if (type.columns > 1u)
     {
-        const auto found =
-            std::find_if(vertexLayout.attributeDescription.begin(),
-                         vertexLayout.attributeDescription.end(),
-                         [location = vertexAttribute.location](const auto& description)
-                         {
-                             return location == description.location;
-                         });
+        // GLSL names a matrix by columns, then rows: mat2x3 has 2 columns of 3 components.
+        return type.columns == type.components
+                 ? std::format("{}mat{}", prefix, std::uint32_t{type.columns})
+                 : std::format("{}mat{}x{}",
+                               prefix,
+                               std::uint32_t{type.columns},
+                               std::uint32_t{type.components});
+    }
 
-        if (found == vertexLayout.attributeDescription.end() ||
-            !Shader::vertexFormatCompatible(vertexAttribute.format, found->format))
+    return type.components > 1u ? std::format("{}vec{}", prefix, std::uint32_t{type.components})
+                                : scalar;
+}
+
+/**
+ * Every location the vertex shader reads needs an attribute of a compatible numeric type, or the
+ * pipeline is invalid (VUID-VkGraphicsPipelineCreateInfo-Input-07904, -08733). Extra attributes
+ * are allowed, and so are attributes with fewer or more components than the shader declares.
+ */
+void
+validateVertexInputs(const ShaderProgram& program, const VertexLayout& vertexLayout)
+{
+    for (const auto& input : program.stages.vertex.shader->reflection.inAttributes)
+    {
+        for (std::uint32_t location = input.location;
+             location < input.location + input.locationCount;
+             ++location)
         {
-            return false;
+            const auto found = std::ranges::find(vertexLayout.attributeDescription,
+                                                 location,
+                                                 &vk::VertexInputAttributeDescription::location);
+            if (found == vertexLayout.attributeDescription.end())
+            {
+                throw std::invalid_argument{
+                    std::format("The vertex shader reads \"{}\" ({}) at location {}, but the "
+                                "vertex layout has no attribute there.",
+                                input.name,
+                                describe(input.format),
+                                location)};
+            }
+            if (!Shader::vertexFormatCompatible(input.format, found->format))
+            {
+                throw std::invalid_argument{
+                    std::format("The vertex shader reads \"{}\" ({}) at location {}, which the "
+                                "vertex attribute format {} cannot feed.",
+                                input.name,
+                                describe(input.format),
+                                location,
+                                vk::to_string(found->format))};
+            }
         }
     }
-
-    return true;
 }
 
 vk::raii::Pipeline
@@ -60,6 +115,7 @@ makePipeline(const Device&                       device,
     };
 
     const auto& vertexLayout = createInfo.vertexLayout;
+    validateVertexInputs(program, vertexLayout);
 
     const vk::PipelineVertexInputStateCreateInfo vertexInputState{
         .vertexBindingDescriptionCount =
@@ -90,6 +146,7 @@ makePipeline(const Device&                       device,
         .dynamicStateCount = static_cast<std::uint32_t>(createInfo.dynamicStates.size()),
         .pDynamicStates    = createInfo.dynamicStates.data()};
 
+    // No pipeline layout: the shaders reach their resources through the descriptor heap.
     vk::StructureChain info{
         vk::GraphicsPipelineCreateInfo{
             .stageCount          = static_cast<std::uint32_t>(shadingStages.size()),
@@ -102,8 +159,10 @@ makePipeline(const Device&                       device,
             .pDepthStencilState  = &createInfo.depthStencil,
             .pColorBlendState    = &blendingState,
             .pDynamicState       = &dynamicState,
-            .layout              = *program.pipelineLayout,
+            .layout              = nullptr,
         },
+        vk::PipelineCreateFlags2CreateInfo{.flags =
+                                               vk::PipelineCreateFlagBits2::eDescriptorHeapEXT},
         vk::PipelineRenderingCreateInfo{
             .colorAttachmentCount = static_cast<std::uint32_t>(
                 createInfo.renderingDescription.colorAttachmentFormats.size()),
@@ -120,12 +179,6 @@ makePipeline(const Device&                       device,
     catch (const vk::SystemError& error)
     {
         using namespace std::string_literals;
-        if (!validateVertexAttributes(program, vertexLayout))
-        {
-            throw std::runtime_error{
-                "GraphicsPipeline creation failed. Shader program is incompatible with vertex "
-                "layout provided."};
-        }
         throw std::runtime_error{"GraphicsPipeline creation failed. "s + error.what()};
     }
 }

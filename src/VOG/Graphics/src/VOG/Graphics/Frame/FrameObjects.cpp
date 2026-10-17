@@ -11,7 +11,10 @@ namespace VOG::Graphics::Frame
 {
 FrameObjects::FrameObjects(Vulkan::DevicePtr device, std::size_t threadCount)
     : mDevice{std::move(device)}
+    , mAcquireSemaphore{mDevice->createSemaphore()}
     , mRenderFinishedSemaphore{mDevice->createSemaphore()}
+    , mTransferCommandBufferPool{
+          mDevice->createCommandBufferPool(mDevice->queueInfos.transfer.familyIndex)}
 {
     mCommandBufferPools.reserve(threadCount);
     std::generate_n(std::back_inserter(mCommandBufferPools),
@@ -20,6 +23,12 @@ FrameObjects::FrameObjects(Vulkan::DevicePtr device, std::size_t threadCount)
                     {
                         return mDevice->createCommandBufferPool();
                     });
+}
+
+const Vulkan::SemaphorePtr&
+FrameObjects::getAcquireSemaphore() const
+{
+    return mAcquireSemaphore;
 }
 
 const Vulkan::SemaphorePtr&
@@ -46,6 +55,12 @@ FrameObjects::getCommandBufferPoolForThread(std::size_t threadId)
     return mCommandBufferPools[threadId];
 }
 
+const Vulkan::CommandBufferPoolPtr&
+FrameObjects::getTransferCommandBufferPool() const
+{
+    return mTransferCommandBufferPool;
+}
+
 void
 FrameObjects::onFrameStart()
 {
@@ -64,5 +79,6 @@ FrameObjects::resetPools()
                           {
                               poolPtr->reset();
                           });
+    mTransferCommandBufferPool->reset();
 }
 } // namespace VOG::Graphics::Frame

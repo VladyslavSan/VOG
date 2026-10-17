@@ -2,7 +2,6 @@
 
 #include <VOG/Graphics/Vulkan/Device.hpp>
 
-#include <algorithm>
 #include <utility>
 
 namespace VOG::Graphics::Vulkan
@@ -48,33 +47,5 @@ SwapchainGeneration::SwapchainGeneration(DevicePtr                             _
     , swapchain{device->raii(), createInfo}
     , images{makeImages(*device, swapchain, format)}
 {
-    // One per image plus the spare.
-    mAcquireSemaphores.reserve(images.size() + 1u);
-    for (std::size_t i = 0u; i <= images.size(); ++i)
-    {
-        mAcquireSemaphores.push_back(device->createSemaphore());
-    }
-}
-
-SwapchainGeneration::Acquire
-SwapchainGeneration::acquireNextImage(std::chrono::nanoseconds timeout)
-{
-    const auto nanoseconds = static_cast<std::uint64_t>(std::max(timeout.count(), std::int64_t{0}));
-
-    // VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS makes eErrorOutOfDateKHR a returned result
-    // instead of a thrown vk::OutOfDateKHRError.
-    const auto [result, index] =
-        swapchain.acquireNextImage(nanoseconds, **mAcquireSemaphores.back(), {});
-
-    if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
-    {
-        return {.result = result, .index = 0u, .imageAvailable = nullptr};
-    }
-
-    // The spare was signaled by the acquire; it becomes the semaphore of that image, and the
-    // evicted one is the new spare.
-    std::swap(mAcquireSemaphores.back(), mAcquireSemaphores.at(index));
-
-    return {.result = result, .index = index, .imageAvailable = mAcquireSemaphores.at(index)};
 }
 } // namespace VOG::Graphics::Vulkan

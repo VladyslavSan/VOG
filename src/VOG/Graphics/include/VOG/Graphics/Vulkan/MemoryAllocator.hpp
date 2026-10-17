@@ -2,6 +2,7 @@
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
+#include <VOG/Graphics/Vulkan/DescriptorHeap.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -14,6 +15,7 @@ namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Buffer);
 VOG_DECLARE_PTR(Device);
+VOG_DECLARE_PTR(Texture);
 
 enum class AllocationFlag : std::uint8_t
 {
@@ -63,6 +65,10 @@ private:
     std::unique_ptr<Buffer> makeBuffer(const vk::BufferCreateInfo& createInfo,
                                        const AllocationParameters& allocationCreateInfo);
 
+    /** Device-local image; the texture owns @p slot, the descriptor of the image. */
+    std::unique_ptr<Texture> makeTexture(const vk::ImageCreateInfo& createInfo,
+                                         DescriptorHeap::Slot       slot);
+
     Device&         mDevice;
     VmaAllocator_T* mAllocator;
 };
@@ -71,6 +77,9 @@ struct MemoryAllocator::AllocationParameters
 {
     /** The memory type is always picked by VMA for the buffer's usage. */
     AllocationFlags flags;
+
+    /** Minimum address alignment of the buffer; 0 takes what the buffer's usage needs. */
+    vk::DeviceSize alignment = 0u;
 };
 
 class MemoryAllocator::Allocation

@@ -1,67 +1,35 @@
 #pragma once
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
+#include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/DeviceChild.hpp>
 
 namespace VOG::Graphics::Vulkan
 {
+VOG_DECLARE_PTR(TimelineSemaphore);
+
 /**
- * Timeline semaphore's main perk is that it allows very easy mechanism for chaining synchronization
- * using the counter.
+ * Timeline semaphore. It exists only as shared_ptr, so that Queue::submit can hand it to the
+ * command buffers it submits: they retain it until their fence signals, like a binary Semaphore.
+ *
+ * The semaphore holds no counter. Whoever chains work on it owns the value, because the value
+ * that a submit waits or signals has to be committed in step with the submit.
  */
 class TimelineSemaphore
     : public DeviceChild
     , private vk::raii::Semaphore
 {
+    friend class Device;
+
+    explicit TimelineSemaphore(DevicePtr device);
+
 public:
     using vk::raii::Semaphore::operator*;
 
-    /** Describes wait operation on timeline semaphore. */
-    struct WaitRequest
-    {
-        const TimelineSemaphore* semaphore = nullptr;
-        const std::uint64_t      value     = 0u;
-    };
+    TimelineSemaphore(const TimelineSemaphore&) = delete;
+    TimelineSemaphore(TimelineSemaphore&&)      = delete;
 
-    /** Describes signal operation on timeline semaphore. */
-    struct SignalRequest
-    {
-        const TimelineSemaphore* semaphore = nullptr;
-        const std::uint64_t      value     = 0u;
-    };
-
-private:
-    friend class Device;
-
-    TimelineSemaphore(DevicePtr device);
-
-public:
     [[nodiscard("Wait result can end with success, fail and timeout.")]]
     vk::Result waitOnCPU(std::uint64_t value, std::uint64_t timeout) const;
-
-    /**
-     * Get counter value that might be used for waitOnCPU() or wait/signal value.
-     *
-     * @return counter value.
-     */
-    std::uint64_t getCounter() const;
-
-    /**
-     * Increment counter value and return it. See getCounter() for additional info.
-     */
-    void incrementCounter();
-
-    /**
-     * Conversion op to use semaphore as a wait request with counter value for wait op.
-     */
-    operator WaitRequest() const;
-
-    /**
-     * Conversion op to use semaphore as a signal request with counter value for signal op.
-     */
-    operator SignalRequest() const;
-
-protected:
-    std::uint64_t mCurrentValue = 0u;
 };
 } // namespace VOG::Graphics::Vulkan

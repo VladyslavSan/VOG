@@ -17,10 +17,13 @@ target_sources(VOG.Graphics.Unit
         Vulkan/GraphicsPipelineTest.cpp
         Vulkan/ShaderProgramTest.cpp
         Vulkan/CommandBufferRecorderTest.cpp
+        Vulkan/DescriptorHeapTest.cpp
         Vulkan/DeviceLifetimeTest.cpp
         Vulkan/DeviceRequirementsTest.cpp
         Vulkan/InDestructorTest.cpp
+        Vulkan/QueueFamiliesTest.cpp
         Vulkan/SwapchainTest.cpp
+        Vulkan/UploadBarriersTest.cpp
         VulkanFixture.hpp
         VulkanValidationFixture.hpp
         TestShaderCompiler.hpp

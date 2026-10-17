@@ -1,6 +1,11 @@
 #include "VOG/Engine/Renderer/Renderer.hpp"
 
 #include <VOG/Common/Assert.hpp>
+#include "VOG/Engine/Renderer/FramePacketQueue.hpp"
+#include "VOG/Engine/Renderer/MaterialDefinition.hpp"
+#include "VOG/Engine/Renderer/MeshDefinition.hpp"
+#include "VOG/Engine/Renderer/PipelineCache.hpp"
+#include "VOG/Engine/Renderer/TextureDefinition.hpp"
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Frame/FrameObjectManager.hpp>
 #include <VOG/Graphics/ShaderProgramCache.hpp>
@@ -10,33 +15,131 @@
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferRecorder.hpp>
+#include <VOG/Graphics/Vulkan/DescriptorHeap.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/FencePool.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
+#include <VOG/Graphics/Vulkan/Limits.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
+#include <VOG/Graphics/Vulkan/Texture.hpp>
+#include <VOG/Graphics/Vulkan/UniformBlock.hpp>
 
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstring>
 #include <format>
+#include <iterator>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <thread>
-#include <typeinfo>
 #include <utility>
+#include <variant>
 
 namespace VOG::Engine
 {
+static_assert(std::atomic<Extent>::is_always_lock_free);
+
 namespace
 {
 constexpr std::chrono::milliseconds gZeroExtentBackoff{16};
-/** Upper bound on one wait for a free image, and so on stop latency (plus one frame). */
+/**
+ * Upper bound on one wait for a free image. Stop latency is this plus one frame, plus the fence
+ * waits of FrameObjectManager::prepareNextFrame, which have no timeout: they assume that the GPU
+ * and the presentation engine make progress.
+ */
 constexpr std::chrono::milliseconds gAcquireTimeout{100};
 constexpr std::size_t               gThreadId   = 0u;
 constexpr std::array                gClearColor = {0.0f, 0.0f, 0.0f, 1.0f};
+
+vk::Extent2D
+toVk(Extent extent)
+{
+    return vk::Extent2D{.width = extent.width, .height = extent.height};
+}
+
+constexpr std::size_t
+alignUp(std::size_t value, std::size_t alignment)
+{
+    return (value + alignment - 1u) / alignment * alignment;
+}
+
+/**
+ * Images and uniform blocks the descriptor heap holds at once.
+ * Fixed, because growing means binding another heap; make it grow when a scene runs out.
+ */
+constexpr std::uint32_t gDescriptorHeapSlots = 4096u;
+
+/** The one sampler of the sampler heap, at index 0. */
+const vk::SamplerCreateInfo gLinearRepeatSampler{.magFilter    = vk::Filter::eLinear,
+                                                 .minFilter    = vk::Filter::eLinear,
+                                                 .mipmapMode   = vk::SamplerMipmapMode::eLinear,
+                                                 .addressModeU = vk::SamplerAddressMode::eRepeat,
+                                                 .addressModeV = vk::SamplerAddressMode::eRepeat,
+                                                 .addressModeW = vk::SamplerAddressMode::eRepeat,
+                                                 .maxLod       = vk::LodClampNone};
+
+/**
+ * Records the pipeline and buffer binds of one rendering pass, and leaves out a bind that would
+ * repeat the previous bind of its kind in the pass. The pass is one command buffer, and the earlier
+ * bind already retained the resource in it until the fence signals, so a skipped bind loses no
+ * retention. That also makes comparing addresses sound: this command buffer retains every bound
+ * object, so no new allocation can reuse an address while the pass records. A non-indexed draw
+ * binds no index buffer and leaves the bound one as it was.
+ */
+class PassBinder
+{
+public:
+    explicit PassBinder(Graphics::Vulkan::CommandBufferRecorder::RenderingPass& pass)
+        : mPass{pass}
+    {
+    }
+
+    void
+    pipeline(const Graphics::Vulkan::GraphicsPipelinePtr& pipeline)
+    {
+        if (pipeline.get() != mPipeline)
+        {
+            mPass.bindPipeline(pipeline);
+            mPipeline = pipeline.get();
+        }
+    }
+
+    void
+    vertexBuffer(const Graphics::Vulkan::BufferPtr& buffer)
+    {
+        if (buffer.get() != mVertexBuffer)
+        {
+            mPass.bindVertexBuffers(0u, {{.buffer = buffer, .offset = 0u}});
+            mVertexBuffer = buffer.get();
+        }
+    }
+
+    void
+    indexBuffer(const Graphics::Vulkan::BufferPtr& buffer, vk::DeviceSize offset)
+    {
+        // Untested: every mesh owns its buffer, so the same buffer is always at the same offset;
+        // meshes that share a buffer would reach the offset comparison.
+        if (buffer.get() != mIndexBuffer || offset != mIndexOffset)
+        {
+            mPass.bindIndexBuffer(buffer, offset, vk::IndexType::eUint32);
+            mIndexBuffer = buffer.get();
+            mIndexOffset = offset;
+        }
+    }
+
+private:
+    Graphics::Vulkan::CommandBufferRecorder::RenderingPass& mPass;
+
+    const Graphics::Vulkan::GraphicsPipeline* mPipeline     = nullptr;
+    const Graphics::Vulkan::Buffer*           mVertexBuffer = nullptr;
+    const Graphics::Vulkan::Buffer*           mIndexBuffer  = nullptr;
+    vk::DeviceSize                            mIndexOffset  = 0u;
+};
 } // namespace
 
 Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& config)
@@ -49,19 +152,23 @@ Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& con
       })}
     , mVulkanDevice{mVulkanInstance->makeDevice()}
     , mGraphicsQueue{mVulkanDevice->getGraphicsQueue()}
+    , mTransferQueue{mVulkanDevice->getTransferQueue()}
     , mFencePool{Graphics::Vulkan::FencePool::create(mVulkanDevice)}
     , mShaderProgramCache{std::make_shared<Graphics::ShaderProgramCache>(mVulkanDevice,
                                                                          config.shaderSourcePath)}
+    , mHeap{mVulkanDevice->createDescriptorHeap(gDescriptorHeapSlots, {&gLinearRepeatSampler, 1u})}
     , mSwapchain{mVulkanDevice->createSwapchain(Graphics::Vulkan::Swapchain::SwapchainParameters{
           .framesInFlight = mFramesInFlight,
           .surface        = surfaceHandle,
-          .extent         = config.extent,
+          .extent         = toVk(config.extent),
       })}
     , mFrameObjectManager{std::make_unique<Graphics::Frame::FrameObjectManager>(
           mVulkanDevice, frameSlotCount(mFramesInFlight, mSwapchain->getImageCount()), 1u)}
-    , mStartTime{std::chrono::steady_clock::now()}
     , mRequestedExtent{config.extent}
     , mAppliedExtent{config.extent}
+    , mUploadTimeline{mVulkanDevice->createTimelineSemaphore()}
+    , mPipelineCache{std::make_unique<PipelineCache>(mVulkanDevice)}
+    , mPackets{std::make_unique<FramePacketQueue>()}
 {
 }
 
@@ -97,6 +204,7 @@ Renderer::frameSlotCount(std::uint8_t framesInFlight, std::size_t imageCount)
             imageCount);
     }
 
+    // More slots than images would only queue frames behind the images, and so add latency.
     return static_cast<std::uint8_t>(std::min<std::size_t>(framesInFlight, imageCount));
 }
 
@@ -113,78 +221,241 @@ Renderer::addRenderable(std::shared_ptr<Renderable> renderable)
 }
 
 void
-Renderer::resize(vk::Extent2D extent)
+Renderer::resize(Extent extent)
 {
     mRequestedExtent.store(extent);
 }
 
-std::shared_ptr<Renderable>
-Renderer::takePendingRenderable()
+MeshPtr
+Renderer::createMesh(const MeshDescription& description)
+{
+    if (description.vertices.empty() || description.stride == 0u ||
+        description.vertices.size() % description.stride != 0u)
+    {
+        throw std::invalid_argument{
+            std::format("A mesh needs vertices, a non-zero stride and a size that is a multiple of "
+                        "it; got {} bytes with stride {}.",
+                        description.vertices.size(),
+                        description.stride)};
+    }
+    if (description.attributes.size() > Graphics::Vulkan::Limits::gMaxNumStageAttributes)
+    {
+        throw std::invalid_argument{std::format("A mesh takes at most {} attributes; got {}.",
+                                                Graphics::Vulkan::Limits::gMaxNumStageAttributes,
+                                                description.attributes.size())};
+    }
+    for (const VertexAttribute& attribute : description.attributes)
+    {
+        if (std::uint64_t{attribute.offset} + sizeOf(attribute.format) > description.stride)
+        {
+            throw std::invalid_argument{std::format(
+                "A vertex attribute at offset {} does not fit in the stride of {} bytes.",
+                attribute.offset,
+                description.stride)};
+        }
+    }
+
+    const auto vertexCount =
+        static_cast<std::uint32_t>(description.vertices.size() / description.stride);
+    if (description.indices.size() % 3u != 0u)
+    {
+        throw std::invalid_argument{std::format(
+            "A mesh draws triangles, so its index count must be a multiple of 3; got {}.",
+            description.indices.size())};
+    }
+    for (std::size_t i = 0u; i < description.indices.size(); ++i)
+    {
+        if (description.indices[i] >= vertexCount)
+        {
+            throw std::invalid_argument{std::format("Index {} is {}, but the mesh has {} vertices.",
+                                                    i,
+                                                    description.indices[i],
+                                                    vertexCount)};
+        }
+    }
+
+    // The indices follow the vertices, aligned to the size of an index.
+    const std::size_t indexOffset =
+        alignUp(description.vertices.size_bytes(), sizeof(std::uint32_t));
+
+    const std::size_t size = indexOffset + description.indices.size_bytes();
+
+    // The staging buffer takes the bytes on this thread; the render thread copies them into the
+    // device-local buffer, which only the GPU reads.
+    Graphics::Vulkan::BufferPtr staging = mVulkanDevice->createBuffer(
+        {.size = size, .usage = vk::BufferUsageFlagBits::eTransferSrc},
+        {.flags = Graphics::Vulkan::AllocationFlag::eHostSequentialWrite});
+    {
+        auto mapping = staging->mapForWrite();
+        std::memcpy(mapping.data, description.vertices.data(), description.vertices.size_bytes());
+        if (!description.indices.empty())
+        {
+            std::memcpy(mapping.data + indexOffset,
+                        description.indices.data(),
+                        description.indices.size_bytes());
+        }
+    }
+
+    Graphics::Vulkan::BufferPtr buffer = mVulkanDevice->createBuffer(
+        {.size  = size,
+         .usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eIndexBuffer |
+                  vk::BufferUsageFlagBits::eTransferDst},
+        {});
+
+    // After the buffer exists, so that a frame which draws the mesh finds its upload.
+    {
+        const std::scoped_lock lock{mUploadMutex};
+        mPendingUploads.push_back({.staging = std::move(staging), .destination = buffer});
+    }
+
+    return std::make_shared<const Mesh>(
+        Mesh{.buffer      = std::move(buffer),
+             .vertexCount = vertexCount,
+             .stride      = description.stride,
+             .attributes  = description.attributes,
+             .indexCount  = static_cast<std::uint32_t>(description.indices.size()),
+             .indexOffset = indexOffset});
+}
+
+TexturePtr
+Renderer::createTexture(const TextureDescription& description)
+{
+    if (description.width == 0u || description.height == 0u)
+    {
+        throw std::invalid_argument{std::format("A texture needs a non-zero extent; got {}x{}.",
+                                                description.width,
+                                                description.height)};
+    }
+
+    constexpr std::uint64_t kBytesPerPixel = 4u;
+    const std::uint64_t     size =
+        std::uint64_t{description.width} * description.height * kBytesPerPixel;
+    if (description.pixels.size() != size)
+    {
+        throw std::invalid_argument{std::format("A {}x{} texture takes {} bytes of pixels; got {}.",
+                                                description.width,
+                                                description.height,
+                                                size,
+                                                description.pixels.size())};
+    }
+
+    Graphics::Vulkan::BufferPtr staging = mVulkanDevice->createBuffer(
+        {.size = size, .usage = vk::BufferUsageFlagBits::eTransferSrc},
+        {.flags = Graphics::Vulkan::AllocationFlag::eHostSequentialWrite});
+    {
+        auto mapping = staging->mapForWrite();
+        std::ranges::copy(description.pixels, mapping.data);
+    }
+
+    Graphics::Vulkan::TexturePtr texture = mVulkanDevice->createTexture(
+        mHeap, {description.width, description.height}, toVk(description.format));
+
+    // After the texture exists, so that a frame which draws it finds its upload.
+    {
+        const std::scoped_lock lock{mUploadMutex};
+        mPendingUploads.push_back({.staging = std::move(staging), .destination = texture});
+    }
+
+    return std::make_shared<const Texture>(Texture{.texture = std::move(texture)});
+}
+
+MaterialPtr
+Renderer::createMaterial(MaterialDescription description)
+{
+    if (description.parameters.size() > gMaxParametersSize)
+    {
+        throw std::invalid_argument{
+            std::format("A material takes at most {} bytes of parameters; got {}.",
+                        gMaxParametersSize,
+                        description.parameters.size())};
+    }
+    if (description.textures.size() > gMaxTextures)
+    {
+        throw std::invalid_argument{std::format("A material takes at most {} textures; got {}.",
+                                                gMaxTextures,
+                                                description.textures.size())};
+    }
+    if (std::ranges::any_of(description.textures,
+                            [](const TexturePtr& texture)
+                            {
+                                return !texture;
+                            }))
+    {
+        throw std::invalid_argument{"A material texture is null."};
+    }
+
+    Graphics::Vulkan::ShaderProgramPtr program = mShaderProgramCache->get(description.shader);
+
+    for (const Graphics::Vulkan::ShaderProgram::PushConstants::Range& range :
+         program->pushConstants.ranges)
+    {
+        if (std::size_t{range.offset} + range.size > gPushDataSize)
+        {
+            throw std::invalid_argument{std::format(
+                "Shader \"{}\" has a push-constant range [{}, {}) past the {} bytes of push data "
+                "that the renderer pushes.",
+                description.shader,
+                range.offset,
+                range.offset + range.size,
+                gPushDataSize)};
+        }
+    }
+
+    return std::make_shared<const Material>(
+        Material{.program  = std::move(program),
+                 .block    = mVulkanDevice->createUniformBlock(mHeap, description.parameters),
+                 .textures = std::move(description.textures)});
+}
+
+void
+Renderer::adoptPendingRenderables()
 {
     const std::scoped_lock lock{mPendingMutex};
-    if (mPending.empty())
-    {
-        return nullptr;
-    }
-
-    std::shared_ptr<Renderable> renderable = std::move(mPending.front());
-    mPending.pop_front();
-
-    return renderable;
+    mRenderables.insert(mRenderables.end(),
+                        std::make_move_iterator(mPending.begin()),
+                        std::make_move_iterator(mPending.end()));
+    mPending.clear();
 }
 
-void
-Renderer::prepareRenderables()
+FramePacket
+Renderer::makePacket(const FrameContext& frameContext)
 {
-    std::shared_ptr<Renderable> renderable = takePendingRenderable();
-    if (!renderable)
-    {
-        return;
-    }
+    // Renderables that onDraw() adds land in mPending and join the next frame.
+    adoptPendingRenderables();
 
-    const ResourceContext resourceContext{
-        mVulkanDevice, mShaderProgramCache, mSwapchain->getFormat()};
-
-    // One at a time and without a lock: prepare() may call addRenderable(), and the child is
-    // taken by this same loop. A prepare() that throws drops only its own renderable; the rest
-    // stay pending.
-    while (renderable)
-    {
-        renderable->prepare(resourceContext);
-        mRenderables.push_back(std::move(renderable));
-        renderable = takePendingRenderable();
-    }
-}
-
-void
-Renderer::collectRenderItems(const FrameContext& frameContext)
-{
-    mRenderItems.clear();
-
+    // A fresh vector of draws per frame, reuse its capacity if profiling shows the
+    // allocation.
+    FramePacket packet;
     for (const std::shared_ptr<Renderable>& renderable : mRenderables)
     {
-        Renderable&       current = *renderable;
-        const std::size_t before  = mRenderItems.size();
-        current.collect(frameContext, mRenderItems);
+        renderable->onDraw(frameContext, packet.draws);
+    }
 
-        for (std::size_t i = before; i < mRenderItems.size(); ++i)
-        {
-            const RenderItem& item = mRenderItems[i];
-            if (!item.pipeline || !item.vertexBuffer || item.vertexCount == 0u)
-            {
-                throw std::invalid_argument{
-                    std::format("{} produced a RenderItem without a pipeline, a vertex buffer or "
-                                "a vertex count.",
-                                typeid(current).name())};
-            }
-        }
+    // Here, not on the render thread: mPipelines has one entry per draw, in step with the draws.
+    std::erase_if(packet.draws.mDraws,
+                  [](const RenderQueue::Draw& draw)
+                  {
+                      return !draw.mesh || !draw.material;
+                  });
+
+    return packet;
+}
+
+void
+Renderer::resolvePipelines(const RenderQueue& draws)
+{
+    mPipelines.clear();
+    for (const RenderQueue::Draw& draw : draws.mDraws)
+    {
+        mPipelines.push_back(
+            mPipelineCache->get(*draw.mesh, *draw.material, mSwapchain->getFormat()));
     }
 }
 
 bool
-Renderer::applyExtent(vk::Extent2D requested)
+Renderer::applyExtent(Extent requested)
 {
-    if (!mSwapchain->recreate(requested))
+    if (!mSwapchain->recreate(toVk(requested)))
     {
         return false;
     }
@@ -195,13 +466,11 @@ Renderer::applyExtent(vk::Extent2D requested)
 }
 
 void
-Renderer::renderFrame()
+Renderer::renderFrame(FramePacket packet)
 {
     using namespace VOG::Graphics::Vulkan;
 
-    prepareRenderables();
-
-    const vk::Extent2D requested = mRequestedExtent.load();
+    const Extent requested = mRequestedExtent.load();
     if (requested != mAppliedExtent && !applyExtent(requested))
     {
         // Zero-sized (minimized); back off instead of spinning.
@@ -209,17 +478,15 @@ Renderer::renderFrame()
         return;
     }
 
-    // Collect and check before acquiring: a renderable that throws, or hands back a malformed
-    // item, must do so while no image is acquired. The frame's extent is the size of every image
-    // acquired from here on, because an out-of-date acquire drops the frame.
-    const vk::Extent2D extent = mSwapchain->getExtent();
-    collectRenderItems({
-        .timeSeconds =
-            std::chrono::duration<double>{std::chrono::steady_clock::now() - mStartTime}.count(),
-        .extent = extent,
-    });
+    // Before acquiring: a vertex layout the shader cannot read throws while no image is acquired.
+    resolvePipelines(packet.draws);
 
-    const auto acquireResult = mSwapchain->acquireNextImage(gAcquireTimeout);
+    // Before the acquire: the slot's fences show that its semaphores are free to signal again. The
+    // waits have no timeout, unlike the acquire.
+    const auto frame = mFrameObjectManager->prepareNextFrame();
+
+    const auto acquireResult =
+        mSwapchain->acquireNextImage(gAcquireTimeout, frame->getAcquireSemaphore());
     if (acquireResult.status == Swapchain::AcquireStatus::eOutOfDate)
     {
         if (!applyExtent(mRequestedExtent.load()))
@@ -237,12 +504,51 @@ Renderer::renderFrame()
     const auto& acquired = acquireResult.acquired;
     VOG_ASSERT_MSG(acquired, "eReady acquire must provide AcquiredSwapchainImage.");
 
-    // Advance the frame slot only when we will actually submit — skip/out-of-date must not
-    // burn a fence-keyed release slot.
-    auto frame = mFrameObjectManager->acquireNextFrame();
-    auto pool  = frame->getCommandBufferPoolForThread(gThreadId);
+    const vk::Extent2D     extent = acquired->getExtent2D();
+    const Math::Matrix4x4f viewProjection =
+        packet.draws.mCamera.viewProjection({.width = extent.width, .height = extent.height});
+
+    // Advance the frame slot only when we will actually submit: skip/out-of-date must not burn a
+    // fence-keyed release slot. Its pools were reset in prepareNextFrame().
+    mFrameObjectManager->advance();
+    auto pool = frame->getCommandBufferPoolForThread(gThreadId);
 
     auto recorder = pool->record();
+    recorder.bindDescriptorHeap(mHeap);
+
+    // Every upload that exists now, including those of resources that earlier dropped frames did
+    // not record. They stay in the list until the graphics submit below returns.
+    std::vector<PendingUpload> uploads;
+    {
+        const std::scoped_lock lock{mUploadMutex};
+        uploads.assign(mPendingUploads.begin(), mPendingUploads.end());
+    }
+
+    // The copies go to the transfer queue; the graphics recorder takes the resources over before
+    // the pass (nothing to record when the two queues share a family).
+    const std::uint32_t graphicsFamily = mGraphicsQueue->familyIndex;
+    const std::uint32_t transferFamily = mTransferQueue->familyIndex;
+
+    std::optional<ExecutableCommandBuffer> transferCommands;
+    if (!uploads.empty())
+    {
+        auto transferRecorder = frame->getTransferCommandBufferPool()->record();
+        for (const PendingUpload& upload : uploads)
+        {
+            if (const auto* buffer = std::get_if<Graphics::Vulkan::BufferPtr>(&upload.destination))
+            {
+                transferRecorder.copyBuffer(upload.staging, *buffer, graphicsFamily);
+                recorder.acquire(*buffer, transferFamily);
+            }
+            else
+            {
+                const auto& texture = std::get<Graphics::Vulkan::TexturePtr>(upload.destination);
+                transferRecorder.copyBufferToTexture(upload.staging, texture, graphicsFamily);
+                recorder.acquire(texture, transferFamily);
+            }
+        }
+        transferCommands.emplace(transferRecorder.finish());
+    }
 
     {
         recorder.setImageBarrier(
@@ -287,23 +593,46 @@ Renderer::renderFrame()
                                 },
                             });
 
-            for (const RenderItem& item : mRenderItems)
+            PassBinder binder{pass};
+
+            for (std::size_t i = 0u; i < packet.draws.mDraws.size(); ++i)
             {
-                pass.bindPipeline(item.pipeline);
-                pass.bindVertexBuffers(0u, {{.buffer = item.vertexBuffer, .offset = 0u}});
+                const RenderQueue::Draw& draw     = packet.draws.mDraws[i];
+                const Material&          material = *draw.material;
 
-                if (!item.pushConstants.empty())
+                // The matrix, then the heap indices of the parameter block and the textures;
+                // createMaterial checked that the shader's ranges end inside what is filled here.
+                const Math::Matrix4x4f               mvp = viewProjection * draw.world;
+                std::array<std::byte, gPushDataSize> pushData{};
+                std::memcpy(pushData.data(), &mvp, sizeof(mvp));
+                const std::uint32_t blockIndex = material.block->heapIndex();
+                std::memcpy(
+                    pushData.data() + gMaterialIndexOffset, &blockIndex, sizeof(blockIndex));
+
+                binder.pipeline(mPipelines[i]);
+                pass.useResource(material.block);
+                for (std::size_t textureIndex = 0u; textureIndex < material.textures.size();
+                     ++textureIndex)
                 {
-                    pass.pushConstants<std::byte>(
-                        *item.pipeline->program->pipelineLayout,
-                        item.pushConstantsStages,
-                        0u,
-                        vk::ArrayProxy<const std::byte>{
-                            static_cast<std::uint32_t>(item.pushConstants.size()),
-                            item.pushConstants.data()});
+                    const std::shared_ptr<Graphics::Vulkan::Texture>& texture =
+                        material.textures[textureIndex]->texture;
+                    const std::uint32_t index = texture->heapIndex();
+                    std::memcpy(pushData.data() + gTexturesOffset + (textureIndex * sizeof(index)),
+                                &index,
+                                sizeof(index));
+                    pass.useResource(texture);
                 }
-
-                pass.draw(item.vertexCount, 1, 0, 0);
+                pass.pushData(0u, pushData);
+                binder.vertexBuffer(draw.mesh->buffer);
+                if (draw.mesh->indexCount == 0u)
+                {
+                    pass.draw(draw.mesh->vertexCount, 1, 0, 0);
+                }
+                else
+                {
+                    binder.indexBuffer(draw.mesh->buffer, draw.mesh->indexOffset);
+                    pass.drawIndexed(draw.mesh->indexCount, 1, 0, 0, 0);
+                }
             }
         }
 
@@ -327,12 +656,46 @@ Renderer::renderFrame()
 
     auto executable = recorder.finish();
 
-    mGraphicsQueue->submit(*mFencePool,
-                           std::array{Queue::SemaphoreWait{
-                               .semaphore = acquired->imageAvailableSemaphore(),
-                               .stage     = vk::PipelineStageFlagBits2::eColorAttachmentOutput}},
-                           std::span{&executable, 1u},
-                           std::array{frame->getRenderFinishedSemaphore()});
+    // The transfer submit goes first. Its value is committed once the submit returned, so a
+    // submit that throws leaves the value and the pending uploads as they were. It waits for the
+    // previous value too: after a frame whose graphics submit threw, the uploads are recorded
+    // again while the first copy of them may still run.
+    if (transferCommands)
+    {
+        const std::uint64_t next = mUploadValue + 1u;
+        mTransferQueue->submit(
+            *mFencePool,
+            {},
+            std::span{&*transferCommands, 1u},
+            {},
+            std::array{Queue::TimelineWait{.semaphore = mUploadTimeline,
+                                           .value     = mUploadValue,
+                                           .stage     = vk::PipelineStageFlagBits2::eAllCommands}},
+            std::array{Queue::TimelineSignal{.semaphore = mUploadTimeline, .value = next}});
+        mUploadValue = next;
+    }
+
+    // Every graphics submit waits for the last upload, not only one that uploads: a draw of a
+    // resource that an earlier frame uploaded is ordered after that copy by this wait.
+    mGraphicsQueue->submit(
+        *mFencePool,
+        std::array{
+            Queue::SemaphoreWait{.semaphore = acquired->imageAvailableSemaphore(),
+                                 .stage     = vk::PipelineStageFlagBits2::eColorAttachmentOutput}},
+        std::span{&executable, 1u},
+        std::array{frame->getRenderFinishedSemaphore()},
+        std::array{Queue::TimelineWait{.semaphore = mUploadTimeline,
+                                       .value     = mUploadValue,
+                                       .stage     = vk::PipelineStageFlagBits2::eAllCommands}});
+
+    // Only now: the transfer command buffer retains the uploads. Until the graphics submit returns
+    // they stay pending, so a frame that fails before it records them again.
+    {
+        const std::scoped_lock lock{mUploadMutex};
+        mPendingUploads.erase(mPendingUploads.begin(),
+                              mPendingUploads.begin() +
+                                  static_cast<std::ptrdiff_t>(uploads.size()));
+    }
 
     auto presented =
         mSwapchain->present(acquired, frame->getRenderFinishedSemaphore(), *mFencePool);
@@ -363,15 +726,55 @@ Renderer::start()
                          {
                              while (!stopToken.stop_requested())
                              {
-                                 renderFrame();
+                                 std::optional<FramePacket> packet = mPackets->pop(stopToken);
+                                 if (!packet)
+                                 {
+                                     break;
+                                 }
+                                 renderFrame(std::move(*packet));
                              }
                              exit.set_value();
                          }
                          catch (...)
                          {
+                             // Report first, so getState() shows the failure at once. Then keep
+                             // consuming until stop(): submitFrame() must not wait for a
+                             // consumer that is gone.
                              exit.set_exception(std::current_exception());
+                             while (mPackets->pop(stopToken))
+                             {
+                             }
                          }
                      }};
+}
+
+void
+Renderer::submitFrame(const FrameContext& frameContext)
+{
+    std::stop_token stopToken;
+    {
+        const std::scoped_lock lock{mStateMutex};
+        if (!mRenderThread.joinable())
+        {
+            return;
+        }
+        // Not mStateMutex across the push: stop() holds it across the join, and a blocked push
+        // is what stop() wakes through this token.
+        stopToken = mRenderThread.get_stop_token();
+    }
+
+    mPackets->push(makePacket(frameContext), stopToken);
+}
+
+void
+Renderer::trySubmitFrame(const FrameContext& frameContext)
+{
+    if (getState() == State::eStopped || !mPackets->empty())
+    {
+        return;
+    }
+
+    mPackets->tryPush(makePacket(frameContext));
 }
 
 std::exception_ptr

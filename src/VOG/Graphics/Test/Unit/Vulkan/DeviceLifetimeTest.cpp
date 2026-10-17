@@ -26,6 +26,7 @@ static_assert(!std::is_convertible_v<Graphics::Vulkan::Semaphore&, vk::raii::Sem
 static_assert(!std::is_convertible_v<Graphics::Vulkan::TimelineSemaphore&, vk::raii::Semaphore&>);
 static_assert(!std::is_convertible_v<Graphics::Vulkan::GraphicsPipeline&, vk::raii::Pipeline&>);
 static_assert(!std::is_convertible_v<Graphics::Vulkan::Buffer&, vk::raii::Buffer&>);
+static_assert(!std::is_convertible_v<Graphics::Vulkan::Texture&, vk::raii::Image&>);
 static_assert(!std::is_convertible_v<Graphics::Vulkan::PhysicalDevice&, vk::raii::PhysicalDevice&>);
 static_assert(!std::is_convertible_v<Graphics::Vulkan::Device&, vk::raii::Device&>);
 static_assert(!std::is_convertible_v<Graphics::Vulkan::Device&, vk::raii::PhysicalDevice&>);
@@ -130,6 +131,52 @@ TEST_F(DeviceLifetime, bufferKeepsDeviceAlive)
 }
 
 /**
+ * The heap keeps the device alive. No Vulkan entry point is reachable through a bare heap, so the
+ * call under test is its destruction (vkDestroyBuffer of both heap buffers).
+ */
+TEST_F(DeviceLifetime, descriptorHeapKeepsDeviceAlive)
+{
+    auto       heap     = createHeap();
+    const auto released = releaseDevice();
+
+    expectDependentHoldsDevice(released, heap);
+}
+
+/**
+ * The texture keeps its heap, and through it the device, alive: the call under test is the
+ * destruction of the image, after the heap's last other holder is gone.
+ */
+TEST_F(DeviceLifetime, textureKeepsDeviceAndHeapAlive)
+{
+    auto heap = createHeap();
+    auto texture =
+        mDevice->createTexture(heap, {.width = 2u, .height = 2u}, vk::Format::eR8G8B8A8Srgb);
+    const Graphics::Vulkan::DescriptorHeapWeakPtr weakHeap = heap;
+    heap.reset();
+    EXPECT_FALSE(weakHeap.expired());
+
+    const auto released = releaseDevice();
+
+    expectDependentHoldsDevice(released, texture);
+    EXPECT_TRUE(weakHeap.expired());
+}
+
+/** As for the texture, for the uniform block: it also keeps its buffer alive. */
+TEST_F(DeviceLifetime, uniformBlockKeepsDeviceAndHeapAlive)
+{
+    auto                                          heap     = createHeap();
+    auto                                          block    = mDevice->createUniformBlock(heap, {});
+    const Graphics::Vulkan::DescriptorHeapWeakPtr weakHeap = heap;
+    heap.reset();
+    EXPECT_FALSE(weakHeap.expired());
+
+    const auto released = releaseDevice();
+
+    expectDependentHoldsDevice(released, block);
+    EXPECT_TRUE(weakHeap.expired());
+}
+
+/**
  * A submitted command buffer parks in its pool with the FenceHandle of its submit. The handle
  * retains the FencePool and the pool retains the device; the handle is not reachable on its own,
  * so the pool is the dependent, and its reset() waits the fence after the device was released.
@@ -229,9 +276,8 @@ TEST_F(DeviceLifetime, semaphoreKeepsDeviceAlive)
 
 TEST_F(DeviceLifetime, timelineSemaphoreKeepsDeviceAlive)
 {
-    auto semaphore =
-        std::make_unique<Graphics::Vulkan::TimelineSemaphore>(mDevice->createTimelineSemaphore());
-    const auto released = releaseDevice();
+    auto       semaphore = mDevice->createTimelineSemaphore();
+    const auto released  = releaseDevice();
 
     expectDependentHoldsDevice(released,
                                semaphore,
@@ -243,11 +289,9 @@ TEST_F(DeviceLifetime, timelineSemaphoreKeepsDeviceAlive)
 
 /**
  * The queue is owned by the device; the handle it hands out shares ownership of the device. The
- * transfer queue is kept for future uploads, and no Vulkan call can reach it yet because there is
- * no transfer-family command buffer pool. The test checks ownership only; no Vulkan call is
- * involved: the graphics handle goes first, so the transfer handle alone must keep the device
- * alive. A real submit through the graphics handle is covered by
- * submittedCommandBufferKeepsDeviceAlive.
+ * test checks ownership only; no Vulkan call is involved: the graphics handle goes first, so the
+ * transfer handle alone must keep the device alive. A real submit through the graphics handle is
+ * covered by submittedCommandBufferKeepsDeviceAlive.
  */
 TEST_F(DeviceLifetime, queueKeepsDeviceAlive)
 {
@@ -303,7 +347,7 @@ TEST_F(DeviceLifetime, frameObjectManagerKeepsDeviceAlive)
                                manager,
                                [](Graphics::Frame::FrameObjectManager& manager)
                                {
-                                   manager.acquireNextFrame();
+                                   manager.prepareNextFrame();
                                });
 }
 
@@ -320,7 +364,7 @@ TEST_F(DeviceLifetime, shaderProgramCacheKeepsDeviceAlive)
                                cache,
                                [](Graphics::ShaderProgramCache& cache)
                                {
-                                   EXPECT_TRUE(*cache.get("WorldSpace")->pipelineLayout);
+                                   EXPECT_TRUE(cache.get("WorldSpace")->stages.vertex.shader);
                                });
 }
 

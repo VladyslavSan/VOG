@@ -115,23 +115,88 @@ step builds on the previous. Completed work is kept for context.
   `eHostSequentialWrite` is what `Buffer::mapForWrite()` needs.
 - **Docs pass** (review stage 7): current-state text checked against the code; the known
   gaps are listed in `ResourceOwnership.md`.
+- **Engine API S1: meshes, materials, camera**: `Renderer::createMesh` and `createMaterial` return
+  immutable `MeshPtr` and `MaterialPtr`, and `setCamera` sets an orthographic `Camera`. A
+  `Renderable` appends `Draw`s (mesh, material, world matrix) in `collect()`; the renderer builds
+  the pipelines in a `PipelineCache` (one per vertex layout, shader program and color format) and
+  records the draws, pushing the matrix and the material parameters. `Renderable::prepare`,
+  `RenderItem`, `ResourceContext` and `FrameContext::extent` are removed. Engine links Graphics
+  PRIVATE, and `VOG.Engine.PublicHeadersTest` fails the build if a public Engine header includes a
+  Graphics or Vulkan header. See `ResourceOwnership.md`, "Meshes and materials".
+- **Engine API S2: main/render thread split**: `Renderer::submitFrame` calls `Renderable::onDraw`
+  (the former `collect`) on the calling thread, the main thread, and queues the draws and the
+  camera as one packet in a one-slot queue; the render thread takes the packets, records and
+  presents them, and runs no user code. A renderable fills a `RenderQueue` with
+  `queue.submit(mesh, material, world)` (the former `DrawList`); a draw without a mesh or a
+  material is skipped. `Application::run` submits a frame per loop iteration. An SDL event watch
+  passes every size change to the renderer, and submits frames while macOS and Windows run their
+  live-resize loop. A mesh is checked against the inputs of the vertex shader when its pipeline is built:
+  `GraphicsPipeline` throws `std::invalid_argument` for a location without an attribute or a
+  numeric type that does not match. See `ResourceOwnership.md`, "Threads", and `SwapchainSync.md`,
+  "Threads".
+- **Engine API S3: ECS and GameObject**: `Scene` (a `Renderable`) holds a homegrown entity-component
+  registry behind a `GameObject` handle: `Transform` (every object has one), `MeshRenderer` and
+  `Camera` components, and `Behaviour` scripts with `start()`, `update()` and `onDestroy()`. A
+  component keeps its address until it is removed: the registry stores components in pages that
+  never move. `Scene::each` allows every structural change in its visitor, including `update`,
+  `clear` and `createGameObject`; it does not visit an object the visitor creates or a first-type
+  component it adds, it looks the other types up at each visit, and it destroys a component the
+  visitor removes when the outermost `each` returns. `Application::run` calls `Scene::update` in
+  each frame, also in the frames of the live-resize event watch, and `FrameContext::deltaSeconds`
+  carries the step. `Scene::onDraw` extracts the draws and sets the camera with
+  `RenderQueue::setCamera`; the renderer-side `Camera` is now `CameraView`, and
+  `Renderer::setCamera` is removed. `~Application` clears the scene while the renderer still
+  exists. See `ResourceOwnership.md`, "Threads".
+- **Engine API S4: indexed meshes**: `MeshDescription::indices` takes `uint32` indices, three per
+  triangle, each less than the vertex count; `createMesh` throws `std::invalid_argument` for
+  anything else, because the device has no `robustBufferAccess`. The indices share the buffer of
+  the vertices, after them and aligned to 4 bytes. `RenderingPass` gains `bindIndexBuffer`
+  (retains the buffer) and `drawIndexed`, and the renderer draws a mesh with indices through them.
+  Device selection requires `fullDrawIndexUint32`. A mesh without indices draws as before.
+- **Engine API S5: textures and parameter blocks on descriptor heaps**: Graphics gets
+  `DescriptorHeap`, `Texture` and `UniformBlock` (descriptors written into host-visible heap
+  buffers, slots freed when the resource dies), pipelines without a layout, and
+  `RenderingPass::useResource` / `pushData` and `CommandBufferRecorder::bindDescriptorHeap` /
+  `copyBufferToTexture`; shaders with a set and a binding are rejected. Device selection requires
+  `VK_EXT_descriptor_heap`. The Engine gets `Renderer::createTexture` (uploaded by the render
+  thread in the next frame, through a pending list that survives dropped frames),
+  `MaterialDescription::textures` (at most 4) and `parameters` (at most 16384 bytes, an immutable
+  uniform block). The renderer pushes `mat4 mvp; uint material; uint textures[4]` with every
+  draw. The example draws a textured checkerboard quad. See `ResourceOwnership.md`.
+- **Acquire semaphores per frame slot**: the acquire semaphore moves from the swapchain (one per image
+  plus a spare, swapped after each acquire) to `FrameObjects`, one per slot. The renderer prepares
+  the next slot (`FrameObjectManager::prepareNextFrame`, which waits the slot's fences) before it
+  acquires, and advances it (`advance`) once an image was acquired. The swap trick reused a semaphore
+  whose last wait the host had not seen complete when an image came back within one cycle of the
+  slots (`VUID-vkAcquireNextImageKHR-semaphore-01779`, 26 reports in 400 frames on lavapipe). See
+  `SwapchainSync.md`.
+- **Engine API S6: device-local uploads through staging on the transfer queue**: `createMesh` stages
+  its bytes like `createTexture`, and the render thread copies both into device-local memory on a
+  command buffer of a per-slot transfer pool. The transfer submit signals a timeline semaphore
+  (`TimelineSemaphore` is now a retained `shared_ptr` without a counter; `Queue::submit` takes
+  `TimelineWait` / `TimelineSignal`), and every graphics submit waits for its last value. Graphics
+  gets `copyBuffer`, `acquire`, `createCommandBufferPool(familyIndex)`, `selectQueueFamilies` and
+  the pure `UploadBarriers`. Queue family ownership transfer code ships, but the transfer queue stays
+  the graphics family's queue (`PhysicalDevice::kDedicatedTransferFamily` is `false`) until an
+  upload has run on a GPU with a transfer-only family; the cross-family path is value-tested
+  only. Uniform blocks stay host-visible. See `ResourceOwnership.md`.
+- **Repeated binds skipped**: the draw loop of `Renderer::renderFrame` does not record
+  `bindPipeline`, `bindVertexBuffers` or `bindIndexBuffer` when they would repeat the previous
+  bind of their kind in the same frame. Draw order is unchanged (no sorting: depth and blending
+  are off, so submission order is the output). The cheap first step of recording cost;
+  `repeatedBindsAreSkipped` counts the binds that reach the driver.
 
 ## Later milestones (in rough order)
 
-1. **Render graph**: declared passes with reads/writes; derives barriers,
+1. **Engine API (S7): parallel recording**, deferred until a profile on a real GPU driver shows
+   recording cost (CI's lavapipe cannot tell), like the retention-cost item under "Standing
+   decisions". Design in short: each worker records a contiguous range of the draws into its own
+   primary command buffer from its own pool of the frame slot, inside one dynamic-rendering
+   instance split by suspend and resume, and the primaries go in range order to the one graphics
+   `Queue::submit`.
+2. **Render graph**: declared passes with reads/writes; derives barriers,
    layouts and transient attachment lifetimes. Deletes the hand-written
    barrier blocks in the renderer.
-2. **Images & uploads**: `Image`/texture class, staging-buffer upload path on
-   the so-far-unused transfer queue.
-3. **Materials and meshes: the Engine-level draw API.** A material is a shader plus its
-   parameters; a draw submits a mesh and a material to the render queue. Pipelines, shader
-   programs, buffers and the device stay in `VOG::Graphics`. This replaces today's stopgap,
-   which hands Graphics types to Engine users: `RenderItem` (pipeline, vertex buffer,
-   push-constant blob), `ResourceContext` (device, shader program cache) and the swapchain
-   extent in `FrameContext`, which a renderable needs only to build its own projection (a
-   camera's job). Material parameters move to bindless descriptors.
-4. **Scene representation** decision (ECS vs scene graph) — deferred until
-   materials/meshes exist.
 
 ## Standing decisions
 
@@ -139,7 +204,12 @@ step builds on the previous. Completed work is kept for context.
   backend is ever wanted.
 - **Layering of the draw API**: `VOG::Graphics` speaks Vulkan (pipelines, shaders, buffers,
   descriptors); the Engine API speaks meshes and materials and does not expose Graphics types.
-  The `Renderable` interface breaks this until milestone 3.
+  Enforced since S1: Engine links Graphics PRIVATE, and `VOG.Engine.PublicHeadersTest` fails the
+  build if a public Engine header includes a Graphics or Vulkan header. `Renderer.hpp` still
+  forward-declares Graphics types as private members.
+- **Descriptors: descriptor heaps (`VK_EXT_descriptor_heap`) only.** lavapipe exposes the extension
+  from Mesa 26.2.0, and CI currently has Mesa 25.2.8; MoltenVK 1.4.2 and KosmicKrisp (Mesa main as
+  of 2026-10-15) do not expose it.
 - Resource lifetimes follow the recording-retains model
   (`ResourceOwnership.md`); new recording APIs must retain through
   `CommandBufferRecorder`.

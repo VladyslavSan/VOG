@@ -47,8 +47,8 @@ public:
     };
 
     /**
-     * The pipeline is built with the pipeline layout of `shading` and the device's pipeline cache,
-     * so neither is a parameter.
+     * The pipeline has no layout (it reads its resources from the descriptor heap) and is built
+     * with the device's pipeline cache, so neither is a parameter.
      */
     struct Parameters
     {

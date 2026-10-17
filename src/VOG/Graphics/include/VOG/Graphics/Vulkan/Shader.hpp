@@ -42,7 +42,9 @@ public:
      *
      * #inAttributes and #outAttributes sorted by StageInOutAttribute::location ascending.
      * #pushConstants.variables sorted by StructMember::offset ascending.
-     * #uniformBuffers sorted by UniformBuffer::location (set, then binding) ascending.
+     *
+     * Descriptors are not reflected: a shader reaches its resources through the descriptor heap
+     * (`layout(descriptor_heap)`), by an index it reads from the push constants.
      */
     struct Reflection
     {
@@ -68,6 +70,11 @@ public:
             std::uint8_t location;
             std::string  name;
             BaseType     format;
+            /**
+             * Consecutive locations the input covers, from #location: the array sizes multiplied,
+             * times one location per matrix column.
+             */
+            std::uint32_t locationCount = 1u;
         };
 
         struct StructMember
@@ -85,34 +92,18 @@ public:
             std::vector<StructMember> variables;
         };
 
-        struct ResourceLocation
-        {
-            std::uint32_t set;
-            std::uint32_t binding;
-
-            std::strong_ordering operator<=>(const ResourceLocation&) const noexcept = default;
-        };
-
-        struct UniformBuffer
-        {
-            ResourceLocation          location;
-            std::size_t               size;
-            std::vector<StructMember> members;
-
-            std::strong_ordering operator<=>(const UniformBuffer&) const noexcept = default;
-        };
-
         using StageAttributes = std::vector<StageInOutAttribute>;
 
-        StageAttributes            inAttributes;
-        StageAttributes            outAttributes;
-        PushConstants              pushConstants;
-        std::vector<UniformBuffer> uniformBuffers;
+        StageAttributes inAttributes;
+        StageAttributes outAttributes;
+        PushConstants   pushConstants;
     };
 
     /**
      * Utility function used for validation whether @p provided vertex format is compatible with
-     * @p shaderVertexFormat.
+     * @p shaderVertexFormat. Only the numeric type is compared (float, signed or unsigned
+     * integer); the component counts may differ. 64-bit types are never compatible: VOG binds
+     * no 64-bit vertex formats, and they take two locations.
      *
      * @param shaderVertexFormat Vertex attribute format in the shader.
      * @param provided Vertex attribute bound from vertex buffer.

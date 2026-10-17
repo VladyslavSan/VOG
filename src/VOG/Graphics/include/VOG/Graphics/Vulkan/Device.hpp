@@ -14,12 +14,18 @@
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 #include <VOG/Graphics/Vulkan/TimelineSemaphore.hpp>
 
+#include <cstddef>
+#include <span>
+
 namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Buffer);
 VOG_DECLARE_PTR(CommandBufferPool);
+VOG_DECLARE_PTR(DescriptorHeap);
 VOG_DECLARE_PTR(RenderBuffer);
 VOG_DECLARE_PTR(Instance);
+VOG_DECLARE_PTR(Texture);
+VOG_DECLARE_PTR(UniformBlock);
 
 class PhysicalDevice : private vk::raii::PhysicalDevice
 {
@@ -37,6 +43,27 @@ public:
     };
 
     PhysicalDevice(InstancePtr instance, vk::raii::PhysicalDevice physicalDevice);
+
+    /**
+     * Whether the transfer queue is taken from a family of its own when the device has one.
+     * Off until an upload has run on a device with such a family (an NVIDIA or AMD GPU): the
+     * cross-family path of CommandBufferRecorder::copyBuffer() and copyBufferToTexture() is only
+     * checked by value (UploadBarriers.hpp), because no driver the tests run on has two families.
+     * Then the transfer queue is the graphics family's queue.
+     */
+    static constexpr bool kDedicatedTransferFamily = false;
+
+    /**
+     * Picks the queue families from @p families, indexed as
+     * vkGetPhysicalDeviceQueueFamilyProperties returns them. Graphics is the first family with the
+     * graphics bit. Transfer is that same family, or with @p dedicatedTransfer the first family
+     * that has the transfer bit and neither the graphics nor the compute bit (a DMA engine), if
+     * there is one. A compute family is never picked for transfer.
+     *
+     * @throws std::runtime_error if no family has the graphics bit.
+     */
+    static QueueInfos selectQueueFamilies(std::span<const vk::QueueFamilyProperties> families,
+                                          bool dedicatedTransfer);
 
     using vk::raii::PhysicalDevice::getMemoryProperties;
     using vk::raii::PhysicalDevice::getQueueFamilyProperties;
@@ -73,6 +100,7 @@ public:
 
     ~Device(); // NOLINT(bugprone-derived-method-shadowing-base-method)
 
+    using vk::raii::Device::getBufferAddress;
     using vk::raii::Device::getDispatcher;
     using vk::raii::Device::operator*;
     using vk::raii::Device::releaseSwapchainImagesEXT;
@@ -95,20 +123,10 @@ public:
                                          std::span<const std::uint32_t> binary);
 
     /**
-     * Links vertex and fragment shaders into a shader program.
-     * Descriptor set layouts and push constant ranges are derived through shader reflection.
-     *
-     * @param stages  Vertex and fragment shader stage descriptors.
-     *
-     * @return Linked shader program with a reflected pipeline layout.
-     */
-    std::unique_ptr<ShaderProgram> createShaderProgram(ShaderProgram::ShadingStages stages);
-
-    /**
      * Creates a graphics pipeline for dynamic rendering into the attachments that
      * Parameters::renderingDescription describes.
      *
-     * @param createInfo  Pipeline parameters; the pipeline layout comes from `shading`.
+     * @param createInfo  Pipeline parameters.
      *
      * @return Compiled graphics pipeline.
      */
@@ -116,13 +134,20 @@ public:
     createGraphicsPipeline(GraphicsPipeline::Parameters createInfo);
 
     /**
-     * Creates a command buffer pool for recording GPU commands.
+     * Creates a command buffer pool for recording GPU commands for the graphics queue.
      *
      * @note Each pool should be used from a single thread at a time.
      *
      * @return Command buffer pool.
      */
     std::shared_ptr<CommandBufferPool> createCommandBufferPool();
+
+    /**
+     * Like createCommandBufferPool(), for the queue family @p queueFamilyIndex, which must be the
+     * family of the graphics or of the transfer queue. Queue::submit takes only command buffers
+     * of its own family.
+     */
+    std::shared_ptr<CommandBufferPool> createCommandBufferPool(std::uint32_t queueFamilyIndex);
 
     /**
      * Creates a swapchain for presenting rendered frames to a window surface.
@@ -172,6 +197,38 @@ public:
                  const MemoryAllocator::AllocationParameters& allocationInfo);
 
     /**
+     * Creates the descriptor heaps that textures and uniform blocks take their slots from.
+     *
+     * @param resourceSlots  Number of images and uniform blocks the heap holds at once.
+     * @param samplers       Samplers to write into the sampler heap; shaders read them by their
+     *                       position in the span.
+     *
+     * @throws std::invalid_argument if @p resourceSlots is zero or @p samplers is empty.
+     * @throws std::runtime_error if the device limits do not allow the heap.
+     */
+    DescriptorHeapPtr createDescriptorHeap(std::uint32_t                          resourceSlots,
+                                           std::span<const vk::SamplerCreateInfo> samplers);
+
+    /**
+     * Creates a 2D, single-mip texture and writes its descriptor into a slot of @p heap. The
+     * contents are undefined until CommandBufferRecorder::copyBufferToTexture() filled it.
+     *
+     * @throws std::runtime_error if @p heap is full.
+     */
+    std::unique_ptr<Texture>
+    createTexture(const DescriptorHeapPtr& heap, vk::Extent2D extent, vk::Format format);
+
+    /**
+     * Creates an immutable block that holds a copy of @p bytes and writes its descriptor into a
+     * slot of @p heap. The block is at least 16 bytes; a shader reading past @p bytes reads
+     * zeros up to that size.
+     *
+     * @throws std::runtime_error if @p heap is full.
+     */
+    std::unique_ptr<UniformBlock> createUniformBlock(const DescriptorHeapPtr&   heap,
+                                                     std::span<const std::byte> bytes);
+
+    /**
      * Creates a binary semaphore. Pass it to Queue::submit and Swapchain::present: the command
      * buffers and the presentation retain it until the GPU is done with it.
      *
@@ -180,12 +237,12 @@ public:
     SemaphorePtr createSemaphore();
 
     /**
-     * Creates a timeline semaphore for ordered multi-stage GPU synchronization.
-     * The counter starts at zero and increments on each signal operation.
+     * Creates a timeline semaphore at value zero. Pass it to Queue::submit as a Queue::TimelineWait
+     * or Queue::TimelineSignal: the command buffers retain it until the GPU is done with it.
      *
      * @return Timeline semaphore.
      */
-    TimelineSemaphore createTimelineSemaphore();
+    TimelineSemaphorePtr createTimelineSemaphore();
 
     /**
      * Hands out the graphics queue. The returned pointer shares ownership of this Device, so the
