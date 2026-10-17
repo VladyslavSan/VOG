@@ -229,26 +229,26 @@ TEST_F(VulkanValidationFixture, DescriptorHeap_texturedDrawIsValidationClean)
 
     constexpr auto colorWriteMask =
         ColorComponent::eR | ColorComponent::eG | ColorComponent::eB | ColorComponent::eA;
-    GraphicsPipelinePtr pipeline = mDevice->createGraphicsPipeline(
-        {.shading       = cache.get("TestDescriptorHeap"),
-         .vertexLayout  = {.bindingDescription   = {{.binding   = 0u,
-                                                     .stride    = 16u,
-                                                     .inputRate = vk::VertexInputRate::eVertex}},
-                           .attributeDescription = {{.location = 0u,
-                                                     .binding  = 0u,
-                                                     .format   = vk::Format::eR32G32Sfloat,
-                                                     .offset   = 0u},
-                                                    {.location = 1u,
-                                                     .binding  = 0u,
-                                                     .format   = vk::Format::eR32G32Sfloat,
-                                                     .offset   = 8u}}},
-         .rasterizer    = {.cullMode = CullMode::eNone},
-         .viewportState = {.viewportCount = 1u, .scissorCount = 1u},
-         .depthStencil  = {},
-         .blending      = {.attachments = {{.colorWriteMask = colorWriteMask}}},
-         .multisample   = {},
-         .dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
-         .renderingDescription = {.colorAttachmentFormats = {vk::Format::eR8G8B8A8Unorm}}});
+    GraphicsPipelinePtr pipeline = mDevice->createGraphicsPipeline(GraphicsPipeline::Parameters{
+        .shading       = cache.get("TestDescriptorHeap"),
+        .vertexLayout  = {.bindingDescription   = {{.binding   = 0u,
+                                                    .stride    = 16u,
+                                                    .inputRate = vk::VertexInputRate::eVertex}},
+                          .attributeDescription = {{.location = 0u,
+                                                    .binding  = 0u,
+                                                    .format   = vk::Format::eR32G32Sfloat,
+                                                    .offset   = 0u},
+                                                   {.location = 1u,
+                                                    .binding  = 0u,
+                                                    .format   = vk::Format::eR32G32Sfloat,
+                                                    .offset   = 8u}}},
+        .rasterizer    = {.cullMode = CullMode::eNone},
+        .viewportState = {.viewportCount = 1u, .scissorCount = 1u},
+        .depthStencil  = {},
+        .blending      = {.attachments = {{.colorWriteMask = colorWriteMask}}},
+        .multisample   = {},
+        .dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
+        .renderingDescription = {.colorAttachmentFormats = {vk::Format::eR8G8B8A8Unorm}}});
 
     std::shared_ptr<RenderBuffer> target =
         mDevice->createRenderBuffer(AttachmentUsage::eColor,
