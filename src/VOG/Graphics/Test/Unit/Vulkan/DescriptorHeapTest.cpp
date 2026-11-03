@@ -15,6 +15,7 @@
 #include <memory>
 #include <span>
 #include <stdexcept>
+#include <vector>
 
 #include "VulkanFixture.hpp"
 #include "VulkanValidationFixture.hpp"
@@ -150,6 +151,42 @@ TEST_F(VulkanFixture, DescriptorHeap_fullHeapThrows)
 
     EXPECT_NE(first->heapIndex(), second->heapIndex());
     first.reset();
+    EXPECT_NO_THROW(mDevice->createUniformBlock(heap, gTint));
+}
+
+/** A texture over maxImageDimension2D breaks VUID-VkImageCreateInfo-extent-02252. */
+TEST_F(VulkanFixture, DescriptorHeap_textureOverDeviceExtentThrows)
+{
+    auto heap = createHeap(1u);
+
+    const std::uint32_t tooWide = mDevice->limits.maxImageDimension2D + 1u;
+    EXPECT_THROW(
+        mDevice->createTexture(heap, {.width = tooWide, .height = 1u}, vk::Format::eR8G8B8A8Srgb),
+        std::invalid_argument);
+    EXPECT_THROW(
+        mDevice->createTexture(heap, {.width = 1u, .height = tooWide}, vk::Format::eR8G8B8A8Srgb),
+        std::invalid_argument);
+
+    // The throw came before the slot was taken.
+    EXPECT_NO_THROW(
+        mDevice->createTexture(heap, {.width = 2u, .height = 2u}, vk::Format::eR8G8B8A8Srgb));
+}
+
+/** A block over maxUniformBufferRange breaks VUID-VkResourceDescriptorInfoEXT-type-12496. */
+TEST_F(VulkanFixture, DescriptorHeap_uniformBlockOverDeviceRangeThrows)
+{
+    auto heap = createHeap(1u);
+
+    // The block must be built to be refused. A driver with a huge limit would need gigabytes.
+    constexpr std::uint32_t kLargestTestable = 1u << 28u;
+    if (mDevice->limits.maxUniformBufferRange >= kLargestTestable)
+    {
+        GTEST_SKIP() << "maxUniformBufferRange is too large to build a block over it";
+    }
+    const std::vector<std::byte> tooBig(std::size_t{mDevice->limits.maxUniformBufferRange} + 1u);
+    EXPECT_THROW(mDevice->createUniformBlock(heap, tooBig), std::invalid_argument);
+
+    // The throw came before the slot was taken.
     EXPECT_NO_THROW(mDevice->createUniformBlock(heap, gTint));
 }
 

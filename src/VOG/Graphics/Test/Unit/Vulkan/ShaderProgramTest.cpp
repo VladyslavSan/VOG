@@ -37,6 +37,36 @@ layout(push_constant) uniform PC { vec4 transform; } pc;
 void main() { gl_Position = inPosition + pc.transform; }
 )";
 
+// Push data that overlaps in bytes with the other stage: a mat4 covers bytes 0 to 63, a uint at 16
+// lies inside.
+const std::string gVertexShaderPushMatrix = R"(
+#version 450
+layout(location = 0) in vec4 inPosition;
+layout(push_constant) uniform PC { mat4 m; } pc;
+void main() { gl_Position = pc.m * inPosition; }
+)";
+
+const std::string gFragmentShaderPushInsideMatrix = R"(
+#version 450
+layout(location = 0) out vec4 outColor;
+layout(push_constant) uniform PC { layout(offset = 16) uint a; } pc;
+void main() { outColor = vec4(float(pc.a)); }
+)";
+
+const std::string gVertexShaderPushInsideMatrix = R"(
+#version 450
+layout(location = 0) in vec4 inPosition;
+layout(push_constant) uniform PC { layout(offset = 16) uint a; } pc;
+void main() { gl_Position = inPosition * float(pc.a); }
+)";
+
+const std::string gFragmentShaderPushMatrix = R"(
+#version 450
+layout(location = 0) out vec4 outColor;
+layout(push_constant) uniform PC { mat4 m; } pc;
+void main() { outColor = pc.m[0]; }
+)";
+
 GraphicsPipeline::Parameters
 makeMinimalPipelineParameters(ShaderProgramPtr program)
 {
@@ -90,6 +120,22 @@ TEST_F(VulkanFixture, ShaderProgram_pushConstants_reflectedCorrectly)
     EXPECT_EQ(program->pushConstants.ranges[0].offset, 0u);
     EXPECT_EQ(program->pushConstants.ranges[0].size, 16u);
     EXPECT_EQ(program->pushConstants.names[0], "transform");
+}
+
+/** The overlap test does not depend on which stage declares the outer range. */
+TEST_F(VulkanFixture, ShaderProgram_overlappingPushConstantsThrowInEitherStageOrder)
+{
+    const auto program = [this](const std::string& vertex, const std::string& fragment)
+    {
+        return ShaderProgram::create(
+            {.vertex   = {.shader = createShader(Shader::ShadingStage::eVertex, vertex)},
+             .fragment = {.shader = createShader(Shader::ShadingStage::eFragment, fragment)}});
+    };
+
+    EXPECT_THROW(program(gVertexShaderPushMatrix, gFragmentShaderPushInsideMatrix),
+                 std::runtime_error);
+    EXPECT_THROW(program(gVertexShaderPushInsideMatrix, gFragmentShaderPushMatrix),
+                 std::runtime_error);
 }
 
 // ============================================================

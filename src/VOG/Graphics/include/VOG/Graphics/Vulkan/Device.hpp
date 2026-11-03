@@ -83,6 +83,12 @@ public:
     const InstancePtr instance;
 
     const QueueInfos queueInfos;
+
+    /** The limits of the physical device, read once. */
+    const vk::PhysicalDeviceLimits limits;
+
+    /** The limits of VK_EXT_descriptor_heap, read once. */
+    const vk::PhysicalDeviceDescriptorHeapPropertiesEXT descriptorHeapProperties;
 };
 
 class Device
@@ -213,7 +219,10 @@ public:
      * Creates a 2D, single-mip texture and writes its descriptor into a slot of @p heap. The
      * contents are undefined until CommandBufferRecorder::copyBufferToTexture() filled it.
      *
-     * @throws std::runtime_error if @p heap is full.
+     * @throws std::invalid_argument if a side of @p extent exceeds maxImageDimension2D of the
+     *         device. This is a bound on the extent only: the format must be one that the
+     *         device samples and copies into, which nothing here checks.
+     * @throws std::runtime_error if @p heap is full or the image cannot be created.
      */
     std::unique_ptr<Texture>
     createTexture(const DescriptorHeapPtr& heap, vk::Extent2D extent, vk::Format format);
@@ -223,7 +232,10 @@ public:
      * slot of @p heap. The block is at least 16 bytes; a shader reading past @p bytes reads
      * zeros up to that size.
      *
-     * @throws std::runtime_error if @p heap is full.
+     * @throws std::invalid_argument if the block, rounded up to 16 bytes, exceeds
+     *         maxUniformBufferRange of the device.
+     * @throws std::runtime_error if @p heap is full, or the allocator places the buffer at an
+     *         address off the device's uniform buffer offset alignment.
      */
     std::unique_ptr<UniformBlock> createUniformBlock(const DescriptorHeapPtr&   heap,
                                                      std::span<const std::byte> bytes);

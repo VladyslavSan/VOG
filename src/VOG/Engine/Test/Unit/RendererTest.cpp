@@ -8,6 +8,7 @@
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/DeviceRequirements.hpp>
+#include <VOG/Graphics/Vulkan/Instance.hpp>
 #include <VOG/Graphics/Vulkan/Texture.hpp>
 #include <VOG/Graphics/Vulkan/UniformBlock.hpp>
 
@@ -25,13 +26,21 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <tuple>
 #include <utility>
 #include <vector>
+
+#include "SyncValidationSetting.hpp"
+
+#ifndef _WIN32
+    #include <sys/mman.h>
+#endif
 
 using namespace VOG::Engine;
 
@@ -81,6 +90,24 @@ struct RendererTestAccess
         return renderer.mPendingUploads.at(index).staging;
     }
 
+    static Graphics::Vulkan::InstancePtr
+    instance(const Renderer& renderer)
+    {
+        return renderer.mVulkanInstance;
+    }
+
+    static Graphics::Vulkan::DevicePtr
+    device(const Renderer& renderer)
+    {
+        return renderer.mVulkanDevice;
+    }
+
+    static const vk::PhysicalDeviceLimits&
+    limits(const Renderer& renderer)
+    {
+        return renderer.mVulkanDevice->limits;
+    }
+
     /** The function table that every command buffer of the renderer's device records through. */
     static vk::raii::detail::DeviceDispatcher&
     dispatcher(Renderer& renderer)
@@ -103,7 +130,12 @@ constexpr std::uint32_t gResizedAgainExtent = 48u;
 /** How long a call that could block may take. A test that waits longer has found a hang. */
 constexpr std::chrono::seconds gDeadline{5};
 
-/** Renders into a headless surface, with the validation layer when it is installed. */
+/**
+ * Renders into a headless surface. When the validation layer is installed it runs with
+ * synchronization validation on, and a validation error raised after the Renderer constructor
+ * returned fails the test in TearDown(). The messenger is installed on the finished Renderer, so
+ * errors raised while it is constructed are not seen.
+ */
 class RendererTest : public testing::Test
 {
 protected:
@@ -117,12 +149,32 @@ protected:
             GTEST_SKIP() << "VK_EXT_headless_surface not available";
         }
 
-        mValidationInstalled = Graphics::Vulkan::hasLayer(
-            context.enumerateInstanceLayerProperties(), "VK_LAYER_KHRONOS_validation");
+        mValidationInstalled =
+            Graphics::Vulkan::hasLayer(context.enumerateInstanceLayerProperties(),
+                                       "VK_LAYER_KHRONOS_validation") &&
+            Graphics::Vulkan::hasExtension(context.enumerateInstanceExtensionProperties(),
+                                           "VK_EXT_debug_utils");
+        if (mValidationInstalled)
+        {
+            // The layer reads the setting in vkCreateInstance, and the environment is process-wide:
+            // TearDown() restores it.
+            mSyncValidationSetting.emplace();
+        }
+    }
+
+    void
+    TearDown() override
+    {
+        mSyncValidationSetting.reset();
+
+        const std::scoped_lock lock{mErrors.mutex};
+        EXPECT_TRUE(mErrors.messages.empty())
+            << mErrors.messages.size() << " validation error(s); the first:\n"
+            << (mErrors.messages.empty() ? "" : mErrors.messages.front());
     }
 
     std::unique_ptr<Renderer>
-    makeRenderer(const std::filesystem::path& shaderPath = VOG_TEST_SHADER_PATH) const
+    makeRenderer(const std::filesystem::path& shaderPath = VOG_TEST_SHADER_PATH)
     {
         Renderer::Config config{
             .appName          = "VOG Renderer Test",
@@ -132,18 +184,109 @@ protected:
             .shaderSourcePath = shaderPath,
             .extent           = gStartExtent,
         };
-        // Errors reach the log; they do not fail a test.
         if (mValidationInstalled)
         {
             config.layers = {"VK_LAYER_KHRONOS_validation"};
+            config.extensions.emplace_back("VK_EXT_debug_utils");
         }
 
-        return std::make_unique<Renderer>(
+        auto renderer = std::make_unique<Renderer>(
             Common::SurfaceHandle{.platform = Common::SurfaceHandle::Platform::eHeadless}, config);
+        if (mValidationInstalled)
+        {
+            mWatches.push_back(
+                {.instance  = RendererTestAccess::instance(*renderer),
+                 .messenger = RendererTestAccess::instance(*renderer)->createDebugUtilsMessengerEXT(
+                     {.messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
+                      .messageType     = vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation,
+                      .pfnUserCallback = &RendererTest::onMessage,
+                      .pUserData       = &mErrors})});
+        }
+
+        return renderer;
     }
 
     bool mValidationInstalled = false;
+
+    /** Removes the validation errors that name @p vuid; true if there was one. */
+    bool
+    takeError(std::string_view vuid)
+    {
+        const std::scoped_lock lock{mErrors.mutex};
+        const auto             found = std::erase_if(mErrors.messages,
+                                                     [vuid](const std::string& message)
+                                                     {
+                                             return message.find(vuid) != std::string::npos;
+                                                     });
+
+        return found != 0u;
+    }
+
+private:
+    /** The validation errors; the render thread reports them too. */
+    struct ErrorLog
+    {
+        std::mutex               mutex;
+        std::vector<std::string> messages;
+    };
+
+    /** A messenger and the instance it must be destroyed before. */
+    struct Watch
+    {
+        Graphics::Vulkan::InstancePtr    instance;
+        vk::raii::DebugUtilsMessengerEXT messenger;
+    };
+
+    static vk::Bool32
+    onMessage(vk::DebugUtilsMessageSeverityFlagBitsEXT /*severity*/,
+              vk::DebugUtilsMessageTypeFlagsEXT /*types*/,
+              const vk::DebugUtilsMessengerCallbackDataEXT* data,
+              void*                                         user)
+    {
+        auto&                  errors = *static_cast<ErrorLog*>(user);
+        const std::scoped_lock lock{errors.mutex};
+        errors.messages.emplace_back(data->pMessage != nullptr ? data->pMessage : "");
+
+        return VK_FALSE;
+    }
+
+    ErrorLog                             mErrors;
+    std::optional<SyncValidationSetting> mSyncValidationSetting;
+    // Destroyed before mErrors, which the messengers write to, and each messenger before its
+    // instance. The instance outlives the renderer that made it, so that the messenger can see
+    // the destruction of the renderer's objects.
+    std::vector<Watch> mWatches;
 };
+
+/**
+ * The positive control of the oracle: a known error on the renderer's device must reach the
+ * messenger. Without it a fixture that never saw an error would pass for the wrong reason. A
+ * missing validation layer fails this test, because every other test here would then pass with
+ * nothing watching.
+ */
+TEST_F(RendererTest, validationErrorOnTheRendererDeviceIsRecorded)
+{
+    ASSERT_TRUE(mValidationInstalled)
+        << "VK_LAYER_KHRONOS_validation or VK_EXT_debug_utils is missing, so no RendererTest can "
+           "see a validation error.";
+    auto renderer = makeRenderer();
+
+    // A buffer of size 0 breaks VUID-VkBufferCreateInfo-size-00912, whether the driver takes it or
+    // not.
+    bool refused = false;
+    try
+    {
+        std::ignore = RendererTestAccess::device(*renderer)->raii().createBuffer(
+            {.size = 0u, .usage = vk::BufferUsageFlagBits::eTransferSrc});
+    }
+    catch (const vk::SystemError&)
+    {
+        refused = true;
+    }
+
+    EXPECT_TRUE(takeError("VUID-VkBufferCreateInfo-size-00912"))
+        << (refused ? "The driver refused the buffer." : "The driver took the buffer.");
+}
 
 /** Runs a function for every frame; the tests' stand-in for a game object. */
 class LambdaRenderable final : public Renderable
@@ -226,6 +369,53 @@ becomesTrue(Condition&& condition)
 
     return true;
 }
+
+#ifndef _WIN32
+/** Address space of @p size bytes that nothing may read or write: any access faults. */
+class InaccessibleBytes
+{
+public:
+    explicit InaccessibleBytes(std::size_t size)
+        : mSize{size}
+        , mData{mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0)}
+    {
+        if (mData == MAP_FAILED)
+        {
+            mData = nullptr;
+        }
+    }
+
+    ~InaccessibleBytes()
+    {
+        if (mData != nullptr)
+        {
+            munmap(mData, mSize);
+        }
+    }
+
+    InaccessibleBytes(const InaccessibleBytes&)            = delete;
+    InaccessibleBytes(InaccessibleBytes&&)                 = delete;
+    InaccessibleBytes& operator=(const InaccessibleBytes&) = delete;
+    InaccessibleBytes& operator=(InaccessibleBytes&&)      = delete;
+
+    /** Null if the mapping failed. */
+    const void*
+    data() const
+    {
+        return mData;
+    }
+
+    std::span<const std::byte>
+    bytes() const
+    {
+        return {static_cast<const std::byte*>(mData), mSize};
+    }
+
+private:
+    std::size_t mSize;
+    void*       mData;
+};
+#endif
 
 constexpr std::size_t gQuadStride = 24u;
 
@@ -766,6 +956,35 @@ TEST_F(RendererTest, createMeshRejectsMalformedDescription)
                                        .attributes = std::vector(9u, VertexAttribute{})}),
                  std::invalid_argument);
 
+    // A stride or an offset off a multiple of 4 puts a component at a misaligned address.
+    constexpr std::size_t        kOddStride = 10u;
+    const std::vector<std::byte> oddBytes(2u * kOddStride);
+    EXPECT_THROW(renderer->createMesh({.vertices   = oddBytes,
+                                       .stride     = kOddStride,
+                                       .attributes = {{VertexFormat::eFloat2, 0u}}}),
+                 std::invalid_argument);
+    // The attribute fits the stride (2 + 8 <= 12), so only the multiple-of-4 rule rejects it.
+    constexpr std::size_t        kFitStride = 12u;
+    const std::vector<std::byte> fitBytes(2u * kFitStride);
+    EXPECT_THROW(renderer->createMesh({.vertices   = fitBytes,
+                                       .stride     = kFitStride,
+                                       .attributes = {{VertexFormat::eFloat2, 2u}}}),
+                 std::invalid_argument);
+
+    // One vertex whose stride is the device maximum plus 4. Devices with a huge maximum would make
+    // the vertex too big to test; lavapipe's is small.
+    const std::uint32_t maxStride =
+        RendererTestAccess::limits(*renderer).maxVertexInputBindingStride;
+    constexpr std::uint32_t kLargestTestable = 1u << 16u;
+    if (maxStride <= kLargestTestable)
+    {
+        const std::vector<std::byte> hugeVertex(std::size_t{maxStride} + 4u);
+        EXPECT_THROW(renderer->createMesh({.vertices   = hugeVertex,
+                                           .stride     = maxStride + 4u,
+                                           .attributes = {{VertexFormat::eFloat2, 0u}}}),
+                     std::invalid_argument);
+    }
+
     const MeshPtr mesh =
         renderer->createMesh({.vertices = bytes, .stride = kStride, .attributes = {float2}});
     ASSERT_TRUE(mesh);
@@ -808,16 +1027,15 @@ TEST_F(RendererTest, createMeshRejectsMalformedIndices)
 }
 
 /**
- * The indices follow the vertices at a multiple of 4 bytes, even when the vertices end off it.
- * MoltenVK only draws strides that are a multiple of 4, and no test draws an unaligned stride, so
- * this test is the padding's only coverage.
+ * The indices follow the vertices, at a multiple of 4 bytes because the stride is one. The staging
+ * buffer holds both.
  */
 // The score comes from the gtest assertion macros.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-TEST_F(RendererTest, createMeshAlignsIndicesAfterVertices)
+TEST_F(RendererTest, createMeshStagesIndicesAfterVertices)
 {
-    constexpr std::size_t kStride = 10u;
-    // 30 bytes of vertices: the indices start at 32.
+    constexpr std::size_t kStride = 12u;
+    // 36 bytes of vertices: the indices start at 36.
     std::vector<std::byte> vertices(3u * kStride);
     for (std::size_t i = 0u; i < vertices.size(); ++i)
     {
@@ -832,10 +1050,10 @@ TEST_F(RendererTest, createMeshAlignsIndicesAfterVertices)
                                                .stride     = kStride,
                                                .attributes = {{VertexFormat::eFloat2, 0u}}});
     ASSERT_TRUE(mesh);
-    EXPECT_EQ(mesh->indexOffset, 32u);
+    EXPECT_EQ(mesh->indexOffset, 36u);
 
-    // The bytes wait in the staging buffer, which the render thread copies into the device-local
-    // buffer of the mesh. Reading it back through mapForWrite() is meant for writing; it is legal
+    // The bytes wait in the staging buffer, which the render thread copies into the buffer of
+    // the mesh. Reading it back through mapForWrite() is meant for writing; it is legal
     // on lavapipe, whose host memory is coherent.
     ASSERT_EQ(RendererTestAccess::pendingUploadCount(*renderer), 1u);
     const auto staging = RendererTestAccess::pendingStaging(*renderer, 0u).lock();
@@ -848,7 +1066,7 @@ TEST_F(RendererTest, createMeshAlignsIndicesAfterVertices)
     EXPECT_EQ(std::memcmp(mapping.data + mesh->indexOffset, indices, sizeof(indices)), 0);
 }
 
-/** An indexed mesh reaches the render thread; the validation run of the gate sees the draw. */
+/** An indexed mesh reaches the render thread; the validation layer checks the draw. */
 TEST_F(RendererTest, indexedMeshIsDrawn)
 {
     const std::uint32_t indices[] = {0u, 1u, 2u};
@@ -992,6 +1210,28 @@ TEST_F(RendererTest, createTextureRejectsMalformedDescription)
                  std::invalid_argument);
     EXPECT_THROW(renderer->createTexture({.pixels = pixels, .width = 2u, .height = 0u}),
                  std::invalid_argument);
+    // One past the device limit: the pixels fit the byte count, the image does not exist.
+    const std::uint32_t tooWide = RendererTestAccess::limits(*renderer).maxImageDimension2D + 1u;
+    const std::vector<std::byte> tooWidePixels(std::size_t{tooWide} * gPixelSize);
+    EXPECT_THROW(renderer->createTexture({.pixels = tooWidePixels, .width = tooWide, .height = 1u}),
+                 std::invalid_argument);
+    EXPECT_THROW(renderer->createTexture({.pixels = tooWidePixels, .width = 1u, .height = tooWide}),
+                 std::invalid_argument);
+#ifndef _WIN32
+    // A square over the limit whose pixels have the exact byte count (4 GiB and a bit). The extent
+    // must be refused before anything reads the pixels or makes the staging buffer. The pixels are
+    // address space with no access rights, so any read of them faults, and the test costs no
+    // memory.
+    constexpr std::uint32_t kHugeSide = 32769u;
+    if (RendererTestAccess::limits(*renderer).maxImageDimension2D < kHugeSide)
+    {
+        const InaccessibleBytes huge{std::size_t{kHugeSide} * kHugeSide * gPixelSize};
+        ASSERT_NE(huge.data(), nullptr);
+        EXPECT_THROW(renderer->createTexture(
+                         {.pixels = huge.bytes(), .width = kHugeSide, .height = kHugeSide}),
+                     std::invalid_argument);
+    }
+#endif
     // One byte too few, one byte too many, and the right size for the other extent.
     EXPECT_THROW(
         renderer->createTexture(
@@ -1019,8 +1259,8 @@ TEST_F(RendererTest, createTextureRejectsMalformedDescription)
  * one (the renderer has two frame slots).
  *
  * It proves that Engine records the buffer through the retaining path and the renderer holds
- * nothing on top. GPU safety rests on the Graphics retention tests; validation errors do not fail
- * a test here.
+ * nothing on top. GPU safety rests on the Graphics retention tests; a validation error raised after
+ * construction fails the test in TearDown().
  */
 // The score comes from the gtest assertion macros.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -1217,13 +1457,13 @@ TEST_F(RendererTest, uploadsAreRecordedAndStagingReleased)
     EXPECT_FALSE(textureStaging.expired());
     EXPECT_FALSE(meshStaging.expired());
 
-    // Stops at the first frame after which the list is empty, before the frame slot of the upload
-    // can be reused.
+    // One frame only: the slot of the upload is reused by the third frame at the earliest, so the
+    // render thread cannot get there while this thread waits for the list to empty.
     renderer->start();
+    renderer->submitFrame({});
     EXPECT_TRUE(becomesTrue(
         [&]
         {
-            renderer->submitFrame({});
             return RendererTestAccess::pendingUploadCount(*renderer) == 0u;
         }));
     EXPECT_FALSE(textureStaging.expired());

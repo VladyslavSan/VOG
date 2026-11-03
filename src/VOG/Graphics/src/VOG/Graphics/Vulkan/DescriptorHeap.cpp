@@ -126,13 +126,9 @@ DescriptorHeap::DescriptorHeap(DevicePtr                              device,
                                std::uint32_t                          resourceSlots,
                                std::span<const vk::SamplerCreateInfo> samplers)
     : mDevice{std::move(device)}
-    , mLayout{DescriptorHeapLayout::make(
-          mDevice->raiiPhysicalDevice()
-              .getProperties2<vk::PhysicalDeviceProperties2,
-                              vk::PhysicalDeviceDescriptorHeapPropertiesEXT>()
-              .get<vk::PhysicalDeviceDescriptorHeapPropertiesEXT>(),
-          resourceSlots,
-          static_cast<std::uint32_t>(samplers.size()))}
+    , mLayout{DescriptorHeapLayout::make(mDevice->descriptorHeapProperties,
+                                         resourceSlots,
+                                         static_cast<std::uint32_t>(samplers.size()))}
     , mResourceHeap{makeHeapBuffer(*mDevice, mLayout.resources)}
     , mSamplerHeap{makeHeapBuffer(*mDevice, mLayout.samplers)}
     , mResourceBind{bindInfo(*mResourceHeap, mLayout.resources)}

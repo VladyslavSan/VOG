@@ -1,6 +1,11 @@
 #include "VOG/Graphics/Vulkan/ShaderProgram.hpp"
+#include <VOG/Graphics/Vulkan/Limits.hpp>
 
 #include <gtest/gtest.h>
+
+#include <cstdint>
+#include <format>
+#include <string>
 
 #include "VulkanFixture.hpp"
 #include "VulkanValidationFixture.hpp"
@@ -34,6 +39,30 @@ void main() {
     fragColor = inColor;
 }
 )";
+
+/** A vertex shader with @p inputs vec4 inputs and @p outputs vec4 outputs, both at least 1. */
+std::string
+vertexShaderWithAttributes(std::uint32_t inputs, std::uint32_t outputs)
+{
+    std::string source = "#version 450\n";
+    std::string sum    = "vec4(0.0)";
+    for (std::uint32_t i = 0u; i < inputs; ++i)
+    {
+        source += std::format("layout(location = {0}) in vec4 in{0};\n", i);
+        sum += std::format(" + in{}", i);
+    }
+    for (std::uint32_t i = 0u; i < outputs; ++i)
+    {
+        source += std::format("layout(location = {0}) out vec4 out{0};\n", i);
+    }
+    source += "void main() {\n    gl_Position = " + sum + ";\n";
+    for (std::uint32_t i = 0u; i < outputs; ++i)
+    {
+        source += std::format("    out{} = gl_Position;\n", i);
+    }
+
+    return source + "}\n";
+}
 
 // Resources the way a shader declares them for the descriptor heap: no set, no binding, an index
 // from the push constants.
@@ -97,6 +126,24 @@ void main() {
 }
 )";
 } // namespace
+
+/** Exactly Limits::gMaxNumStageAttributes passes; one more is a ShaderError, not a Debug abort. */
+TEST_F(VulkanFixture, Shader_maxStageAttributesPassAndOneMoreThrows)
+{
+    constexpr std::uint32_t kMax = Limits::gMaxNumStageAttributes;
+
+    const auto shader =
+        createShader(Shader::ShadingStage::eVertex, vertexShaderWithAttributes(kMax, kMax));
+    EXPECT_EQ(shader->reflection.inAttributes.size(), kMax);
+    EXPECT_EQ(shader->reflection.outAttributes.size(), kMax);
+
+    EXPECT_THROW(
+        createShader(Shader::ShadingStage::eVertex, vertexShaderWithAttributes(kMax + 1u, 1u)),
+        Shader::ShaderError);
+    EXPECT_THROW(
+        createShader(Shader::ShadingStage::eVertex, vertexShaderWithAttributes(1u, kMax + 1u)),
+        Shader::ShaderError);
+}
 
 TEST_F(VulkanFixture, Shader_instantiate_vertex_shader)
 {

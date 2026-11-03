@@ -26,6 +26,7 @@ target_compile_definitions(VOG.Engine.Unit
 target_include_directories(VOG.Engine.Unit
     PRIVATE
         ${PROJECT_SOURCE_DIR}/src/VOG/Engine/src
+        ${PROJECT_SOURCE_DIR}/src/VOG/Graphics/Test/Support
 )
 
 target_link_libraries(VOG.Engine.Unit

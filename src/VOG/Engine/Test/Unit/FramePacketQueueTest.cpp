@@ -208,6 +208,29 @@ TEST(FramePacketQueueTest, emptyReflectsSlot)
     EXPECT_TRUE(queue.empty());
 }
 
+TEST(FramePacketQueueTest, tryPushWakesBlockedPop)
+{
+    FramePacketQueue           queue;
+    std::stop_source           stop;
+    std::optional<FramePacket> popped;
+
+    Helper helper{[&]
+                  {
+                      popped = queue.pop(stop.get_token());
+                  }};
+    EXPECT_TRUE(helper.stillBlocked());
+
+    queue.tryPush(packet(gFirst));
+    // A pop that tryPush did not wake never returns by itself: the deadline of returnsInTime()
+    // fails the test, and the stop frees the helper.
+    EXPECT_TRUE(helper.returnsInTime(
+        [&]
+        {
+            stop.request_stop();
+        }));
+    EXPECT_EQ(markerOf(popped), gFirst);
+}
+
 TEST(FramePacketQueueTest, tryPushDropsWhileFull)
 {
     FramePacketQueue queue;

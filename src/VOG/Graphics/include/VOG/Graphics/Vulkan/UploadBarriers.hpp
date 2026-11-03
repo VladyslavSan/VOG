@@ -10,12 +10,13 @@
 // command buffer of the queue that uses the resource. They are public functions so that tests can
 // check the values of the cross-family case on a driver that has one queue family.
 //
-// With equal families there is no ownership transfer: one barrier after the copy is all there is,
-// and acquire is empty. With two families, release and acquire are the two halves of a queue family
-// ownership transfer: they name the same families and the same layouts, and the release names no
-// destination stage, because a transfer-only queue does not support the stages of the user. The
-// submit that carries the acquire must wait for the submit that carries the release, at the
-// all-commands stage.
+// With equal families there is no ownership transfer, and acquire is empty. A texture gets one
+// barrier after the copy, which moves it to shader-read-only; a buffer gets none, and the semaphore
+// wait of the submit that reads it is the whole dependency. With two families, release and acquire
+// are the two halves of a queue family ownership transfer: they name the same families and the same
+// layouts, and the release names no destination stage, because a transfer-only queue does not
+// support the stages of the user. The submit that carries the acquire must wait for the submit that
+// carries the release, at the all-commands stage.
 namespace VOG::Graphics::Vulkan
 {
 /**

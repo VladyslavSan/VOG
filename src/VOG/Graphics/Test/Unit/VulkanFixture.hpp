@@ -21,6 +21,7 @@
 #include <string_view>
 #include <vector>
 
+#include "SyncValidationSetting.hpp"
 #include "TestShaderCompiler.hpp"
 
 namespace VOG::Tests
@@ -232,63 +233,17 @@ private:
     static constexpr const char* kValidationLayer          = "VK_LAYER_KHRONOS_validation";
     static constexpr const char* kDebugUtilsExtension      = "VK_EXT_debug_utils";
     static constexpr const char* kHeadlessSurfaceExtension = "VK_EXT_headless_surface";
-    static constexpr const char* kSyncValidationVariable   = "VK_KHRONOS_VALIDATION_VALIDATE_SYNC";
 
-    /**
-     * The layer reads its settings in vkCreateInstance. The environment is process-wide, so the
-     * variable is set for that call only and then restored to what it was: a test binary that runs
-     * later fixtures does not inherit the setting.
-     */
+    /** The layer reads its settings in vkCreateInstance: the setting is on for that call only. */
     static Graphics::Vulkan::InstancePtr
     createInstance(bool                                                  syncValidation,
                    const Graphics::Vulkan::Instance::InstanceParameters& parameters)
     {
-        struct Setting
+        std::optional<SyncValidationSetting> setting;
+        if (syncValidation)
         {
-            explicit Setting(bool active)
-                : mActive{active}
-            {
-                if (mActive)
-                {
-                    if (const char* previous = std::getenv(kSyncValidationVariable))
-                    {
-                        mPrevious = previous;
-                    }
-                    set("true");
-                }
-            }
-
-            ~Setting()
-            {
-                if (mActive)
-                {
-                    set(mPrevious ? mPrevious->c_str() : nullptr);
-                }
-            }
-
-            Setting(const Setting&)            = delete;
-            Setting& operator=(const Setting&) = delete;
-
-            static void
-            set(const char* value)
-            {
-#ifdef _WIN32
-                _putenv_s(kSyncValidationVariable, value != nullptr ? value : "");
-#else
-                if (value != nullptr)
-                {
-                    setenv(kSyncValidationVariable, value, 1);
-                }
-                else
-                {
-                    unsetenv(kSyncValidationVariable);
-                }
-#endif
-            }
-
-            bool                       mActive;
-            std::optional<std::string> mPrevious;
-        } const setting{syncValidation};
+            setting.emplace();
+        }
 
         return Graphics::Vulkan::Instance::create(parameters);
     }

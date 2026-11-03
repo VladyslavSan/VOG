@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <format>
+#include <stdexcept>
 #include <utility>
 
 namespace VOG::Graphics::Vulkan
@@ -104,6 +105,10 @@ PhysicalDevice::PhysicalDevice(InstancePtr _instance, vk::raii::PhysicalDevice p
     : vk::raii::PhysicalDevice{std::move(physicalDevice)}
     , instance{std::move(_instance)}
     , queueInfos{selectQueueFamilies(getQueueFamilyProperties(), kDedicatedTransferFamily)}
+    , limits{getProperties().limits}
+    , descriptorHeapProperties{getProperties2<vk::PhysicalDeviceProperties2,
+                                              vk::PhysicalDeviceDescriptorHeapPropertiesEXT>()
+                                   .get<vk::PhysicalDeviceDescriptorHeapPropertiesEXT>()}
 {
 }
 
@@ -277,6 +282,14 @@ Device::createDescriptorHeap(std::uint32_t                          resourceSlot
 std::unique_ptr<Texture>
 Device::createTexture(const DescriptorHeapPtr& heap, vk::Extent2D extent, vk::Format format)
 {
+    if (extent.width > limits.maxImageDimension2D || extent.height > limits.maxImageDimension2D)
+    {
+        throw std::invalid_argument{std::format("A texture is at most {0}x{0}; got {1}x{2}.",
+                                                limits.maxImageDimension2D,
+                                                extent.width,
+                                                extent.height)};
+    }
+
     // The slot first: a full heap fails before any image exists.
     DescriptorHeap::Slot slot = heap->allocate();
 
@@ -317,11 +330,16 @@ Device::createUniformBlock(const DescriptorHeapPtr& heap, std::span<const std::b
         std::max(kBlockGranularity,
                  (bytes.size() + kBlockGranularity - 1u) / kBlockGranularity * kBlockGranularity);
 
+    if (size > limits.maxUniformBufferRange)
+    {
+        throw std::invalid_argument{std::format(
+            "A uniform block takes at most {} bytes; got {}.", limits.maxUniformBufferRange, size)};
+    }
+
     DescriptorHeap::Slot slot = heap->allocate();
 
-    const vk::DeviceSize alignment =
-        raiiPhysicalDevice().getProperties().limits.minUniformBufferOffsetAlignment;
-    BufferPtr buffer =
+    const vk::DeviceSize alignment = limits.minUniformBufferOffsetAlignment;
+    BufferPtr            buffer =
         createBuffer({.size  = size,
                       .usage = vk::BufferUsageFlagBits::eUniformBuffer |
                                vk::BufferUsageFlagBits::eShaderDeviceAddress},

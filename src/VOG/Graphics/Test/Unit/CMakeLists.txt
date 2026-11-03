@@ -9,6 +9,8 @@ set_target_properties(VOG.Graphics.Unit
 target_include_directories(VOG.Graphics.Unit
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/VOG/Graphics/Test/Support
 )
 
 target_sources(VOG.Graphics.Unit
@@ -64,6 +66,7 @@ target_link_libraries(VOG.Graphics.Unit
         VOG.Graphics
         GTest::gtest
         GTest::gtest_main
+        spdlog::spdlog
 )
 
 include(GoogleTest)

@@ -15,23 +15,17 @@ buildPushConstants(const ShaderProgram::ShadingStages& stages)
 {
     ShaderProgram::PushConstants pushConstants;
 
-    auto valueInRange = [](const auto left, const auto right, const auto value) -> bool
-    {
-        return left <= value && value <= right;
-    };
-
     for (const auto& stage : {stages.vertex, stages.fragment})
     {
         for (const auto& pushConstant : stage.shader->reflection.pushConstants.variables)
         {
             auto foundOverlap = std::ranges::find_if(
                 pushConstants.ranges,
-                [&pushConstant, &valueInRange](const ShaderProgram::PushConstants::Range& range)
+                [&pushConstant](const ShaderProgram::PushConstants::Range& range)
                 {
-                    const auto end = range.offset + range.size - 1u;
-                    return valueInRange(range.offset, end, pushConstant.offset) ||
-                           valueInRange(
-                               range.offset, end, pushConstant.offset + pushConstant.size - 1u);
+                    // The byte intervals intersect; symmetric, so the stage order does not matter.
+                    return range.offset < pushConstant.offset + pushConstant.size &&
+                           pushConstant.offset < range.offset + range.size;
                 });
 
             // Simple path, just add push constant to ranges.

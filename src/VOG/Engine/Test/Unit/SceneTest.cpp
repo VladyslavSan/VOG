@@ -8,6 +8,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -20,6 +21,10 @@ using VOG::Math::Vector4f;
 
 namespace VOG::Tests
 {
+// A copy of a behaviour would carry the state and the object of the original.
+static_assert(!std::is_copy_constructible_v<Behaviour> && !std::is_move_constructible_v<Behaviour>);
+static_assert(!std::is_copy_assignable_v<Behaviour> && !std::is_move_assignable_v<Behaviour>);
+
 // NOLINTBEGIN(readability-magic-numbers, readability-function-cognitive-complexity): the numbers
 // are test data; the score of a test comes from the gtest assertion macros.
 namespace

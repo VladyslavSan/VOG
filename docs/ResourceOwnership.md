@@ -113,10 +113,12 @@ The frame that uploads submits twice. Both submits come from the render thread, 
    It also waits for the previous value, because after a frame whose graphics submit threw the same
    uploads are recorded again while their first copy may still run.
 2. The graphics command buffer records the matching `acquire` of every upload before the rendering
-   pass (nothing, when the families are equal: the copy already made the resource ready), and the graphics submit waits for `mUploadValue` at `ALL_COMMANDS`. The wait is in every
-   graphics submit, not only in one that uploads: a draw of a mesh or texture that an earlier frame
-   uploaded is ordered after that copy by the wait. `ALL_COMMANDS` is the only stage that can wait
-   for a queue family ownership transfer without
+   pass (nothing, when the families are equal: a texture is ready because its copy recorded the
+   barrier to shader-read-only, and a buffer because the graphics submit waits for the copy), and
+   the graphics submit waits for `mUploadValue` at `ALL_COMMANDS`. The wait is in every graphics
+   submit, not only in one that uploads: a draw of a mesh or texture that an earlier frame uploaded
+   is ordered after that copy by the wait. `ALL_COMMANDS` is the only stage that can wait for a
+   queue family ownership transfer without
    `VK_DEPENDENCY_QUEUE_FAMILY_OWNERSHIP_TRANSFER_USE_ALL_STAGES_BIT_KHR`, which VOG does not
    use.
 
@@ -319,10 +321,6 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
   between submit and present is a separate case, which leaves the slot's render-finished
   semaphore signaled; see `SwapchainSync.md`.
 
-- **Device vertex limits are not validated.** `createMesh` checks the stride against the
-  attributes, but not against the device limits for vertex stride and attribute offset:
-  `PhysicalDevice` exposes no `getProperties`.
-
 - **The pipeline cache never evicts.** A pipeline stays until `~Renderer`, even if no mesh or
   material uses its vertex layout, shader program and color format any more.
 
@@ -338,8 +336,8 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
 
 - **Windows and macOS CI only build.** Those jobs do not run the tests.
 
-- **Wayland and X11 have no CI.** The Linux jobs build and test on a headless
-  surface; the Wayland and X11 surface paths have not run in CI.
+- **Wayland has no CI.** The Linux jobs run the Application tests on X11 under Xvfb and the
+  other tests on a headless surface; the Wayland surface path has not run in CI.
 
 ## Performance note
 

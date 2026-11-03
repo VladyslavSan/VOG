@@ -10,8 +10,15 @@
 
 namespace VOG::Math
 {
-Matrix4x4f
-calculateCameraMatrix(const Vector3f& position, const Vector3f& direction, const Vector3f& upVec);
+/** Where a camera is and which way it looks; direction and up must be normalized. */
+struct CameraPose
+{
+    Vector3f position;
+    Vector3f direction;
+    Vector3f up;
+};
+
+Matrix4x4f calculateCameraMatrix(const CameraPose& pose);
 
 Matrix4x4f orthographicProjection(const Vector2f& position,
                                   const Vector2f& viewportSize,

@@ -167,6 +167,20 @@ rejectDescriptorSetResources(const spirv_cross::ShaderResources& resources)
     }
 }
 
+/** A pipeline takes at most Limits::gMaxNumStageAttributes attributes per stage. */
+void
+rejectTooManyAttributes(std::string_view kind, std::size_t count)
+{
+    if (count > Limits::gMaxNumStageAttributes)
+    {
+        throw Shader::ShaderError{
+            std::format("The shader declares {} stage {}s; at most {} are supported.",
+                        count,
+                        kind,
+                        Limits::gMaxNumStageAttributes)};
+    }
+}
+
 Shader::Reflection
 reflect(std::span<const std::uint32_t> binary)
 {
@@ -176,8 +190,8 @@ reflect(std::span<const std::uint32_t> binary)
 
     Shader::Reflection reflection{};
 
-    VOG_ASSERT(resources.stage_inputs.size() < Limits::gMaxNumStageAttributes);
-    VOG_ASSERT(resources.stage_outputs.size() < Limits::gMaxNumStageAttributes);
+    rejectTooManyAttributes("input", resources.stage_inputs.size());
+    rejectTooManyAttributes("output", resources.stage_outputs.size());
     reflection.inAttributes  = processStageResources(compiler, resources.stage_inputs);
     reflection.outAttributes = processStageResources(compiler, resources.stage_outputs);
 

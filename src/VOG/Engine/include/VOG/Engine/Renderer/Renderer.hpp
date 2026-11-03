@@ -111,13 +111,16 @@ public:
 
     /**
      * Copies the vertices and indices of @p description into staging memory. The render thread
-     * copies them into the device-local memory of the mesh on the transfer queue, in the first
-     * frame it renders after this call, and a draw of the mesh in that frame waits for the copy on
-     * the GPU. The upload stays pending through frames that are dropped or fail. Any thread: the
-     * allocator is internally synchronized.
-     * @throws std::invalid_argument if the description is empty, its size is not a multiple of the
-     *         stride, an attribute overruns the stride, or it has more attributes than a pipeline
-     *         can take.
+     * copies them into the memory of the mesh, preferably device-local, on the transfer queue, in
+     * the first frame it renders after this call, and a draw of the mesh in that frame waits for
+     * the copy on the GPU. The upload stays pending through frames that are dropped or fail. Any
+     * thread: the allocator is internally synchronized.
+     * @throws std::invalid_argument if the description is empty, the stride is zero, or its size is
+     *         not a multiple of the stride; an attribute overruns the stride; it has more
+     *         attributes than a pipeline can take; the stride or an attribute offset is not a
+     *         multiple of 4, or exceeds maxVertexInputBindingStride or
+     *         maxVertexInputAttributeOffset of the device; its index count is not a multiple of 3;
+     *         or an index is not less than the vertex count.
      */
     MeshPtr createMesh(const MeshDescription& description);
 
@@ -126,8 +129,8 @@ public:
      * The image is uploaded by the render thread on the transfer queue, in the first frame it
      * renders after this call, and a draw of the texture in that frame waits on the GPU for the
      * upload's timeline signal. The upload stays pending through frames that are dropped or fail.
-     * @throws std::invalid_argument if the extent is zero, or the pixels are not exactly
-     *         width * height * 4 bytes.
+     * @throws std::invalid_argument if the extent is zero or exceeds maxImageDimension2D of the
+     *         device, or the pixels are not exactly width * height * 4 bytes.
      * @throws std::runtime_error if the renderer's descriptor heap is full or the image cannot be
      *         created.
      */
@@ -175,9 +178,12 @@ public:
 
     /**
      * Requests stop, joins the render thread and returns its failure, or null if it ended
-     * normally or was not running. The Renderer can be started again afterwards. The stop is
-     * observed within one acquire timeout and one frame. A packet still queued at stop() is
-     * rendered first after the next start().
+     * normally or was not running. The Renderer can be started again afterwards, unless the
+     * failure came between the swapchain acquire and the present: that leaves a semaphore of the
+     * frame slot signaled (known gap in docs/SwapchainSync.md). The stop is observed within one
+     * acquire timeout and one frame, plus the fence waits of the frame slot, which have no timeout
+     * (docs/SwapchainSync.md). After a normal stop, a packet still queued at stop() is rendered
+     * first after the next start(); after a failure, the packets queued before stop() are dropped.
      */
     [[nodiscard]] std::exception_ptr stop() noexcept;
 
@@ -208,7 +214,7 @@ private:
     void renderFrame(FramePacket packet);
 
     /** The bytes of a mesh or of a texture, waiting for the render thread to copy them from
-     *  staging into the device-local buffer or image. */
+     *  staging into the buffer or image, which are preferably device-local. */
     struct PendingUpload
     {
         std::shared_ptr<Graphics::Vulkan::Buffer> staging;

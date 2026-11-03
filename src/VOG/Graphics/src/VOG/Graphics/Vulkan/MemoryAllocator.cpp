@@ -205,10 +205,10 @@ MemoryAllocator::makeTexture(const vk::ImageCreateInfo& createInfo, DescriptorHe
                                      AllocationFlags{}};
     vk::raii::Image owningImage{mDevice.raii(), image};
 
-    return std::unique_ptr<Texture>(
-        new Texture{std::move(owningAllocation),
-                    std::move(owningImage),
-                    std::move(slot),
-                    {createInfo.extent.width, createInfo.extent.height}});
+    return std::unique_ptr<Texture>(new Texture{std::move(owningAllocation),
+                                                std::move(owningImage),
+                                                std::move(slot),
+                                                {createInfo.extent.width, createInfo.extent.height},
+                                                createInfo.format});
 }
 } // namespace VOG::Graphics::Vulkan

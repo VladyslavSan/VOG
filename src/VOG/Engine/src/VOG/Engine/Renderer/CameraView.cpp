@@ -7,8 +7,8 @@ namespace VOG::Engine
 Math::Matrix4x4f
 CameraView::viewProjection(Extent extent) const
 {
-    const Math::Matrix4x4f view =
-        glm::inverse(Math::calculateCameraMatrix(position, direction, up));
+    const Math::Matrix4x4f view = glm::inverse(
+        Math::calculateCameraMatrix({.position = position, .direction = direction, .up = up}));
     const Math::Matrix4x4f projection = Math::orthographicProjection(
         {0.0f, 0.0f},
         {static_cast<float>(extent.width), static_cast<float>(extent.height)},

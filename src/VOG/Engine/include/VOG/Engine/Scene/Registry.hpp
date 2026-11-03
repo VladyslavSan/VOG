@@ -410,6 +410,9 @@ private:
     Pool<T>*
     find() const
     {
+        // typeid drops cv-qualifiers, so a const T would reach the Pool<T> and be cast to
+        // Pool<const T>.
+        static_assert(std::is_same_v<T, std::remove_cvref_t<T>>, "component types are unqualified");
         const auto found = mPools.find(std::type_index{typeid(T)});
 
         return found != mPools.end() ? static_cast<Pool<T>*>(found->second.get()) : nullptr;

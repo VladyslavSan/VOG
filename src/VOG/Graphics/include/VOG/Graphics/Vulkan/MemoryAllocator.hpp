@@ -65,7 +65,8 @@ private:
     std::unique_ptr<Buffer> makeBuffer(const vk::BufferCreateInfo& createInfo,
                                        const AllocationParameters& allocationCreateInfo);
 
-    /** Device-local image; the texture owns @p slot, the descriptor of the image. */
+    /** Image in memory that is preferably device-local; the texture owns @p slot, the descriptor of
+     * the image. */
     std::unique_ptr<Texture> makeTexture(const vk::ImageCreateInfo& createInfo,
                                          DescriptorHeap::Slot       slot);
 

@@ -5,6 +5,8 @@
 #include <VOG/Graphics/Vulkan/FencePool.hpp>
 
 #include <gtest/gtest.h>
+#include <spdlog/sinks/stdout_sinks.h>
+#include <spdlog/spdlog.h>
 
 #include <array>
 #include <memory>
@@ -342,7 +344,7 @@ TEST_F(VulkanFixture, Queue_submitRetainsSemaphoresUntilPoolReset)
 namespace
 {
 /**
- * Copies @p staging into a device-local buffer on a pool of the transfer family, signalling the
+ * Copies @p staging into a buffer on a pool of the transfer family, signalling the
  * timeline at 1, then on the graphics queue reads it back into a host buffer and returns the
  * bytes. The graphics submit waits for the timeline at 1 only if @p waitForUpload.
  *
@@ -575,4 +577,55 @@ TEST_F(VulkanValidationFixture, CommandBufferRecorder_clearRenderBufferAndSubmit
     EXPECT_TRUE(mValidationErrors.empty())
         << (mValidationErrors.empty() ? "" : mValidationErrors.front());
 }
+
+#ifndef NDEBUG
+/**
+ * The recorder asserts the usage rules that the driver would take as undefined behaviour: a
+ * staging buffer that does not cover the image, and push data that is empty, off a multiple of 4
+ * or past maxPushDataSize. The death runs in a fresh process, because the process that runs Vulkan
+ * has threads.
+ */
+TEST_F(VulkanFixture, CommandBufferRecorderDeathTest_misusedUploadAndPushDataAssert)
+{
+    GTEST_FLAG_SET(death_test_style, "threadsafe");
+
+    auto heap = createHeap();
+    // A 4x4 RGBA8 image takes 64 bytes; the staging buffer has 16.
+    std::shared_ptr<Buffer>  staging = createStaging(gBlockBytes);
+    std::shared_ptr<Texture> texture =
+        mDevice->createTexture(heap, {.width = 4u, .height = 4u}, vk::Format::eR8G8B8A8Srgb);
+    auto pool = mDevice->createCommandBufferPool();
+
+    const auto useStderr = []
+    {
+        // The default logger writes to stdout; a death test reads stderr.
+        spdlog::set_default_logger(spdlog::stderr_logger_mt("assert"));
+    };
+
+    EXPECT_DEATH(
+        {
+            useStderr();
+            auto recorder = pool->record();
+            recorder.copyBufferToTexture(
+                staging, texture, mDevice->queueInfos.graphics.familyIndex);
+        },
+        "smaller than the image");
+
+    const auto pushData = [&](std::uint32_t offset, std::size_t size)
+    {
+        useStderr();
+        auto                         recorder = pool->record();
+        auto                         target   = makeTarget(*mDevice, 16u);
+        const std::vector<std::byte> bytes(size);
+        recorder.setImageBarrier(target, toColorAttachmentBarrier());
+        auto pass = recorder.beginRendering({{.attachment = target}});
+        pass.pushData(offset, bytes);
+    };
+    EXPECT_DEATH(pushData(0u, 0u), "at least one byte");
+    EXPECT_DEATH(pushData(2u, 4u), "multiples of 4");
+    EXPECT_DEATH(pushData(0u, 6u), "multiples of 4");
+    EXPECT_DEATH(pushData(0u, mDevice->descriptorHeapProperties.maxPushDataSize + 4u),
+                 "past maxPushDataSize");
+}
+#endif
 } // namespace VOG::Tests

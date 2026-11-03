@@ -5,10 +5,13 @@
 #include <VOG/Graphics/Vulkan/CommandBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Common.hpp>
 #include <VOG/Graphics/Vulkan/DescriptorHeap.hpp>
+#include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/Texture.hpp>
 #include <VOG/Graphics/Vulkan/UniformBlock.hpp>
 #include <VOG/Graphics/Vulkan/UploadBarriers.hpp>
+
+#include <vulkan/vulkan_format_traits.hpp>
 
 #include <array>
 
@@ -209,6 +212,14 @@ void
 CommandBufferRecorder::RenderingPass::pushData(std::uint32_t              offset,
                                                std::span<const std::byte> data)
 {
+    // The valid usage of VkPushDataInfoEXT.
+    constexpr std::uint32_t kAlignment = 4u;
+    VOG_ASSERT_MSG(!data.empty(), "pushData needs at least one byte.");
+    VOG_ASSERT_MSG(offset % kAlignment == 0u && data.size() % kAlignment == 0u,
+                   "The offset and size of pushData must be multiples of 4.");
+    VOG_ASSERT_MSG(std::uint64_t{offset} + data.size() <=
+                       mRecorder.mPool->mDevice->descriptorHeapProperties.maxPushDataSize,
+                   "pushData goes past maxPushDataSize of the device.");
     mRecorder.mCommandBuffer->pushDataEXT(
         {.offset = offset, .data = {.address = data.data(), .size = data.size()}});
 }
@@ -284,6 +295,12 @@ CommandBufferRecorder::copyBufferToTexture(const BufferPtr&  staging,
                                            std::uint32_t     usageFamily)
 {
     VOG_ASSERT_MSG(!mRenderingActive, "copyBufferToTexture needs to be outside a RenderingPass.");
+    // A lower bound for a block-compressed format, exact for the others.
+    const vk::Extent2D extent = texture->extent();
+    VOG_ASSERT_MSG(staging->byteSize() >= std::uint64_t{extent.width} * extent.height *
+                                              vk::blockSize(texture->format()) /
+                                              vk::texelsPerBlock(texture->format()),
+                   "The staging buffer of copyBufferToTexture is smaller than the image.");
 
     constexpr vk::ImageSubresourceRange kColor{
         .aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = 1u, .layerCount = 1u};
@@ -302,7 +319,6 @@ CommandBufferRecorder::copyBufferToTexture(const BufferPtr&  staging,
                                     .subresourceRange    = kColor};
     unsafeSetBarriers({}, {}, {barrier});
 
-    const vk::Extent2D extent = texture->extent();
     mCommandBuffer->copyBufferToImage(
         **staging,
         **texture,

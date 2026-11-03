@@ -62,12 +62,6 @@ toVk(Extent extent)
     return vk::Extent2D{.width = extent.width, .height = extent.height};
 }
 
-constexpr std::size_t
-alignUp(std::size_t value, std::size_t alignment)
-{
-    return (value + alignment - 1u) / alignment * alignment;
-}
-
 /**
  * Images and uniform blocks the descriptor heap holds at once.
  * Fixed, because growing means binding another heap; make it grow when a scene runs out.
@@ -244,8 +238,29 @@ Renderer::createMesh(const MeshDescription& description)
                                                 Graphics::Vulkan::Limits::gMaxNumStageAttributes,
                                                 description.attributes.size())};
     }
+    const vk::PhysicalDeviceLimits& limits = mVulkanDevice->limits;
+
+    constexpr std::uint32_t kComponentAlignment = 4u;
+    if (description.stride % kComponentAlignment != 0u ||
+        description.stride > limits.maxVertexInputBindingStride)
+    {
+        throw std::invalid_argument{
+            std::format("A mesh stride must be a multiple of {} and at most {}; got {}.",
+                        kComponentAlignment,
+                        limits.maxVertexInputBindingStride,
+                        description.stride)};
+    }
     for (const VertexAttribute& attribute : description.attributes)
     {
+        if (attribute.offset % kComponentAlignment != 0u ||
+            attribute.offset > limits.maxVertexInputAttributeOffset)
+        {
+            throw std::invalid_argument{std::format(
+                "A vertex attribute offset must be a multiple of {} and at most {}; got {}.",
+                kComponentAlignment,
+                limits.maxVertexInputAttributeOffset,
+                attribute.offset)};
+        }
         if (std::uint64_t{attribute.offset} + sizeOf(attribute.format) > description.stride)
         {
             throw std::invalid_argument{std::format(
@@ -274,14 +289,14 @@ Renderer::createMesh(const MeshDescription& description)
         }
     }
 
-    // The indices follow the vertices, aligned to the size of an index.
-    const std::size_t indexOffset =
-        alignUp(description.vertices.size_bytes(), sizeof(std::uint32_t));
+    // The indices follow the vertices. The stride is a multiple of 4, so they are aligned to the
+    // size of an index.
+    const std::size_t indexOffset = description.vertices.size_bytes();
 
     const std::size_t size = indexOffset + description.indices.size_bytes();
 
     // The staging buffer takes the bytes on this thread; the render thread copies them into the
-    // device-local buffer, which only the GPU reads.
+    // buffer of the mesh, preferably device-local, which only the GPU reads.
     Graphics::Vulkan::BufferPtr staging = mVulkanDevice->createBuffer(
         {.size = size, .usage = vk::BufferUsageFlagBits::eTransferSrc},
         {.flags = Graphics::Vulkan::AllocationFlag::eHostSequentialWrite});
@@ -326,7 +341,6 @@ Renderer::createTexture(const TextureDescription& description)
                                                 description.width,
                                                 description.height)};
     }
-
     constexpr std::uint64_t kBytesPerPixel = 4u;
     const std::uint64_t     size =
         std::uint64_t{description.width} * description.height * kBytesPerPixel;
@@ -339,6 +353,11 @@ Renderer::createTexture(const TextureDescription& description)
                                                 description.pixels.size())};
     }
 
+    // The texture first: it validates the extent against the device, and an extent that no image
+    // can have must not reach the (possibly huge) staging allocation.
+    Graphics::Vulkan::TexturePtr texture = mVulkanDevice->createTexture(
+        mHeap, {description.width, description.height}, toVk(description.format));
+
     Graphics::Vulkan::BufferPtr staging = mVulkanDevice->createBuffer(
         {.size = size, .usage = vk::BufferUsageFlagBits::eTransferSrc},
         {.flags = Graphics::Vulkan::AllocationFlag::eHostSequentialWrite});
@@ -346,9 +365,6 @@ Renderer::createTexture(const TextureDescription& description)
         auto mapping = staging->mapForWrite();
         std::ranges::copy(description.pixels, mapping.data);
     }
-
-    Graphics::Vulkan::TexturePtr texture = mVulkanDevice->createTexture(
-        mHeap, {description.width, description.height}, toVk(description.format));
 
     // After the texture exists, so that a frame which draws it finds its upload.
     {

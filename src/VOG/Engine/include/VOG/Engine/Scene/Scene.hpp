@@ -95,7 +95,14 @@ private:
 class Behaviour
 {
 public:
+    Behaviour()          = default;
     virtual ~Behaviour() = default;
+
+    // A copy would carry the state and the object of the original (C.67).
+    Behaviour(const Behaviour&)            = delete;
+    Behaviour(Behaviour&&)                 = delete;
+    Behaviour& operator=(const Behaviour&) = delete;
+    Behaviour& operator=(Behaviour&&)      = delete;
 
     /** Before the first update(). Runs once, also if it throws. */
     virtual void

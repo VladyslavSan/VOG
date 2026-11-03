@@ -8,10 +8,10 @@
 namespace VOG::Graphics::Vulkan
 {
 /**
- * A 2D, single-mip, device-local image that shaders sample through the descriptor heap: its
- * descriptor sits in the heap slot that heapIndex() names. Made by Device::createTexture(); fill
- * it with CommandBufferRecorder::copyBufferToTexture(). The texture keeps its heap, and through
- * it the device, alive.
+ * A 2D, single-mip image, in memory that is preferably device-local, that shaders sample through
+ * the descriptor heap: its descriptor sits in the heap slot that heapIndex() names. Made by
+ * Device::createTexture(); fill it with CommandBufferRecorder::copyBufferToTexture(). The texture
+ * keeps its heap, and through it the device, alive.
  */
 class Texture
     : protected MemoryAllocator::Allocation
@@ -36,13 +36,21 @@ public:
         return mExtent;
     }
 
+    vk::Format
+    format() const noexcept
+    {
+        return mFormat;
+    }
+
 private:
     Texture(MemoryAllocator::Allocation allocation,
             vk::raii::Image             image,
             DescriptorHeap::Slot        slot,
-            vk::Extent2D                extent);
+            vk::Extent2D                extent,
+            vk::Format                  format);
 
     DescriptorHeap::Slot mSlot;
     vk::Extent2D         mExtent;
+    vk::Format           mFormat;
 };
 } // namespace VOG::Graphics::Vulkan

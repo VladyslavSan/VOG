@@ -162,7 +162,9 @@ public:
      *
      * With a @p usageFamily other than the family of this recorder's pool, the copy ends with the
      * release half of a queue family ownership transfer, and the recorder of the usage family must
-     * acquire() the destination before it reads it (UploadBarriers.hpp).
+     * acquire() the destination before it reads it (UploadBarriers.hpp). With equal families the
+     * copy records no barrier: a reader needs a later submit that waits for the submit of the copy
+     * on a semaphore.
      */
     void
     copyBuffer(const BufferPtr& staging, const BufferPtr& destination, std::uint32_t usageFamily);
@@ -174,7 +176,8 @@ public:
      * whole. Uploading again would race the draws that sample it, because the first barrier waits
      * for nothing. Outside a rendering pass.
      *
-     * Ownership transfer as for copyBuffer().
+     * Ownership transfer as for copyBuffer(). With equal families the copy records a barrier that
+     * makes the texture ready for the shaders.
      */
     void copyBufferToTexture(const BufferPtr&  staging,
                              const TexturePtr& texture,
@@ -183,9 +186,11 @@ public:
     /**
      * The acquire half of the ownership transfer that copyBuffer() or copyBufferToTexture()
      * released from the family @p uploadFamily: records it, and retains the resource. Records
-     * nothing when @p uploadFamily is the family of this recorder's pool, because the copy then
-     * made the resource ready itself. The submit of this command buffer must wait for the submit
-     * of the copy at the all-commands stage. Outside a rendering pass.
+     * nothing when @p uploadFamily is the family of this recorder's pool. A texture is then ready
+     * because its copy recorded the barrier that made it so; a buffer is ready because this submit
+     * waits for the submit of the copy. In both cases the copy must be in another command buffer,
+     * and the submit of this command buffer must wait for the submit of the copy at the
+     * all-commands stage. Outside a rendering pass.
      */
     void acquire(const BufferPtr& buffer, std::uint32_t uploadFamily);
 
