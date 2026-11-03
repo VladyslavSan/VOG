@@ -8,7 +8,6 @@
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/DeviceRequirements.hpp>
-#include <VOG/Graphics/Vulkan/Instance.hpp>
 #include <VOG/Graphics/Vulkan/Texture.hpp>
 #include <VOG/Graphics/Vulkan/UniformBlock.hpp>
 
@@ -90,12 +89,6 @@ struct RendererTestAccess
         return renderer.mPendingUploads.at(index).staging;
     }
 
-    static Graphics::Vulkan::InstancePtr
-    instance(const Renderer& renderer)
-    {
-        return renderer.mVulkanInstance;
-    }
-
     static Graphics::Vulkan::DevicePtr
     device(const Renderer& renderer)
     {
@@ -132,9 +125,8 @@ constexpr std::chrono::seconds gDeadline{5};
 
 /**
  * Renders into a headless surface. When the validation layer is installed it runs with
- * synchronization validation on, and a validation error raised after the Renderer constructor
- * returned fails the test in TearDown(). The messenger is installed on the finished Renderer, so
- * errors raised while it is constructed are not seen.
+ * synchronization validation on, and a validation error fails the test in TearDown(), also one
+ * raised while the Renderer was constructed (Config::onValidationMessage).
  */
 class RendererTest : public testing::Test
 {
@@ -173,8 +165,8 @@ protected:
             << (mErrors.messages.empty() ? "" : mErrors.messages.front());
     }
 
-    std::unique_ptr<Renderer>
-    makeRenderer(const std::filesystem::path& shaderPath = VOG_TEST_SHADER_PATH)
+    Renderer::Config
+    makeConfig(const std::filesystem::path& shaderPath = VOG_TEST_SHADER_PATH)
     {
         Renderer::Config config{
             .appName          = "VOG Renderer Test",
@@ -186,24 +178,28 @@ protected:
         };
         if (mValidationInstalled)
         {
-            config.layers = {"VK_LAYER_KHRONOS_validation"};
-            config.extensions.emplace_back("VK_EXT_debug_utils");
+            config.layers              = {"VK_LAYER_KHRONOS_validation"};
+            config.onValidationMessage = [&errors = mErrors](std::string_view message)
+            {
+                const std::scoped_lock lock{errors.mutex};
+                errors.messages.emplace_back(message);
+            };
         }
 
-        auto renderer = std::make_unique<Renderer>(
+        return config;
+    }
+
+    static std::unique_ptr<Renderer>
+    makeRenderer(const Renderer::Config& config)
+    {
+        return std::make_unique<Renderer>(
             Common::SurfaceHandle{.platform = Common::SurfaceHandle::Platform::eHeadless}, config);
-        if (mValidationInstalled)
-        {
-            mWatches.push_back(
-                {.instance  = RendererTestAccess::instance(*renderer),
-                 .messenger = RendererTestAccess::instance(*renderer)->createDebugUtilsMessengerEXT(
-                     {.messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
-                      .messageType     = vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation,
-                      .pfnUserCallback = &RendererTest::onMessage,
-                      .pUserData       = &mErrors})});
-        }
+    }
 
-        return renderer;
+    std::unique_ptr<Renderer>
+    makeRenderer(const std::filesystem::path& shaderPath = VOG_TEST_SHADER_PATH)
+    {
+        return makeRenderer(makeConfig(shaderPath));
     }
 
     bool mValidationInstalled = false;
@@ -223,44 +219,21 @@ protected:
     }
 
 private:
-    /** The validation errors; the render thread reports them too. */
+    /** The validation errors. Any thread that calls Vulkan reports them, the render thread too. */
     struct ErrorLog
     {
         std::mutex               mutex;
         std::vector<std::string> messages;
     };
 
-    /** A messenger and the instance it must be destroyed before. */
-    struct Watch
-    {
-        Graphics::Vulkan::InstancePtr    instance;
-        vk::raii::DebugUtilsMessengerEXT messenger;
-    };
-
-    static vk::Bool32
-    onMessage(vk::DebugUtilsMessageSeverityFlagBitsEXT /*severity*/,
-              vk::DebugUtilsMessageTypeFlagsEXT /*types*/,
-              const vk::DebugUtilsMessengerCallbackDataEXT* data,
-              void*                                         user)
-    {
-        auto&                  errors = *static_cast<ErrorLog*>(user);
-        const std::scoped_lock lock{errors.mutex};
-        errors.messages.emplace_back(data->pMessage != nullptr ? data->pMessage : "");
-
-        return VK_FALSE;
-    }
-
+    /** Declared first: the Renderers of a test write to it until they are gone. */
     ErrorLog                             mErrors;
     std::optional<SyncValidationSetting> mSyncValidationSetting;
-    // Destroyed before mErrors, which the messengers write to, and each messenger before its
-    // instance. The instance outlives the renderer that made it, so that the messenger can see
-    // the destruction of the renderer's objects.
-    std::vector<Watch> mWatches;
 };
 
 /**
  * The positive control of the oracle: a known error on the renderer's device must reach the
- * messenger. Without it a fixture that never saw an error would pass for the wrong reason. A
+ * sink. Without it a fixture that never saw an error would pass for the wrong reason. A
  * missing validation layer fails this test, because every other test here would then pass with
  * nothing watching.
  */
@@ -286,6 +259,24 @@ TEST_F(RendererTest, validationErrorOnTheRendererDeviceIsRecorded)
 
     EXPECT_TRUE(takeError("VUID-VkBufferCreateInfo-size-00912"))
         << (refused ? "The driver refused the buffer." : "The driver took the buffer.");
+}
+
+/**
+ * The sink sees the construction: the loader reports an extension it does not know, while
+ * vkCreateInstance runs, which is before the Instance's persistent messenger exists. Only the
+ * messenger that the sink puts on the pNext chain of the instance can catch it.
+ */
+TEST_F(RendererTest, errorDuringConstructionIsRecorded)
+{
+    ASSERT_TRUE(mValidationInstalled)
+        << "VK_LAYER_KHRONOS_validation or VK_EXT_debug_utils is missing, so no RendererTest can "
+           "see a validation error.";
+    Renderer::Config config = makeConfig();
+    config.extensions.emplace_back("VK_FAKE_extension");
+
+    EXPECT_THROW(std::ignore = makeRenderer(config), vk::ExtensionNotPresentError);
+
+    EXPECT_TRUE(takeError("VK_FAKE_extension"));
 }
 
 /** Runs a function for every frame; the tests' stand-in for a game object. */
@@ -1259,8 +1250,8 @@ TEST_F(RendererTest, createTextureRejectsMalformedDescription)
  * one (the renderer has two frame slots).
  *
  * It proves that Engine records the buffer through the retaining path and the renderer holds
- * nothing on top. GPU safety rests on the Graphics retention tests; a validation error raised after
- * construction fails the test in TearDown().
+ * nothing on top. GPU safety rests on the Graphics retention tests; a validation error fails the
+ * test in TearDown().
  */
 // The score comes from the gtest assertion macros.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)

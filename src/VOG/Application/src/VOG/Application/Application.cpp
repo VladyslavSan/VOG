@@ -116,16 +116,18 @@ Application::Application(const ApplicationConfig& config, Validated /*validated*
                                                         : SDL_WINDOW_RESIZABLE)}
     , mStartTime{std::chrono::steady_clock::now()}
     , mScene{std::make_shared<Engine::Scene>()}
-    , mRenderer{std::make_unique<Engine::Renderer>(mWindow->getSurfaceHandle(),
-                                                   Engine::Renderer::Config{
-                                                       .appName          = config.title,
-                                                       .engineName       = "VOG",
-                                                       .layers           = config.layers,
-                                                       .extensions       = config.extensions,
-                                                       .framesInFlight   = config.framesInFlight,
-                                                       .shaderSourcePath = config.shaderStoragePath,
-                                                       .extent           = mWindow->sizeInPixels(),
-                                                   })}
+    , mRenderer{
+          std::make_unique<Engine::Renderer>(mWindow->getSurfaceHandle(),
+                                             Engine::Renderer::Config{
+                                                 .appName             = config.title,
+                                                 .engineName          = "VOG",
+                                                 .layers              = config.layers,
+                                                 .extensions          = config.extensions,
+                                                 .framesInFlight      = config.framesInFlight,
+                                                 .shaderSourcePath    = config.shaderStoragePath,
+                                                 .extent              = mWindow->sizeInPixels(),
+                                                 .onValidationMessage = config.onValidationMessage,
+                                             })}
 {
     mRenderer->addRenderable(mScene);
 }

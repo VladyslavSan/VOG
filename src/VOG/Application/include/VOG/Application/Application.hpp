@@ -3,9 +3,11 @@
 #include <chrono>
 #include <cstdint>
 #include <exception>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 union SDL_Event;
@@ -39,6 +41,8 @@ public:
         std::vector<std::string> extensions;
         // Vulkan layers
         std::vector<std::string> layers;
+        /** Passed to Engine::Renderer::Config::onValidationMessage, which has the contract. */
+        std::function<void(std::string_view)> onValidationMessage;
 
         std::string shaderStoragePath;
 

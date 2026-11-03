@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -96,17 +97,16 @@ protected:
         : mValidationActive{options.validation && validationInstalled()}
         , mHeadlessSurfaceActive{options.headlessSurface &&
                                  instanceExtensionInstalled(kHeadlessSurfaceExtension)}
-        , mInstance{createInstance(options.syncValidation && mValidationActive,
-                                   {
-                                       .appName    = "VOG Test",
-                                       .engineName = "Test",
-                                       .layers     = mValidationActive
-                                                       ? std::vector<std::string>{kValidationLayer}
-                                                       : std::vector<std::string>{},
-                                       .extensions = enabledExtensions(),
-                                   })}
-        , mMessenger{mValidationActive ? makeMessenger()
-                                       : vk::raii::DebugUtilsMessengerEXT{nullptr}}
+        , mInstance{createInstance(
+              options.syncValidation && mValidationActive,
+              {
+                  .appName     = "VOG Test",
+                  .engineName  = "Test",
+                  .layers      = mValidationActive ? std::vector<std::string>{kValidationLayer}
+                                                   : std::vector<std::string>{},
+                  .extensions  = enabledExtensions(),
+                  .messageSink = mValidationActive ? makeSink() : Graphics::Vulkan::MessageSink{},
+              })}
         , mDevice{mInstance->makeDevice()}
     {
     }
@@ -154,36 +154,31 @@ protected:
     };
 
     /**
-     * Drops the fixture's own references to the Device and, as far as tests can tell, the
-     * Instance. The device lives on only if an object created from it still holds it. The
-     * fixture keeps the Instance alive in secret until expectDeviceReleased(), because the
-     * validation messenger must be destroyed before its Instance.
+     * Drops the fixture's own references to the Device and the Instance. The device lives on only
+     * if an object created from it still holds it, and the instance as long as the device does.
      */
     Released
     releaseDevice()
     {
         Released released{.instance = mInstance, .device = mDevice};
-        mInstanceKeeper = std::move(mInstance);
+        mInstance.reset();
         mDevice.reset();
         return released;
     }
 
     /**
-     * Call once nothing but the fixture can still hold the Device: it must have expired, the
-     * validation layer must have raised no error while it went away (a child object destroyed
-     * after its device is reported by vkDestroyDevice, VUID-vkDestroyDevice-device-05137), and
-     * the Instance must expire as soon as the fixture lets go of it.
+     * Call once nothing but the fixture can still hold the Device: the Device and the Instance
+     * must have expired, and the validation layer must have raised no error while they went away
+     * (a child object destroyed after its device is reported by vkDestroyDevice,
+     * VUID-vkDestroyDevice-device-05137, and one that outlives the instance by vkDestroyInstance).
      */
     void
     expectDeviceReleased(const Released& released)
     {
         EXPECT_TRUE(released.device.expired());
+        EXPECT_TRUE(released.instance.expired());
         EXPECT_TRUE(mValidationErrors.empty())
             << (mValidationErrors.empty() ? "" : mValidationErrors.front());
-
-        mMessenger = vk::raii::DebugUtilsMessengerEXT{nullptr};
-        mInstanceKeeper.reset();
-        EXPECT_TRUE(released.instance.expired());
     }
 
     /**
@@ -216,7 +211,10 @@ protected:
                                    });
     }
 
-    // Declared first, destroyed last: the messenger can still report while the device goes away.
+    // Declared first, destroyed last: the sink can still report while the device goes away. The
+    // mutex guards the writes of the sink. The reads in the tests are unlocked: the Graphics tests
+    // start no thread of their own, so no Vulkan call runs on another thread while they read.
+    std::mutex               mValidationErrorsMutex;
     std::vector<std::string> mValidationErrors;
 
 private:
@@ -224,10 +222,8 @@ private:
     const bool mHeadlessSurfaceActive;
 
 protected:
-    Graphics::Vulkan::InstancePtr    mInstance;
-    Graphics::Vulkan::InstancePtr    mInstanceKeeper;
-    vk::raii::DebugUtilsMessengerEXT mMessenger;
-    Graphics::Vulkan::DevicePtr      mDevice;
+    Graphics::Vulkan::InstancePtr mInstance;
+    Graphics::Vulkan::DevicePtr   mDevice;
 
 private:
     static constexpr const char* kValidationLayer          = "VK_LAYER_KHRONOS_validation";
@@ -267,10 +263,6 @@ private:
     enabledExtensions() const
     {
         std::vector<std::string> extensions;
-        if (mValidationActive)
-        {
-            extensions.emplace_back(kDebugUtilsExtension);
-        }
         if (mHeadlessSurfaceActive)
         {
             extensions.emplace_back(kHeadlessSurfaceExtension);
@@ -278,28 +270,16 @@ private:
         return extensions;
     }
 
-    static vk::Bool32
-    onMessage(vk::DebugUtilsMessageSeverityFlagBitsEXT /*severity*/,
-              vk::DebugUtilsMessageTypeFlagsEXT /*types*/,
-              const vk::DebugUtilsMessengerCallbackDataEXT* pData,
-              void*                                         pUserData)
+    /** Records the ERROR messages of the Instance. */
+    Graphics::Vulkan::MessageSink
+    makeSink()
     {
-        if (pData->pMessage != nullptr)
+        return
+            [&mutex = mValidationErrorsMutex, &errors = mValidationErrors](std::string_view message)
         {
-            static_cast<std::vector<std::string>*>(pUserData)->emplace_back(pData->pMessage);
-        }
-        return VK_FALSE;
-    }
-
-    vk::raii::DebugUtilsMessengerEXT
-    makeMessenger()
-    {
-        return mInstance->createDebugUtilsMessengerEXT(vk::DebugUtilsMessengerCreateInfoEXT{
-            .messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
-            .messageType     = vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation,
-            .pfnUserCallback = VulkanFixture::onMessage,
-            .pUserData       = &mValidationErrors,
-        });
+            const std::scoped_lock lock{mutex};
+            errors.emplace_back(message);
+        };
     }
 };
 } // namespace VOG::Tests

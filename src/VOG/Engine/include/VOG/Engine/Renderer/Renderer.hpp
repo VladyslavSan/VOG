@@ -12,10 +12,12 @@
 #include <deque>
 #include <exception>
 #include <filesystem>
+#include <functional>
 #include <future>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <variant>
 #include <vector>
@@ -84,6 +86,24 @@ public:
          * leaves that to the application (Wayland, headless): required there, 0x0 throws.
          */
         Extent extent;
+
+        /**
+         * Optional. Called with every Vulkan message of ERROR severity (validation layer, loader,
+         * driver), from the construction of the Renderer on, so it also sees errors raised while
+         * the instance, the device and the swapchain are created. The Renderer turns on
+         * VK_EXT_debug_utils for it, and the constructor throws std::runtime_error if the
+         * instance does not offer it. Without it the Renderer installs no messenger.
+         *
+         * Any thread that makes a Vulkan call may call it, at the same time as another. For
+         * example: the constructing thread, the render thread, the callers of createMesh(),
+         * createTexture() and createMaterial(), the thread that runs ~Renderer, and any thread
+         * that drops the last handle of a mesh, texture or material. So it must be thread-safe,
+         * must not call the Renderer, and must not throw (an exception is logged and dropped).
+         * The view is valid only during the call. A copy lives as long as anything the Renderer
+         * made (meshes, textures, materials), which can be after ~Renderer: whatever it captures
+         * must live that long.
+         */
+        std::function<void(std::string_view)> onValidationMessage;
     };
 
     enum class State : std::uint8_t

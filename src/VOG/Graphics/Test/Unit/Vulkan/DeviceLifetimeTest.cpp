@@ -9,10 +9,13 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
+#include <tuple>
 #include <type_traits>
 
 #include "VulkanFixture.hpp"
@@ -78,6 +81,50 @@ class DeviceLifetime : public VulkanValidationFixture
 {
 };
 
+/** The validation layer on a headless instance, for a test that leaks a surface. */
+class InstanceDestruction : public VulkanFixture
+{
+public:
+    InstanceDestruction()
+        : VulkanFixture{Options{.validation = true, .headlessSurface = true}}
+    {
+    }
+
+protected:
+    void
+    SetUp() override
+    {
+        if (!validationActive() || !headlessSurfaceActive())
+        {
+            GTEST_SKIP() << "The validation layer or VK_EXT_headless_surface is not available";
+        }
+    }
+};
+
+/**
+ * The sink also hears vkDestroyInstance, after every member of the Instance is gone: the reason
+ * why its holder is the first base. A surface that nobody destroyed makes the layer report
+ * VUID-vkDestroyInstance-instance-00629 then. The leak is on purpose.
+ */
+TEST_F(InstanceDestruction, sinkHearsErrorOfVkDestroyInstance)
+{
+    std::ignore =
+        vk::raii::SurfaceKHR{mInstance->raii(), vk::HeadlessSurfaceCreateInfoEXT{}}.release();
+    ASSERT_TRUE(mValidationErrors.empty());
+
+    const auto released = releaseDevice();
+
+    EXPECT_TRUE(released.instance.expired());
+    const bool heard = std::ranges::any_of(
+        mValidationErrors,
+        [](const std::string& message)
+        {
+            return message.find("VUID-vkDestroyInstance-instance-00629") != std::string::npos;
+        });
+    EXPECT_TRUE(heard) << mValidationErrors.size() << " error(s) heard; the first: "
+                       << (mValidationErrors.empty() ? "" : mValidationErrors.front());
+}
+
 /**
  * Device must not own FencePool. After exercising an external pool and the private allocator,
  * dropping the last DevicePtr (and pool) must destroy the device and its instance.
@@ -96,8 +143,8 @@ TEST_F(DeviceLifetime, releasingLastReferenceDestroysDevice)
 }
 
 /**
- * The Device keeps its Instance alive. Plain fixture: no validation messenger needs the Instance
- * to outlive the Device by a controlled margin.
+ * The Device keeps its Instance alive. Plain fixture: it watches nothing, and the test drops the
+ * Instance and the Device by hand.
  */
 TEST_F(VulkanFixture, Device_keepsInstanceAlive)
 {

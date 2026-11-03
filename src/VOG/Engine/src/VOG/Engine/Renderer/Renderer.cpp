@@ -139,10 +139,11 @@ private:
 Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& config)
     : mFramesInFlight{std::clamp(config.framesInFlight, std::uint8_t{1}, kMaxFramesInFlight)}
     , mVulkanInstance{Graphics::Vulkan::Instance::create({
-          .appName    = config.appName,
-          .engineName = config.engineName,
-          .layers     = config.layers,
-          .extensions = config.extensions,
+          .appName     = config.appName,
+          .engineName  = config.engineName,
+          .layers      = config.layers,
+          .extensions  = config.extensions,
+          .messageSink = config.onValidationMessage,
       })}
     , mVulkanDevice{mVulkanInstance->makeDevice()}
     , mGraphicsQueue{mVulkanDevice->getGraphicsQueue()}
