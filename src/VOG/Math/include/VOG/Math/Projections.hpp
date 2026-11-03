@@ -22,6 +22,6 @@ Matrix4x4f calculateCameraMatrix(const CameraPose& pose);
 
 Matrix4x4f orthographicProjection(const Vector2f& position,
                                   const Vector2f& viewportSize,
-                                  const float     zNear,
-                                  const float     zFar);
+                                  float           zNear,
+                                  float           zFar);
 } // namespace VOG::Math
