@@ -19,8 +19,9 @@ TEST(CameraViewTest, defaultCameraMapsPixelsToClipSpace)
     constexpr float  kTolerance = 1e-6f;
     const CameraView camera;
 
-    const Vector4f edge =
-        camera.viewProjection({.width = 64u, .height = 64u}) * Vector4f{32.0f, 0.0f, 20.0f, 1.0f};
+    const VOG::Math::Matrix4x4f square = camera.viewProjection({.width = 64u, .height = 64u});
+
+    const Vector4f edge = square * Vector4f{32.0f, 0.0f, 20.0f, 1.0f};
     EXPECT_NEAR(edge.x, 1.0f, kTolerance);
     EXPECT_NEAR(edge.y, 0.0f, kTolerance);
     EXPECT_NEAR(edge.w, 1.0f, kTolerance);
@@ -30,11 +31,9 @@ TEST(CameraViewTest, defaultCameraMapsPixelsToClipSpace)
         camera.viewProjection({.width = 128u, .height = 64u}) * Vector4f{32.0f, 0.0f, 20.0f, 1.0f};
     EXPECT_NEAR(wider.x, 0.5f, kTolerance);
 
-    const Vector4f above =
-        camera.viewProjection({.width = 64u, .height = 64u}) * Vector4f{0.0f, 16.0f, 20.0f, 1.0f};
+    const Vector4f above = square * Vector4f{0.0f, 16.0f, 20.0f, 1.0f};
     EXPECT_NEAR(above.y, -0.5f, kTolerance);
-    const Vector4f below =
-        camera.viewProjection({.width = 64u, .height = 64u}) * Vector4f{0.0f, -16.0f, 20.0f, 1.0f};
+    const Vector4f below = square * Vector4f{0.0f, -16.0f, 20.0f, 1.0f};
     EXPECT_NEAR(below.y, 0.5f, kTolerance);
 }
 

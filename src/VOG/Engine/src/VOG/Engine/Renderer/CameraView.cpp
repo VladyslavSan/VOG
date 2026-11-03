@@ -16,7 +16,8 @@ CameraView::viewProjection(Extent extent) const
         farPlane);
 
     // Vulkan clip space has +y down the framebuffer. World +Y, the camera's up, must be up the
-    // screen, so clip y is negated here and neither the viewport nor the pipeline flips.
+    // screen, so clip y is negated here and neither the viewport nor the pipeline flips. That
+    // reverses the winding in the framebuffer, which is harmless while PipelineCache culls nothing.
     const Math::Matrix4x4f flipY =
         glm::scale(Math::Matrix4x4f{1.0f}, Math::Vector3f{1.0f, -1.0f, 1.0f});
 
