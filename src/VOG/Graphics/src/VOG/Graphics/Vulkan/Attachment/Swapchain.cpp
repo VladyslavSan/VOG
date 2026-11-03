@@ -173,7 +173,13 @@ Swapchain::makeGeneration(vk::SwapchainKHR oldSwapchain, vk::Extent2D extent)
         .oldSwapchain          = oldSwapchain,
     };
 
-    return std::make_shared<SwapchainGeneration>(mDevice, mSurface, swapchainCreateInfo);
+    // Made before the generation, so that vkCreateSwapchainKHR is the first call here that can
+    // throw: the make_shared allocation, which could throw bad_alloc, comes after it. That is what
+    // makes mRetired exact in recreate().
+    vk::raii::SwapchainKHR swapchain{mDevice->raii(), swapchainCreateInfo};
+
+    return std::make_shared<SwapchainGeneration>(
+        mDevice, mSurface, std::move(swapchain), mSurfaceFormat.format, extent);
 }
 
 bool
@@ -188,9 +194,18 @@ Swapchain::recreate(vk::Extent2D requested)
     }
 
     // The old generation is not waited for. The presentations and command buffers that still use
-    // it keep it alive, and it is destroyed when the last of them lets go. Assigning after the
-    // build keeps the old generation in place if the build throws.
-    mGeneration = makeGeneration(*mGeneration->swapchain, *extent);
+    // it keep it alive, and it is destroyed when the last of them lets go.
+    //
+    // vkCreateSwapchainKHR retires oldSwapchain even when it fails, and the allocation of the
+    // generation, the images and the views can fail after it. If the build throws, mGeneration is
+    // assigned nothing and still holds the retired swapchain: mRetired says so, until a build
+    // succeeds. A retired swapchain can be neither acquired from nor passed as oldSwapchain
+    // again. The flag is set right before makeGeneration, whose first throwing call is
+    // vkCreateSwapchainKHR, so it is true exactly when the old swapchain may be retired.
+    const vk::SwapchainKHR oldSwapchain = mRetired ? vk::SwapchainKHR{} : *mGeneration->swapchain;
+    mRetired                            = true;
+    mGeneration                         = makeGeneration(oldSwapchain, *extent);
+    mRetired                            = false;
 
     return true;
 }
@@ -217,6 +232,14 @@ Swapchain::ImageAcquireResult
 Swapchain::acquireNextImage(std::chrono::nanoseconds timeout, SemaphorePtr imageAvailable)
 {
     VOG_ASSERT_MSG(imageAvailable, "Swapchain::acquireNextImage needs a semaphore to signal.");
+
+    if (mRetired)
+    {
+        // The swapchain is retired: the driver would take the acquire for invalid usage
+        // (VUID-vkAcquireNextImageKHR-swapchain-01285). The caller recreates it, as for any
+        // out-of-date swapchain.
+        return {.status = AcquireStatus::eOutOfDate, .acquired = nullptr};
+    }
 
     const auto nanoseconds = static_cast<std::uint64_t>(std::max(timeout.count(), std::int64_t{0}));
 

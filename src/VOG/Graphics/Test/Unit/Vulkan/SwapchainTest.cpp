@@ -13,6 +13,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <tuple>
 #include <utility>
 
 #include "VulkanFixture.hpp"
@@ -116,6 +117,43 @@ struct Rig
         return acquired;
     }
 };
+
+VKAPI_ATTR VkResult VKAPI_CALL
+failGetSwapchainImages(VkDevice /*device*/,
+                       VkSwapchainKHR /*swapchain*/,
+                       uint32_t* /*count*/,
+                       VkImage* /*images*/)
+{
+    return VK_ERROR_OUT_OF_HOST_MEMORY;
+}
+
+/**
+ * Makes vkGetSwapchainImagesKHR fail in the device's function table, for its lifetime. The real
+ * vkCreateSwapchainKHR still runs before it, so the old swapchain really is retired. The table is
+ * shared by the whole device: scope it around calls of one thread.
+ */
+class SwapchainImagesFailure
+{
+public:
+    explicit SwapchainImagesFailure(const Device& device)
+        // The device owns the table and keeps it mutable; getDispatcher() only hands it out const.
+        : mTable{const_cast<vk::raii::detail::DeviceDispatcher&>(*device.getDispatcher())}
+        , mReal{mTable.vkGetSwapchainImagesKHR}
+    {
+        mTable.vkGetSwapchainImagesKHR = failGetSwapchainImages;
+    }
+
+    ~SwapchainImagesFailure() { mTable.vkGetSwapchainImagesKHR = mReal; }
+
+    SwapchainImagesFailure(const SwapchainImagesFailure&)            = delete;
+    SwapchainImagesFailure(SwapchainImagesFailure&&)                 = delete;
+    SwapchainImagesFailure& operator=(const SwapchainImagesFailure&) = delete;
+    SwapchainImagesFailure& operator=(SwapchainImagesFailure&&)      = delete;
+
+private:
+    vk::raii::detail::DeviceDispatcher& mTable;
+    PFN_vkGetSwapchainImagesKHR         mReal;
+};
 } // namespace
 
 /** Swapchains on a headless surface, under the validation layer when it is installed. */
@@ -196,6 +234,42 @@ TEST_F(SwapchainTest, recreateRetiresOldSwapchainWhenSlotRestarts)
     }
     rig.renderFrame();
     EXPECT_TRUE(old.expired());
+
+    EXPECT_TRUE(mValidationErrors.empty())
+        << (mValidationErrors.empty() ? "" : mValidationErrors.front());
+}
+
+/**
+ * vkCreateSwapchainKHR retires the old swapchain even when the build fails after it (here the
+ * query of the images). The swapchain must then not hand the retired one to the driver again: not
+ * to acquire from (VUID-vkAcquireNextImageKHR-swapchain-01285), not as oldSwapchain
+ * (VUID-VkSwapchainCreateInfoKHR-oldSwapchain-01933). The failure is in the images, not in
+ * vkCreateSwapchainKHR, because only a call that ran retires anything.
+ */
+TEST_F(SwapchainTest, failedRecreateLeavesARetiredSwapchainThatIsNotUsedAgain)
+{
+    // Only the layer says that an unfixed swapchain was used while retired.
+    if (!validationActive())
+    {
+        GTEST_SKIP() << "VK_LAYER_KHRONOS_validation not available";
+    }
+
+    auto swapchain = mDevice->createSwapchain(headlessSwapchainParameters());
+    {
+        const SwapchainImagesFailure failure{*mDevice};
+        EXPECT_THROW(std::ignore = swapchain->recreate(gExtent), vk::OutOfHostMemoryError);
+    }
+
+    // The driver is not asked: the swapchain says out of date by itself.
+    auto lost = swapchain->acquireNextImage(gAcquireTimeout, mDevice->createSemaphore());
+    EXPECT_EQ(lost.status, Swapchain::AcquireStatus::eOutOfDate);
+    EXPECT_FALSE(lost.acquired);
+
+    // The recovery builds without an old swapchain, and the new one works.
+    ASSERT_TRUE(swapchain->recreate(gExtent));
+    auto acquire = swapchain->acquireNextImage(gAcquireTimeout, mDevice->createSemaphore());
+    ASSERT_EQ(acquire.status, Swapchain::AcquireStatus::eReady);
+    consumeAcquireSignal(mDevice, acquire.acquired->imageAvailableSemaphore());
 
     EXPECT_TRUE(mValidationErrors.empty())
         << (mValidationErrors.empty() ? "" : mValidationErrors.front());

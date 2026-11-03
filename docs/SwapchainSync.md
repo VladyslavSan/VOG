@@ -111,6 +111,14 @@ reference count, when the last of its presentations and command buffers is done.
 is the same path — dropping the frame slots waits each slot's submit fence and present
 fence, and the swapchain follows.
 
+`vkCreateSwapchainKHR` retires `oldSwapchain` even when it fails, and the allocation of the
+generation, the images or the views of the new swapchain can fail after it was called. If
+`recreate()` throws from there on, `Swapchain` still holds the retired generation and says so
+(`mRetired`): `acquireNextImage()` returns `eOutOfDate` without calling the driver, and the
+next `recreate()` builds without an old swapchain. A throwing `recreate()` ends the render
+thread, so this recovery happens after `stop()` and `start()`: the restarted thread takes its
+ordinary out-of-date path.
+
 An acquired image that is dropped without being presented is returned with
 `vkReleaseSwapchainImagesEXT` in the `AcquiredSwapchainImage` destructor. Presenting
 releases the acquisition itself, also when the present reports `eErrorOutOfDateKHR` or

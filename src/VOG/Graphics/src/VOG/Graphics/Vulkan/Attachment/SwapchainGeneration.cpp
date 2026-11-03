@@ -39,12 +39,14 @@ makeImages(const Device& device, const vk::raii::SwapchainKHR& swapchain, vk::Fo
 
 SwapchainGeneration::SwapchainGeneration(DevicePtr                             _device,
                                          std::shared_ptr<vk::raii::SurfaceKHR> _surface,
-                                         const vk::SwapchainCreateInfoKHR&     createInfo)
+                                         vk::raii::SwapchainKHR                _swapchain,
+                                         vk::Format                            _format,
+                                         vk::Extent2D                          _extent)
     : device{std::move(_device)}
     , surface{std::move(_surface)}
-    , format{createInfo.imageFormat}
-    , extent{createInfo.imageExtent}
-    , swapchain{device->raii(), createInfo}
+    , format{_format}
+    , extent{_extent}
+    , swapchain{std::move(_swapchain)}
     , images{makeImages(*device, swapchain, format)}
 {
 }

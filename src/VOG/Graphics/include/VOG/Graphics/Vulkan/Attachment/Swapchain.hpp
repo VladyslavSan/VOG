@@ -125,6 +125,9 @@ private:
 
 public:
     /**
+     * Gives eOutOfDate at once after a recreate() that threw once it had called
+     * vkCreateSwapchainKHR, until one succeeds.
+     *
      * @param timeout         How long to wait for a free image; negative values count as zero. A
      *                        timeout gives eSkip, so a hidden window does not block the caller for
      *                        good.
@@ -154,6 +157,10 @@ public:
      * Recreates the swapchain to match the current surface size. The old swapchain is not
      * waited for: it dies once the last presentation and the last command buffer that use it
      * are done (see SwapchainGeneration).
+     *
+     * If it throws after vkCreateSwapchainKHR was called, the old swapchain is retired anyway
+     * (the call retires it even when it fails). Then acquireNextImage() gives eOutOfDate without a
+     * driver call until a recreate() succeeds, which builds without an old swapchain.
      *
      * @param requested  Size in pixels, used only where the surface leaves the image size to the
      *                application, like SwapchainParameters::extent.
@@ -189,5 +196,11 @@ private:
 
     /** Replaced by recreate(); acquired images and presentations keep the old one alive. */
     SwapchainGenerationPtr mGeneration;
+
+    /**
+     * True from the call of vkCreateSwapchainKHR in recreate() until a recreate() succeeds: if
+     * one threw, the swapchain of mGeneration is retired.
+     */
+    bool mRetired = false;
 };
 } // namespace VOG::Graphics::Vulkan

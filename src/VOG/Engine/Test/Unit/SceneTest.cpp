@@ -4,17 +4,37 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <new>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
+#include "AllocationFailure.hpp"
 #include "RenderQueueTestAccess.hpp"
 
 using namespace VOG::Engine;
+
+namespace VOG::Engine
+{
+/** Test-only window into the scene, befriended by Scene. */
+struct SceneTestAccess
+{
+    /** The slot the registry hands out next. It keeps it: call it last. */
+    static std::uint32_t
+    nextEntityIndex(Scene& scene)
+    {
+        return scene.mRegistry.create().index;
+    }
+};
+} // namespace VOG::Engine
+
 using VOG::Math::Matrix4x4f;
 using VOG::Math::Vector3f;
 using VOG::Math::Vector4f;
@@ -473,6 +493,101 @@ TEST(SceneTest, updateAndClearInsideEachRun)
     // clear() destroyed the second object before the walk reached it.
     EXPECT_EQ(visited, 1);
     EXPECT_EQ(mesh.use_count(), 1);
+}
+
+/**
+ * An allocation that fails inside createGameObject() leaves no object behind: not one with a
+ * Transform, and not an entity that only the registry knows. The sweep fails each allocation of
+ * the call in turn, up to the first that lets it succeed. The entity is seen through its slot: a
+ * leaked one is not reused, so the next entity would get the slot after it.
+ */
+TEST(SceneTest, createGameObjectThatRunsOutOfMemoryChangesNothing)
+{
+    constexpr std::int64_t kSweepLimit = 64;
+
+    std::int64_t failures = 0;
+    for (std::int64_t allocations = 0; allocations < kSweepLimit; ++allocations, ++failures)
+    {
+        Scene scene;
+        bool  threw = false;
+        {
+            const FailAllocation fail{allocations};
+            try
+            {
+                std::ignore = scene.createGameObject();
+            }
+            catch (const std::bad_alloc&)
+            {
+                threw = true;
+            }
+        }
+        if (!threw)
+        {
+            break;
+        }
+
+        std::size_t transforms = 0u;
+        scene.each<Transform>(
+            [&transforms](GameObject, Transform&)
+            {
+                ++transforms;
+            });
+        EXPECT_EQ(transforms, 0u) << "failing allocation " << allocations;
+        EXPECT_EQ(SceneTestAccess::nextEntityIndex(scene), 0u)
+            << "failing allocation " << allocations;
+    }
+
+    EXPECT_GT(failures, 0);
+    EXPECT_LT(failures, kSweepLimit);
+}
+
+/**
+ * An allocation that fails inside destroy() changes nothing: the object is not marked, so a second
+ * destroy() still takes effect and the next update() ends the object. A marker set before the
+ * failing queue push would turn every later destroy() into a no-op.
+ */
+TEST(SceneTest, destroyThatRunsOutOfMemoryChangesNothing)
+{
+    constexpr std::int64_t kSweepLimit = 64;
+
+    std::int64_t failures = 0;
+    for (std::int64_t allocations = 0; allocations < kSweepLimit; ++allocations, ++failures)
+    {
+        Scene      scene;
+        GameObject object = scene.createGameObject();
+        bool       threw  = false;
+        {
+            const FailAllocation fail{allocations};
+            try
+            {
+                object.destroy();
+            }
+            catch (const std::bad_alloc&)
+            {
+                threw = true;
+            }
+        }
+        if (!threw)
+        {
+            break;
+        }
+
+        EXPECT_TRUE(object.isValid()) << "failing allocation " << allocations;
+        std::size_t transforms = 0u;
+        scene.each<Transform>(
+            [&transforms](GameObject, Transform&)
+            {
+                ++transforms;
+            });
+        EXPECT_EQ(transforms, 1u) << "failing allocation " << allocations;
+
+        object.destroy();
+        scene.update(gFrame);
+        EXPECT_FALSE(object.isValid()) << "failing allocation " << allocations;
+    }
+
+    EXPECT_GT(failures, 0);
+    EXPECT_LT(failures, kSweepLimit);
 }
 
 TEST(SceneTest, createGameObjectInsideEach)

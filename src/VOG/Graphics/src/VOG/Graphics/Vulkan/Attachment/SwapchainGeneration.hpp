@@ -37,10 +37,16 @@ public:
         vk::raii::ImageView view;
     };
 
-    /** Creates the swapchain from @p createInfo and its image views. */
+    /**
+     * Takes the created @p swapchain, whose images are of @p format and @p extent, and makes the
+     * views of its images. The swapchain is created by the caller so that vkCreateSwapchainKHR can
+     * be the first call that throws (see Swapchain::recreate()).
+     */
     SwapchainGeneration(DevicePtr                             device,
                         std::shared_ptr<vk::raii::SurfaceKHR> surface,
-                        const vk::SwapchainCreateInfoKHR&     createInfo);
+                        vk::raii::SwapchainKHR                swapchain,
+                        vk::Format                            format,
+                        vk::Extent2D                          extent);
 
     SwapchainGeneration(const SwapchainGeneration&) = delete;
     SwapchainGeneration(SwapchainGeneration&&)      = delete;

@@ -103,7 +103,16 @@ GameObject
 Scene::createGameObject()
 {
     const Detail::Entity entity = mRegistry.create();
-    mRegistry.emplace<Transform>(entity);
+    try
+    {
+        mRegistry.emplace<Transform>(entity);
+    }
+    catch (...)
+    {
+        // Nobody can reach the entity without a GameObject: do not leave it alive.
+        mRegistry.destroy(entity);
+        throw;
+    }
 
     return {*this, entity};
 }
@@ -120,8 +129,18 @@ Scene::markDestroyed(Detail::Entity entity)
 {
     if (mRegistry.tryGet<PendingDestroy>(entity) == nullptr)
     {
-        mRegistry.emplace<PendingDestroy>(entity);
+        // The queue first: a push_back that threw after the marker was set would leave an object
+        // that is marked and never flushed, and no later destroy() would act on it.
         mDestroyQueue.push_back(entity);
+        try
+        {
+            mRegistry.emplace<PendingDestroy>(entity);
+        }
+        catch (...)
+        {
+            mDestroyQueue.pop_back();
+            throw;
+        }
     }
 }
 

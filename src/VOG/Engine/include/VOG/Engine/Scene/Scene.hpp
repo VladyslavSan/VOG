@@ -40,6 +40,8 @@ public:
     /**
      * Stops the behaviours of this object now and destroys the object at the end of the next
      * Scene::update(), after their onDestroy(). Safe inside Scene::each().
+     * @throws std::bad_alloc if memory runs out. Nothing has changed then: the object lives and
+     *         destroy() can be called again.
      */
     void destroy();
 
@@ -156,7 +158,10 @@ public:
     Scene(const Scene&)            = delete;
     Scene& operator=(const Scene&) = delete;
 
-    /** An object with a Transform. */
+    /**
+     * An object with a Transform.
+     * @throws std::bad_alloc if memory runs out. Nothing has changed then: no object was made.
+     */
     GameObject createGameObject();
 
     /**
@@ -196,6 +201,8 @@ public:
 
 private:
     friend class GameObject;
+    /** Lets SceneTest see which slots the registry hands out. */
+    friend struct SceneTestAccess;
 
     class BusyScope;
 
