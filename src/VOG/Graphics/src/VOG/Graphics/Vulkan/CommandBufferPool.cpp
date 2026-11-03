@@ -29,9 +29,23 @@ ExecutableCommandBuffer::~ExecutableCommandBuffer() noexcept
     }
 }
 
+namespace
+{
+/** What the queue family can do; Device::createCommandBufferPool() allows these two families. */
+vk::QueueFlags
+queueFlagsOf(const Device& device, std::uint32_t familyIndex)
+{
+    const PhysicalDevice::QueueInfos& infos = device.queueInfos;
+
+    return (familyIndex == infos.graphics.familyIndex ? infos.graphics : infos.transfer)
+        .familyProperties.queueFlags;
+}
+} // namespace
+
 CommandBufferPool::CommandBufferPool(const DevicePtr& device, std::uint32_t familyIndex)
     : mDevice{device}
     , mFamilyIndex{familyIndex}
+    , mQueueFlags{queueFlagsOf(*mDevice, familyIndex)}
     , mVulkanPool{mDevice->raii(), vk::CommandPoolCreateInfo{.queueFamilyIndex = mFamilyIndex}}
 {
 }

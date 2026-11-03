@@ -72,11 +72,15 @@ processStageResources(const spirv_cross::Compiler&   compiler,
 
         const auto& resourceType = compiler.get_type(resource.base_type_id);
 
-        // The base type has no array dimensions; the variable's own type does.
+        // The base type has no array dimensions; the variable's own type does. A dimension that
+        // is not a literal holds the ID of a constant (a specialization constant), whose default
+        // is the size.
         std::uint32_t locationCount = std::max<std::uint32_t>(resourceType.columns, 1u);
-        for (const std::uint32_t size : compiler.get_type(resource.type_id).array)
+        const auto&   variableType  = compiler.get_type(resource.type_id);
+        for (const auto [dimension, isLiteral] :
+             std::views::zip(variableType.array, variableType.array_size_literal))
         {
-            locationCount *= size;
+            locationCount *= isLiteral ? dimension : compiler.evaluate_constant_u32(dimension);
         }
 
         result.push_back({.location      = static_cast<std::uint8_t>(location),

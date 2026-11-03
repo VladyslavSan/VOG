@@ -69,7 +69,6 @@ private:
     explicit GraphicsPipeline(DevicePtr device, Parameters createInfo);
 
 public:
-    const RenderingDescription renderingDescription;
-    const ShaderProgramPtr     program;
+    const ShaderProgramPtr program;
 };
 } // namespace VOG::Graphics::Vulkan

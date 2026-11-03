@@ -16,11 +16,4 @@ TimelineSemaphore::TimelineSemaphore(DevicePtr device)
     , vk::raii::Semaphore{DeviceChild::device()->raii(), gCreateInfo}
 {
 }
-
-vk::Result
-TimelineSemaphore::waitOnCPU(std::uint64_t value, const std::uint64_t timeout) const
-{
-    return device()->waitSemaphores(
-        {.semaphoreCount = 1, .pSemaphores = &(**this), .pValues = &value}, timeout);
-}
 } // namespace VOG::Graphics::Vulkan

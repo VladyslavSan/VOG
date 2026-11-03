@@ -108,6 +108,9 @@ CommandBufferRecorder::RenderingPass::RenderingPass(
     : mRecorder{recorder}
 {
     VOG_ASSERT_MSG(!mRecorder.mRenderingActive, "RenderingPass scopes must not nest.");
+    // Untested: no device the tests run on has a transfer-only family.
+    VOG_ASSERT_MSG(mRecorder.mPool->mQueueFlags & vk::QueueFlagBits::eGraphics,
+                   "beginRendering needs a pool of a graphics queue family.");
     VOG_ASSERT_MSG(!colorAttachments.empty() || depthAttachment.has_value(),
                    "beginRendering needs at least one attachment.");
 
@@ -260,6 +263,10 @@ void
 CommandBufferRecorder::bindDescriptorHeap(DescriptorHeapPtr heap)
 {
     VOG_ASSERT_MSG(!mRenderingActive, "bindDescriptorHeap needs to be outside a RenderingPass.");
+    // Untested: no device the tests run on has a transfer-only family.
+    VOG_ASSERT_MSG(mPool->mQueueFlags &
+                       (vk::QueueFlagBits::eGraphics | vk::QueueFlagBits::eCompute),
+                   "bindDescriptorHeap needs a pool of a graphics or compute queue family.");
 
     mCommandBuffer->bindSamplerHeapEXT(heap->mSamplerBind);
     mCommandBuffer->bindResourceHeapEXT(heap->mResourceBind);

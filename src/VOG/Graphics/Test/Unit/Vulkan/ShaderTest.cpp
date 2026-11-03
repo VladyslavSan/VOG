@@ -64,6 +64,16 @@ vertexShaderWithAttributes(std::uint32_t inputs, std::uint32_t outputs)
     return source + "}\n";
 }
 
+// An array whose size is a specialization constant, default 2: two locations, not the ID of the
+// constant.
+const std::string gSpecializedArrayVertexShaderString = R"(
+#version 450
+layout(constant_id = 0) const int kCount = 2;
+layout(location = 0) in vec4 inColors[kCount];
+layout(location = 2) in vec4 inPosition;
+void main() { gl_Position = inPosition + inColors[0] + inColors[1]; }
+)";
+
 // Resources the way a shader declares them for the descriptor heap: no set, no binding, an index
 // from the push constants.
 const std::string gHeapFragmentShaderString = R"(
@@ -143,6 +153,20 @@ TEST_F(VulkanFixture, Shader_maxStageAttributesPassAndOneMoreThrows)
     EXPECT_THROW(
         createShader(Shader::ShadingStage::eVertex, vertexShaderWithAttributes(1u, kMax + 1u)),
         Shader::ShaderError);
+}
+
+/** The size of an array of attributes can be a specialization constant; its default counts. */
+TEST_F(VulkanFixture, Shader_arrayOfSpecializationConstantSizeCountsItsLocations)
+{
+    const auto shader =
+        createShader(Shader::ShadingStage::eVertex, gSpecializedArrayVertexShaderString);
+    const auto& inputs = shader->reflection.inAttributes;
+
+    ASSERT_EQ(inputs.size(), 2u);
+    EXPECT_EQ(inputs[0].name, "inColors");
+    EXPECT_EQ(inputs[0].locationCount, 2u);
+    EXPECT_EQ(inputs[1].name, "inPosition");
+    EXPECT_EQ(inputs[1].locationCount, 1u);
 }
 
 TEST_F(VulkanFixture, Shader_instantiate_vertex_shader)

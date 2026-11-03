@@ -20,9 +20,7 @@ class Queue : private vk::raii::Queue
 {
     friend class Device;
 
-    Queue(const Device&             device,
-          std::uint32_t             familyIndex,
-          vk::QueueFamilyProperties familyProperties);
+    Queue(const Device& device, std::uint32_t familyIndex);
 
 public:
     Queue(const Queue&) = delete;
@@ -75,7 +73,6 @@ public:
                 std::span<const TimelineWait>      timelineWaits   = {},
                 std::span<const TimelineSignal>    timelineSignals = {}) const;
 
-    const std::uint32_t             familyIndex;
-    const vk::QueueFamilyProperties familyProperties;
+    const std::uint32_t familyIndex;
 };
 } // namespace VOG::Graphics::Vulkan

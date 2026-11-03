@@ -5,11 +5,27 @@
 #include <spdlog/spdlog.h>
 
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <set>
 #include <stdexcept>
 #include <vector>
 
 using namespace VOG::Engine::Detail;
+
+namespace VOG::Engine::Detail
+{
+/** Test-only window into the registry, befriended by Registry. */
+struct RegistryTestAccess
+{
+    /** Puts the slot of @p entity at @p generation, as if it had lived that many times. */
+    static void
+    setGeneration(Registry& registry, Entity entity, std::uint32_t generation)
+    {
+        registry.mGenerations.at(entity.index) = generation;
+    }
+};
+} // namespace VOG::Engine::Detail
 
 namespace VOG::Tests
 {
@@ -73,6 +89,41 @@ struct Fragile
     int value;
 };
 } // namespace
+
+/**
+ * A slot that has used up its generations is retired, not wrapped: a counter that wrapped to 0
+ * would make the first handle of the slot alive again, for a different entity. 2^31 cycles are
+ * too many to run, so the test puts the slot at its last life.
+ */
+TEST(RegistryTest, slotAtItsLastGenerationIsRetiredNotReused)
+{
+    constexpr std::uint32_t kLastGeneration = std::numeric_limits<std::uint32_t>::max();
+
+    Registry     registry;
+    const Entity first = registry.create();
+    registry.destroy(first);
+    RegistryTestAccess::setGeneration(registry, first, kLastGeneration - 1u);
+
+    const Entity last = registry.create();
+    ASSERT_EQ(last.index, first.index);
+    ASSERT_EQ(last.generation, kLastGeneration);
+    registry.emplace<Health>(last, 5);
+    registry.destroy(last);
+
+    // The slot is gone for good: a new entity gets another one, and no old handle is alive.
+    const Entity next = registry.create();
+    EXPECT_NE(next.index, first.index);
+    EXPECT_TRUE(registry.isAlive(next));
+    EXPECT_FALSE(registry.isAlive(first));
+    EXPECT_FALSE(registry.isAlive(last));
+    EXPECT_FALSE(registry.isAlive(Entity{.index = first.index, .generation = 1u}));
+    EXPECT_EQ(registry.size<Health>(), 0u);
+
+    // destroyAll() does not take the retired slot for a living one.
+    registry.destroyAll();
+    EXPECT_FALSE(registry.isAlive(next));
+    EXPECT_FALSE(registry.isAlive(last));
+}
 
 TEST(RegistryTest, staleHandleAfterDestroy)
 {

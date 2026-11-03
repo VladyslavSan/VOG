@@ -1,7 +1,15 @@
 #include "VOG/Engine/Scene/Registry.hpp"
 
+#include <limits>
+
 namespace VOG::Engine::Detail
 {
+namespace
+{
+/** The last generation a slot has, odd: a living entity can have it. */
+constexpr std::uint32_t gLastGeneration = std::numeric_limits<std::uint32_t>::max();
+} // namespace
+
 Entity
 Registry::create()
 {
@@ -59,7 +67,7 @@ Registry::destroyAll() noexcept
 bool
 Registry::isAlive(Entity entity) const noexcept
 {
-    // An even generation is a retired slot. The parity test keeps Entity{} dead after a wraparound.
+    // An even generation is a dead slot, and the parity test keeps Entity{} dead.
     return entity.index < mGenerations.size() && mGenerations[entity.index] == entity.generation &&
            (entity.generation & 1u) != 0u;
 }
@@ -72,6 +80,14 @@ Registry::release(std::uint32_t index) noexcept // NOLINT(bugprone-exception-esc
     for (const auto& entry : mPools)
     {
         entry.second->remove(index);
+    }
+    if (mGenerations[index] == gLastGeneration)
+    {
+        // Retired for good: not in mFreeSlots, and even, so no handle is alive in it. Incrementing
+        // would wrap to 0, and the slot would give out generation 1 again.
+        --mGenerations[index];
+
+        return;
     }
     ++mGenerations[index];
     mFreeSlots.push_back(index);

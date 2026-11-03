@@ -321,17 +321,13 @@ TEST_F(DeviceLifetime, semaphoreKeepsDeviceAlive)
     expectDependentHoldsDevice(released, semaphore);
 }
 
+/** Like the binary semaphore: the call under test is its destruction. */
 TEST_F(DeviceLifetime, timelineSemaphoreKeepsDeviceAlive)
 {
     auto       semaphore = mDevice->createTimelineSemaphore();
     const auto released  = releaseDevice();
 
-    expectDependentHoldsDevice(released,
-                               semaphore,
-                               [](Graphics::Vulkan::TimelineSemaphore& semaphore)
-                               {
-                                   EXPECT_EQ(semaphore.waitOnCPU(0u, 0u), vk::Result::eSuccess);
-                               });
+    expectDependentHoldsDevice(released, semaphore);
 }
 
 /**

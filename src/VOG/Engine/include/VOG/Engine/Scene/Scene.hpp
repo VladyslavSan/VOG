@@ -69,9 +69,6 @@ public:
     template <class T, class... Args>
     T& addBehaviour(Args&&... args);
 
-    /** @throws std::logic_error for a default-constructed object. */
-    Scene& getScene() const;
-
     bool operator==(const GameObject&) const = default;
 
 private:

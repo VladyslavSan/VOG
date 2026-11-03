@@ -65,6 +65,21 @@ public:
     static QueueInfos selectQueueFamilies(std::span<const vk::QueueFamilyProperties> families,
                                           bool dedicatedTransfer);
 
+    /**
+     * Picks the family to present from: the graphics family if it presents, else the transfer
+     * family. These are the only families that makeDevice creates a queue for; presenting from any
+     * other would ask the device for a queue it does not have.
+     *
+     * @param infos     The families that have a queue.
+     * @param presents  Per family, indexed as vkGetPhysicalDeviceQueueFamilyProperties returns
+     *                  them, whether it presents to the surface
+     *                  (vkGetPhysicalDeviceSurfaceSupportKHR).
+     *
+     * @throws std::runtime_error if neither family presents.
+     */
+    static std::uint32_t selectPresentFamily(const QueueInfos&           infos,
+                                             std::span<const vk::Bool32> presents);
+
     using vk::raii::PhysicalDevice::getMemoryProperties;
     using vk::raii::PhysicalDevice::getQueueFamilyProperties;
     using vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR;
@@ -112,7 +127,6 @@ public:
     using vk::raii::Device::releaseSwapchainImagesEXT;
     using vk::raii::Device::resetFences;
     using vk::raii::Device::waitForFences;
-    using vk::raii::Device::waitSemaphores;
 
     /** For the raii objects that take a device; the base itself stays private. */
     const vk::raii::Device& raii() const noexcept;

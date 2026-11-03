@@ -196,7 +196,6 @@ GraphicsPipeline::GraphicsPipeline(DevicePtr device, Parameters createInfo)
     : DeviceChild{std::move(device)}
     , vk::raii::Pipeline{makePipeline(
           *DeviceChild::device(), requireProgram(createInfo), createInfo)}
-    , renderingDescription{createInfo.renderingDescription}
     , program{std::move(createInfo.shading)}
 {
 }

@@ -138,6 +138,7 @@ public:
     /**
      * Starts a dynamic-rendering scope covering the full extent of the attachments.
      * All attachments must share their extent and are retained for the command buffer's lifetime.
+     * The pool needs a graphics family; the draw commands exist only on the scope.
      *
      * @param colorAttachments  Color targets with their load/store ops and clear values.
      * @param depthAttachment   Optional depth-only target.
@@ -150,7 +151,7 @@ public:
 
     /**
      * Binds both heaps of @p heap, which every draw after it reads its resources from, and retains
-     * it. Outside a rendering pass.
+     * it. Outside a rendering pass. The pool needs a graphics or compute family.
      */
     void bindDescriptorHeap(DescriptorHeapPtr heap);
 

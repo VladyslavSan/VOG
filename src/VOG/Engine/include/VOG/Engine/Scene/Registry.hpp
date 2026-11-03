@@ -21,7 +21,9 @@ namespace VOG::Engine::Detail
 {
 /**
  * A slot and the generation it had when the entity was created. Generation 0 is even, and an even
- * generation is never alive (see Registry::mGenerations), so the default is no entity.
+ * generation is never alive (see Registry::mGenerations), so the default is no entity. A slot is
+ * never reused once its generations have been used up, so an (index, generation) pair names one
+ * entity for good.
  */
 struct Entity
 {
@@ -346,6 +348,9 @@ public:
     }
 
 private:
+    /** Lets RegistryTest put a slot near the end of its generations. */
+    friend struct RegistryTestAccess;
+
     /** Counts the running each() calls for its lifetime; the outermost one flushes at its end. */
     class IterationScope
     {
@@ -389,7 +394,7 @@ private:
                              });
     }
 
-    /** Removes the components of the slot and retires its generation. */
+    /** Removes the components of the slot and ends its generation. */
     void release(std::uint32_t index) noexcept;
 
     /** Destroys the doomed components of every pool. Only at depth 0, when nothing walks. */
@@ -431,9 +436,15 @@ private:
             *mPools.emplace(std::type_index{typeid(T)}, std::make_unique<Pool<T>>()).first->second);
     }
 
-    /** Per slot; odd while an entity lives in it, so create() and destroy() each add 1. */
+    /**
+     * Per slot; odd while an entity lives in it, so create() and destroy() each add 1, except at
+     * the last odd value, 2^32 - 1: that is the last life of a slot, and release() subtracts 1 and
+     * does not free the slot (it is retired for good). Adding 1 would wrap the counter, which
+     * would give a stale handle a living generation again.
+     */
     std::vector<std::uint32_t> mGenerations;
-    /** Retired slots. Its capacity covers every slot, so that release() does not allocate. */
+    /** Free (dead, reusable) slots. Its capacity covers every slot, so that release() does not
+     *  allocate. */
     std::vector<std::uint32_t> mFreeSlots;
     /**
      * Running each() calls. The one mechanism that defers the destruction of a removed T: it is a

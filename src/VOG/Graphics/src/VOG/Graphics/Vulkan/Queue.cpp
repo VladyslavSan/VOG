@@ -8,12 +8,9 @@
 
 namespace VOG::Graphics::Vulkan
 {
-Queue::Queue(const Device&             device,
-             std::uint32_t             _familyIndex,
-             vk::QueueFamilyProperties _familyProperties)
+Queue::Queue(const Device& device, std::uint32_t _familyIndex)
     : vk::raii::Queue{device.raii(), _familyIndex, 0u}
     , familyIndex{_familyIndex}
-    , familyProperties{_familyProperties}
 {
 }
 

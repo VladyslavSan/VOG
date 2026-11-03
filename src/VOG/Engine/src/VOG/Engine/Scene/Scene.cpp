@@ -87,17 +87,6 @@ GameObject::getTransform()
     return *mScene->mRegistry.tryGet<Transform>(mEntity);
 }
 
-Scene&
-GameObject::getScene() const
-{
-    if (mScene == nullptr)
-    {
-        throw std::logic_error{"A default-constructed GameObject has no Scene."};
-    }
-
-    return *mScene;
-}
-
 Scene::~Scene()
 {
     try

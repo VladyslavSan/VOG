@@ -83,4 +83,35 @@ TEST(QueueFamilies, fallsBackToGraphicsFamily)
     EXPECT_THROW(PhysicalDevice::selectQueueFamilies(std::array{family(eTransfer)}, true),
                  std::runtime_error);
 }
+
+/**
+ * Presenting needs a queue, and makeDevice creates one for the graphics family and for the
+ * transfer family only. A surface that only another family presents to must be refused, not
+ * answered with a family that has no queue (VUID-vkGetDeviceQueue-queueFamilyIndex-00384).
+ */
+TEST(QueueFamilies, presentFamilyIsOneThatHasAQueue)
+{
+    // Graphics is family 0 and the transfer family is 1 (the dedicated setting).
+    const PhysicalDevice::QueueInfos infos = PhysicalDevice::selectQueueFamilies(gNvidiaLike, true);
+    ASSERT_EQ(infos.transfer.familyIndex, 1u);
+    using Presents = std::array<vk::Bool32, 3>;
+
+    // Graphics presents: it wins, also when the others present too.
+    EXPECT_EQ(PhysicalDevice::selectPresentFamily(infos, Presents{1u, 0u, 0u}), 0u);
+    EXPECT_EQ(PhysicalDevice::selectPresentFamily(infos, Presents{1u, 1u, 1u}), 0u);
+    // Only the transfer family presents.
+    EXPECT_EQ(PhysicalDevice::selectPresentFamily(infos, Presents{0u, 1u, 0u}), 1u);
+    // Only a family without a queue presents: no answer.
+    EXPECT_THROW(PhysicalDevice::selectPresentFamily(infos, Presents{0u, 0u, 1u}),
+                 std::runtime_error);
+    EXPECT_THROW(PhysicalDevice::selectPresentFamily(infos, Presents{0u, 0u, 0u}),
+                 std::runtime_error);
+
+    // One family does everything (lavapipe): graphics is the transfer family too.
+    const PhysicalDevice::QueueInfos single =
+        PhysicalDevice::selectQueueFamilies(gSingleFamily, true);
+    EXPECT_EQ(PhysicalDevice::selectPresentFamily(single, std::array<vk::Bool32, 1>{1u}), 0u);
+    EXPECT_THROW(PhysicalDevice::selectPresentFamily(single, std::array<vk::Bool32, 1>{0u}),
+                 std::runtime_error);
+}
 } // namespace VOG::Tests

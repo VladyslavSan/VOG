@@ -569,9 +569,6 @@ TEST(SceneTest, deadObjectOperations)
         EXPECT_THROW(object->addBehaviour<Probe>(log, "a"), std::logic_error);
     }
 
-    EXPECT_EQ(&flushed.getScene(), &scene);
-    EXPECT_THROW(neverCreated.getScene(), std::logic_error);
-
     // A new object in the slot of a dead one is not the dead one.
     GameObject fresh = scene.createGameObject();
     EXPECT_TRUE(fresh.isValid());

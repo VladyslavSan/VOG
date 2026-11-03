@@ -112,6 +112,21 @@ PhysicalDevice::PhysicalDevice(InstancePtr _instance, vk::raii::PhysicalDevice p
 {
 }
 
+std::uint32_t
+PhysicalDevice::selectPresentFamily(const QueueInfos& infos, std::span<const vk::Bool32> presents)
+{
+    for (const std::uint32_t family : {infos.graphics.familyIndex, infos.transfer.familyIndex})
+    {
+        if (family < presents.size() && presents[family] != 0u)
+        {
+            return family;
+        }
+    }
+
+    throw std::runtime_error{
+        "No queue family that the device created a queue for can present to the surface."};
+}
+
 PhysicalDevice::QueueInfos
 PhysicalDevice::selectQueueFamilies(std::span<const vk::QueueFamilyProperties> families,
                                     bool                                       dedicatedTransfer)
@@ -171,8 +186,8 @@ Device::raii() const noexcept
 Device::Device(InstancePtr _instance, vk::raii::PhysicalDevice physicalDevice)
     : PhysicalDevice{std::move(_instance), std::move(physicalDevice)}
     , vk::raii::Device{makeDevice(raiiPhysicalDevice(), queueInfos)}
-    , mGraphicsQueue{*this, queueInfos.graphics.familyIndex, queueInfos.graphics.familyProperties}
-    , mTransferQueue{*this, queueInfos.transfer.familyIndex, queueInfos.transfer.familyProperties}
+    , mGraphicsQueue{*this, queueInfos.graphics.familyIndex}
+    , mTransferQueue{*this, queueInfos.transfer.familyIndex}
     , pipelineCache{*this, {}}
     , mMemoryAllocator{new MemoryAllocator{*this}}
 {

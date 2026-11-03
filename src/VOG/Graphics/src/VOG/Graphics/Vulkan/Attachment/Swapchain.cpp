@@ -13,7 +13,9 @@
 #include <format>
 #include <limits>
 #include <optional>
+#include <ranges>
 #include <stdexcept>
+#include <vector>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -22,25 +24,15 @@ namespace
 std::uint32_t
 findPresentQueueFamilyIndex(const Device& device, const vk::raii::SurfaceKHR& surface)
 {
-    {
+    const auto familyCount = static_cast<std::uint32_t>(device.getQueueFamilyProperties().size());
 
-        const std::uint32_t graphicsQueueIndex = device.queueInfos.graphics.familyIndex;
-        if (device.getSurfaceSupportKHR(graphicsQueueIndex, *surface) != 0u)
-        {
-            return graphicsQueueIndex;
-        }
+    std::vector<vk::Bool32> presents;
+    for (const std::uint32_t family : std::views::iota(0u, familyCount))
+    {
+        presents.push_back(device.getSurfaceSupportKHR(family, *surface));
     }
 
-    auto queueFamiliesProperty = device.getQueueFamilyProperties();
-    for (std::uint32_t i = 0; i < queueFamiliesProperty.size(); ++i)
-    {
-        if (device.getSurfaceSupportKHR(i, *surface) != 0u)
-        {
-            return i;
-        }
-    }
-
-    throw std::runtime_error("No present queue found.");
+    return PhysicalDevice::selectPresentFamily(device.queueInfos, presents);
 }
 
 /** The surface reports currentExtent as 0xFFFFFFFF when the application chooses the size. */

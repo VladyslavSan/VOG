@@ -28,8 +28,5 @@ public:
 
     TimelineSemaphore(const TimelineSemaphore&) = delete;
     TimelineSemaphore(TimelineSemaphore&&)      = delete;
-
-    [[nodiscard("Wait result can end with success, fail and timeout.")]]
-    vk::Result waitOnCPU(std::uint64_t value, std::uint64_t timeout) const;
 };
 } // namespace VOG::Graphics::Vulkan
