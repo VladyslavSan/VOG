@@ -212,7 +212,7 @@ protected:
         const auto             found = std::erase_if(mErrors.messages,
                                                      [vuid](const std::string& message)
                                                      {
-                                             return message.find(vuid) != std::string::npos;
+                                             return message.contains(vuid);
                                                      });
 
         return found != 0u;

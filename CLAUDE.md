@@ -1,6 +1,6 @@
 # VOG
 
-C++20 Vulkan rendering engine. Module layering (each links only downward):
+C++23 Vulkan rendering engine. Module layering (each links only downward):
 
 ```
 Common
@@ -35,7 +35,8 @@ Details: `docs/ResourceOwnership.md`, `docs/SwapchainSync.md`.
 ## Build & test
 
 - Configure once: `cmake --preset debug` (Conan-generated presets; full
-  dependency setup is `conan build .`)
+  dependency setup is `conan build .`). The Conan profile needs `compiler.cppstd=23`
+  (`CPPSTD` in `conanfile.py`; `conan install` fails on a lower value).
 - Build: `cmake --build build/build/Debug`
 - Test: `ctest --test-dir build/build/Debug --output-on-failure` (gtest
   units per module; the Graphics tests run headless through `VulkanFixture` and the Engine tests

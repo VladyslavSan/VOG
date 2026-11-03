@@ -115,12 +115,12 @@ TEST_F(InstanceDestruction, sinkHearsErrorOfVkDestroyInstance)
     const auto released = releaseDevice();
 
     EXPECT_TRUE(released.instance.expired());
-    const bool heard = std::ranges::any_of(
-        mValidationErrors,
-        [](const std::string& message)
-        {
-            return message.find("VUID-vkDestroyInstance-instance-00629") != std::string::npos;
-        });
+    const bool heard =
+        std::ranges::any_of(mValidationErrors,
+                            [](const std::string& message)
+                            {
+                                return message.contains("VUID-vkDestroyInstance-instance-00629");
+                            });
     EXPECT_TRUE(heard) << mValidationErrors.size() << " error(s) heard; the first: "
                        << (mValidationErrors.empty() ? "" : mValidationErrors.front());
 }

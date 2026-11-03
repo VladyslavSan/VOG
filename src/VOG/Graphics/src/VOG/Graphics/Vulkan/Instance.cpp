@@ -73,7 +73,7 @@ getInstanceRequiredExtensions()
 
 #ifdef PLATFORM_VIDEO_WINDOWS
     requiredExtensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
-#elif defined(PLATFORM_VIDEO_APPLE)
+#elifdef PLATFORM_VIDEO_APPLE
     requiredExtensions.push_back(VK_EXT_METAL_SURFACE_EXTENSION_NAME);
 #endif
     // Linux WSI extensions are added opportunistically in makeInstance when present,
