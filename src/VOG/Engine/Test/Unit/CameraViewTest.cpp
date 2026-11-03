@@ -10,7 +10,10 @@ using VOG::Math::Vector4f;
 
 namespace VOG::Tests
 {
-/** One world unit is one pixel: the default camera maps the edge of the target to clip x = 1. */
+/**
+ * One world unit is one pixel: the default camera maps the edge of the target to clip x = 1. World
+ * +Y is up the screen, and Vulkan clip y = -1 is the top of the target, so +Y maps to negative y.
+ */
 TEST(CameraViewTest, defaultCameraMapsPixelsToClipSpace)
 {
     constexpr float  kTolerance = 1e-6f;
@@ -26,6 +29,13 @@ TEST(CameraViewTest, defaultCameraMapsPixelsToClipSpace)
     const Vector4f wider =
         camera.viewProjection({.width = 128u, .height = 64u}) * Vector4f{32.0f, 0.0f, 20.0f, 1.0f};
     EXPECT_NEAR(wider.x, 0.5f, kTolerance);
+
+    const Vector4f above =
+        camera.viewProjection({.width = 64u, .height = 64u}) * Vector4f{0.0f, 16.0f, 20.0f, 1.0f};
+    EXPECT_NEAR(above.y, -0.5f, kTolerance);
+    const Vector4f below =
+        camera.viewProjection({.width = 64u, .height = 64u}) * Vector4f{0.0f, -16.0f, 20.0f, 1.0f};
+    EXPECT_NEAR(below.y, 0.5f, kTolerance);
 }
 
 /**

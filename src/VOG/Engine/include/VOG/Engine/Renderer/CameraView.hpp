@@ -6,8 +6,9 @@
 namespace VOG::Engine
 {
 /** The view of one frame, as the renderer draws it: orthographic, one world unit per pixel,
- * centered on the view axis. The default is the view of the Camera component at the identity
- * transform. */
+ * centered on the view axis. The camera's up points up the screen: with the default direction and
+ * up, world +Y is up and +X is right. The default is the view of the Camera component at the
+ * identity transform. */
 struct CameraView
 {
     Math::Vector3f position{0.0f};

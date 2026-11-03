@@ -15,6 +15,11 @@ CameraView::viewProjection(Extent extent) const
         nearPlane,
         farPlane);
 
-    return projection * view;
+    // Vulkan clip space has +y down the framebuffer. World +Y, the camera's up, must be up the
+    // screen, so clip y is negated here and neither the viewport nor the pipeline flips.
+    const Math::Matrix4x4f flipY =
+        glm::scale(Math::Matrix4x4f{1.0f}, Math::Vector3f{1.0f, -1.0f, 1.0f});
+
+    return flipY * projection * view;
 }
 } // namespace VOG::Engine
