@@ -43,6 +43,13 @@ public:
      * #inAttributes and #outAttributes sorted by StageInOutAttribute::location ascending.
      * #pushConstants.variables sorted by StructMember::offset ascending.
      *
+     * A stage input or output that is an interface block has one StageInOutAttribute per member,
+     * named "Block.member": the name of the block, a dot, the name of the member. A struct
+     * variable that is no block is named after the variable instead. A member has the location of
+     * its own Location decoration, else the location after the member before it; the first member
+     * has the location of the block. A member that is itself a struct, and an array of either, are
+     * a ShaderError.
+     *
      * Descriptors are not reflected: a shader reaches its resources through the descriptor heap
      * (`layout(descriptor_heap)`), by an index it reads from the push constants.
      */
@@ -71,8 +78,9 @@ public:
             std::string  name;
             BaseType     format;
             /**
-             * Consecutive locations the input covers, from #location: the array sizes multiplied,
-             * times one location per matrix column.
+             * Consecutive locations the input or output covers, from #location: the array sizes
+             * multiplied, times one location per matrix column, times two for a 64-bit vector of
+             * three or four components.
              */
             std::uint32_t locationCount = 1u;
         };

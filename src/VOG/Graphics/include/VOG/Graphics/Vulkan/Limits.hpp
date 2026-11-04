@@ -8,5 +8,5 @@ constexpr std::uint8_t gMaxNumAttachments      = 3u;
 constexpr std::uint8_t gMaxNumColorAttachments = gMaxNumAttachments - 1u;
 constexpr std::uint8_t gMaxNumDynamicStates    = 8u;
 constexpr std::uint8_t gMaxNumVertexBuffers    = 4u;
-constexpr std::uint8_t gMaxNumStageAttributes  = 8u;
+constexpr std::uint8_t gMaxNumVertexInputs     = 8u;
 } // namespace VOG::Graphics::Vulkan::Limits

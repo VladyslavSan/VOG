@@ -233,10 +233,10 @@ Renderer::createMesh(const MeshDescription& description)
                         description.vertices.size(),
                         description.stride)};
     }
-    if (description.attributes.size() > Graphics::Vulkan::Limits::gMaxNumStageAttributes)
+    if (description.attributes.size() > Graphics::Vulkan::Limits::gMaxNumVertexInputs)
     {
         throw std::invalid_argument{std::format("A mesh takes at most {} attributes; got {}.",
-                                                Graphics::Vulkan::Limits::gMaxNumStageAttributes,
+                                                Graphics::Vulkan::Limits::gMaxNumVertexInputs,
                                                 description.attributes.size())};
     }
     const vk::PhysicalDeviceLimits& limits = mVulkanDevice->limits;

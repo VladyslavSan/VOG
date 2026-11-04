@@ -138,9 +138,20 @@ acquire and submit reaches it (a Vulkan error, or out of memory in a retain or a
 An exception between submit and present (out of memory in a fence take, or a present error that
 enqueues nothing) is a separate case: the submit consumed the acquire semaphore, but the slot's
 `renderFinishedSemaphore` stays signaled with no present waiting it, so the slot's next submit
-signals it again. `Renderer::submitFrame` runs the renderables on the main thread, and the render
-thread looks up the pipelines of a frame before it acquires, so a renderable that throws and a
-vertex layout the shader cannot read both fail while no image is acquired.
+signals it again (`VUID-vkQueueSubmit2-semaphore-03868`). The submitted command buffer still
+retains the image, so it stays acquired until the slot's next `prepareNextFrame` releases it, and
+`stop()` and `start()` keep the frame slots. With one slot that is the next frame. With more, the
+restarted thread has to acquire other images first. If none comes free, for example with two
+images when the presentation engine keeps the last one presented, every acquire times out,
+`renderFrame` returns without advancing and the slot never comes round: nothing renders while
+`getState()` reports `eRunning`, until a resize to another size or an out-of-date acquire recreates
+the swapchain. This follows from the code and from the spec giving no forward-progress guarantee
+there; it has not been observed. Once the slot comes round, its next submit signals the semaphore
+again.
+
+`Renderer::submitFrame` runs the renderables on the main thread, and the render thread looks up
+the pipelines of a frame before it acquires, so a renderable that throws and a vertex layout the
+shader cannot read both fail while no image is acquired.
 
 ## Resizing
 

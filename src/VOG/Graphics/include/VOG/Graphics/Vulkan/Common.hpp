@@ -8,7 +8,7 @@ namespace VOG::Graphics::Vulkan
 struct VertexLayout
 {
     constexpr static auto kMaxNVertexBuffers = Limits::gMaxNumVertexBuffers;
-    constexpr static auto kMaxNVertexAttrs   = Limits::gMaxNumStageAttributes;
+    constexpr static auto kMaxNVertexAttrs   = Limits::gMaxNumVertexInputs;
 
     StaticVector<vk::VertexInputBindingDescription, kMaxNVertexBuffers> bindingDescription;
     StaticVector<vk::VertexInputAttributeDescription, kMaxNVertexAttrs> attributeDescription;

@@ -198,12 +198,13 @@ public:
 
     /**
      * Requests stop, joins the render thread and returns its failure, or null if it ended
-     * normally or was not running. The Renderer can be started again afterwards, unless the
-     * failure came between the swapchain acquire and the present: that leaves a semaphore of the
-     * frame slot signaled (known gap in docs/SwapchainSync.md). The stop is observed within one
-     * acquire timeout and one frame, plus the fence waits of the frame slot, which have no timeout
-     * (docs/SwapchainSync.md). After a normal stop, a packet still queued at stop() is rendered
-     * first after the next start(); after a failure, the packets queued before stop() are dropped.
+     * normally or was not running. The Renderer can be started again afterwards. After a failure
+     * between the swapchain acquire and the enqueue of the present (a present that enqueues
+     * nothing is one), a restart may stall until the swapchain is recreated, or misuse a semaphore
+     * (known gap in docs/SwapchainSync.md). The stop is observed within one acquire timeout and one
+     * frame, plus the fence waits of the frame slot, which have no timeout (docs/SwapchainSync.md).
+     * After a normal stop, a packet still queued at stop() is rendered first after the next
+     * start(); after a failure, the packets queued before stop() are dropped.
      */
     [[nodiscard]] std::exception_ptr stop() noexcept;
 

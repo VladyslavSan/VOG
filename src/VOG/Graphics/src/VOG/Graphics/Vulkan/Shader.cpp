@@ -6,8 +6,12 @@
 #include <spirv_reflect.hpp>
 #include <vulkan/vulkan_format_traits.hpp>
 
+#include <algorithm>
+#include <cstdint>
 #include <format>
+#include <iterator>
 #include <ranges>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -59,6 +63,86 @@ attributeSpirVTypeToVulkanType(const spirv_cross::SPIRType& spirvType)
     };
 }
 
+/** Bits of a double, and of a 64-bit integer. */
+constexpr std::uint32_t gWideBits = 64u;
+
+/**
+ * Consecutive locations a value of @p type takes: the array sizes multiplied, times one location
+ * per matrix column, times two for a 64-bit vector of three or four components.
+ */
+std::uint32_t
+locationCountOf(const spirv_cross::Compiler& compiler, const spirv_cross::SPIRType& type)
+{
+    constexpr std::uint32_t kTwoLocationMin = 3u;
+
+    std::uint32_t count = std::max<std::uint32_t>(type.columns, 1u);
+    if (type.width == gWideBits && type.vecsize >= kTwoLocationMin)
+    {
+        count *= 2u;
+    }
+    // A dimension that is not a literal holds the ID of a constant (a specialization constant),
+    // whose default is the size.
+    for (const auto [dimension, isLiteral] : std::views::zip(type.array, type.array_size_literal))
+    {
+        count *= isLiteral ? dimension : compiler.evaluate_constant_u32(dimension);
+    }
+
+    return count;
+}
+
+/**
+ * One attribute per member of the struct that @p variable is: an interface block or a struct
+ * variable. The name of an attribute is "Name.member", where Name is the name of the block, or of
+ * the variable if it is no block. A member takes the location of its own Location decoration,
+ * else the location after the member before it, and the first one the location of the variable.
+ */
+Shader::Reflection::StageAttributes
+processStructMembers(const spirv_cross::Compiler& compiler, const spirv_cross::Resource& variable)
+{
+    const spirv_cross::SPIRType& structType = compiler.get_type(variable.base_type_id);
+    if (!compiler.get_type(variable.type_id).array.empty())
+    {
+        throw Shader::ShaderError{
+            std::format("The stage variable \"{}\" is an array of structs; that is not supported.",
+                        variable.name)};
+    }
+
+    Shader::Reflection::StageAttributes result;
+    std::uint32_t next = compiler.get_decoration(variable.id, spv::Decoration::DecorationLocation);
+    for (const auto [index, memberTypeId] :
+         std::views::zip(std::views::iota(0u), structType.member_types))
+    {
+        const std::string& memberName = compiler.get_member_name(variable.base_type_id, index);
+        const auto&        memberType = compiler.get_type(memberTypeId);
+        if (memberType.basetype == spirv_cross::SPIRType::BaseType::Struct)
+        {
+            throw Shader::ShaderError{
+                std::format("The stage variable \"{}\" has the struct \"{}\" as a member; a "
+                            "member must be a vector, a matrix or a scalar (or an array of one).",
+                            variable.name,
+                            memberName)};
+        }
+
+        if (compiler.has_member_decoration(
+                variable.base_type_id, index, spv::Decoration::DecorationLocation))
+        {
+            next = compiler.get_member_decoration(
+                variable.base_type_id, index, spv::Decoration::DecorationLocation);
+        }
+        const std::uint32_t locationCount = locationCountOf(compiler, memberType);
+
+        result.push_back({.location      = static_cast<std::uint8_t>(next),
+                          .name          = std::format("{}.{}", variable.name, memberName),
+                          .format        = attributeSpirVTypeToVulkanType(memberType),
+                          .locationCount = locationCount});
+        next += locationCount;
+    }
+
+    return result;
+}
+
+/** A struct (an interface block, or a struct variable) yields one attribute per member, any other
+ *  variable one. */
 Shader::Reflection::StageAttributes
 processStageResources(const spirv_cross::Compiler&   compiler,
                       const std::ranges::range auto& resources)
@@ -67,26 +151,22 @@ processStageResources(const spirv_cross::Compiler&   compiler,
     Shader::Reflection::StageAttributes result{};
     for (const spirv_cross::Resource& resource : resources)
     {
+        const auto& resourceType = compiler.get_type(resource.base_type_id);
+        if (resourceType.basetype == spirv_cross::SPIRType::BaseType::Struct)
+        {
+            std::ranges::move(processStructMembers(compiler, resource), std::back_inserter(result));
+            continue;
+        }
+
         const std::uint32_t location =
             compiler.get_decoration(resource.id, spv::Decoration::DecorationLocation);
 
-        const auto& resourceType = compiler.get_type(resource.base_type_id);
-
-        // The base type has no array dimensions; the variable's own type does. A dimension that
-        // is not a literal holds the ID of a constant (a specialization constant), whose default
-        // is the size.
-        std::uint32_t locationCount = std::max<std::uint32_t>(resourceType.columns, 1u);
-        const auto&   variableType  = compiler.get_type(resource.type_id);
-        for (const auto [dimension, isLiteral] :
-             std::views::zip(variableType.array, variableType.array_size_literal))
-        {
-            locationCount *= isLiteral ? dimension : compiler.evaluate_constant_u32(dimension);
-        }
-
-        result.push_back({.location      = static_cast<std::uint8_t>(location),
-                          .name          = resource.name,
-                          .format        = attributeSpirVTypeToVulkanType(resourceType),
-                          .locationCount = locationCount});
+        // The base type has no array dimensions; the variable's own type does.
+        result.push_back(
+            {.location      = static_cast<std::uint8_t>(location),
+             .name          = resource.name,
+             .format        = attributeSpirVTypeToVulkanType(resourceType),
+             .locationCount = locationCountOf(compiler, compiler.get_type(resource.type_id))});
     }
 
     std::ranges::sort(result,
@@ -171,22 +251,21 @@ rejectDescriptorSetResources(const spirv_cross::ShaderResources& resources)
     }
 }
 
-/** A pipeline takes at most Limits::gMaxNumStageAttributes attributes per stage. */
+/** A pipeline takes at most Limits::gMaxNumVertexInputs vertex inputs. */
 void
-rejectTooManyAttributes(std::string_view kind, std::size_t count)
+rejectTooManyVertexInputs(std::size_t count)
 {
-    if (count > Limits::gMaxNumStageAttributes)
+    if (count > Limits::gMaxNumVertexInputs)
     {
         throw Shader::ShaderError{
-            std::format("The shader declares {} stage {}s; at most {} are supported.",
+            std::format("The shader declares {} vertex inputs; at most {} are supported.",
                         count,
-                        kind,
-                        Limits::gMaxNumStageAttributes)};
+                        Limits::gMaxNumVertexInputs)};
     }
 }
 
 Shader::Reflection
-reflect(std::span<const std::uint32_t> binary)
+reflect(std::span<const std::uint32_t> binary, Shader::ShadingStage stage)
 {
     const spirv_cross::Compiler        compiler{binary.data(), binary.size()};
     const spirv_cross::ShaderResources resources = compiler.get_shader_resources();
@@ -194,10 +273,12 @@ reflect(std::span<const std::uint32_t> binary)
 
     Shader::Reflection reflection{};
 
-    rejectTooManyAttributes("input", resources.stage_inputs.size());
-    rejectTooManyAttributes("output", resources.stage_outputs.size());
     reflection.inAttributes  = processStageResources(compiler, resources.stage_inputs);
     reflection.outAttributes = processStageResources(compiler, resources.stage_outputs);
+    if (stage == Shader::ShadingStage::eVertex)
+    {
+        rejectTooManyVertexInputs(reflection.inAttributes.size());
+    }
 
     VOG_ASSERT_MSG(resources.push_constant_buffers.size() <= 1u,
                    "Can only be one push constant block.");
@@ -216,9 +297,8 @@ Shader::vertexFormatCompatible(Shader::Reflection::BaseType shaderVertexFormat, 
 {
     using Type = Shader::Reflection::BaseType::Type;
 
-    constexpr std::uint8_t kDoubleBits = 64u;
     if (shaderVertexFormat.type == Type::eDouble || provided == vk::Format::eUndefined ||
-        vk::componentBits(provided, 0u) == kDoubleBits)
+        vk::componentBits(provided, 0u) == gWideBits)
     {
         return false;
     }
@@ -242,7 +322,7 @@ Shader::Shader(DevicePtr _device, Shader::ShadingStage stage, std::span<const st
     , module{device->raii(),
              vk::ShaderModuleCreateInfo{.codeSize = binary.size() * sizeof(std::uint32_t),
                                         .pCode    = binary.data()}}
-    , reflection{reflect(binary)}
+    , reflection{reflect(binary, stage)}
 {
 }
 } // namespace VOG::Graphics::Vulkan
