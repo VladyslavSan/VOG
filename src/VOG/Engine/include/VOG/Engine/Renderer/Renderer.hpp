@@ -55,6 +55,9 @@ struct FramePacket;
 /**
  * Owns the Vulkan objects of one window and the thread that renders into it.
  *
+ * An application has one Renderer. A Mesh, Material or Texture works only with the Renderer that
+ * made it; using it with another is undefined.
+ *
  * Two threads work with it. The main thread, or whichever thread calls submitFrame(), runs the
  * Renderables: it calls onDraw() for each frame and queues the result as a packet. The render
  * thread takes the packets and records and presents them; it runs no user code.
