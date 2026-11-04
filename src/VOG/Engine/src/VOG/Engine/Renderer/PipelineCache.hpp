@@ -15,8 +15,11 @@ VOG_DECLARE_PTR(GraphicsPipeline);
 
 namespace VOG::Engine
 {
-class Mesh;
-class Material;
+namespace Detail
+{
+class MeshData;
+class MaterialData;
+} // namespace Detail
 
 /**
  * The graphics pipelines of the draws seen so far, one per vertex layout, shader program and color
@@ -33,7 +36,7 @@ public:
      * next call: copy the pointer to keep it.
      */
     const Graphics::Vulkan::GraphicsPipelinePtr&
-    get(const Mesh& mesh, const Material& material, vk::Format colorFormat);
+    get(const Detail::MeshData& mesh, const Detail::MaterialData& material, vk::Format colorFormat);
 
 private:
     /** Lets RendererTest count the entries. */

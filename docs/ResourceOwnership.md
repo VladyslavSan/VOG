@@ -69,25 +69,27 @@ after the fence of the frame that referenced the resource has signaled.
 
 ## Meshes and materials
 
-The Engine hands out `MeshPtr`, `TexturePtr` and `MaterialPtr`; the chain behind them is the same
-one:
+The Engine hands out the value handles `Mesh`, `Texture` and `Material`. A handle is a copyable
+class around one private `shared_ptr<const MeshData>` (`TextureData`, `MaterialData`), so a copy
+shares the data and costs no allocation; a default-constructed handle is empty. The chain behind
+a handle is the same one:
 
-- A `Mesh` owns a `BufferPtr`. The packet that `Renderer::submitFrame` queues holds each draw, and
-  so its mesh, from `submitFrame` until the render thread has recorded the frame; the queue holds
-  at most one packet.
+- A `Mesh` shares a `MeshData`, which owns a `BufferPtr`. The packet that
+  `Renderer::submitFrame` queues holds each draw, and so its mesh, from `submitFrame` until the
+  render thread has recorded the frame; the queue holds at most one packet.
 - `bindVertexBuffers` and `bindIndexBuffer` retain the buffer, not the `Mesh`; the vertices and
-  the indices of a mesh are in one buffer. Dropping the last `MeshPtr` while a frame
+  the indices of a mesh are in one buffer. Dropping the last `Mesh` handle while a frame
   is in flight frees the CPU object; the buffer dies when that frame's slot is reused and its
   fence has signalled (`meshBufferOutlivesMeshWhileFrameInFlight`). The draw loop skips a
   pipeline or buffer bind that repeats the previous bind of its kind in the frame; the first
   bind's retain covers the rest, because all draws of a frame are in one command buffer and its
   retained set lives until the fence signals.
-- A `Material` owns a `ShaderProgramPtr`, a `UniformBlock` that holds its parameters, and the
-  `TexturePtr`s it samples. A draw pushes the heap indices of the block and the textures, and
-  records them with `RenderingPass::useResource`, which retains them: dropping the last
-  `MaterialPtr` while a frame is in flight frees the CPU object, and the block and the images
-  die when that frame's slot is reused (`textureOutlivesMaterialWhileFrameInFlight`,
-  `parameterBlockOutlivesMaterialWhileFrameInFlight`).
+- A `Material` shares a `MaterialData`, which owns a `ShaderProgramPtr`, a `UniformBlock` that
+  holds its parameters, and the `Texture` handles it samples. A draw pushes the heap indices of
+  the block and the textures, and records them with `RenderingPass::useResource`, which retains
+  them: dropping the last `Material` handle while a frame is in flight frees the CPU object, and
+  the block and the images die when that frame's slot is reused
+  (`textureOutlivesMaterialWhileFrameInFlight`, `parameterBlockOutlivesMaterialWhileFrameInFlight`).
 - `Renderer::createMesh` and `Renderer::createTexture` copy the bytes into a host-visible staging
   buffer on the calling thread and queue the upload with the destination. Neither destination
   asks for host access, so VMA places it in device-local memory where it can. The render thread

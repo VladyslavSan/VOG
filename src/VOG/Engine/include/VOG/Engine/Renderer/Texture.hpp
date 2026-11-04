@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <utility>
 
 namespace VOG::Engine
 {
@@ -26,7 +27,41 @@ struct TextureDescription
     TextureFormat              format = TextureFormat::eRGBA8Srgb;
 };
 
-/** Immutable after creation; made by Renderer::createTexture(). */
-class Texture;
-using TexturePtr = std::shared_ptr<const Texture>;
+namespace Detail
+{
+class TextureData;
+} // namespace Detail
+
+class Renderer;
+
+/**
+ * Immutable after creation; made by Renderer::createTexture(). A copy shares the texture with the
+ * original. A default-constructed Texture is empty: it is no texture, and
+ * Renderer::createMaterial() rejects it.
+ */
+class Texture
+{
+public:
+    Texture() = default;
+
+    /** True for a texture that createTexture() made. */
+    explicit
+    operator bool() const
+    {
+        return static_cast<bool>(mData);
+    }
+
+    bool operator==(const Texture&) const = default;
+
+private:
+    friend class Renderer;
+    friend struct HandleTestAccess;
+
+    explicit Texture(std::shared_ptr<const Detail::TextureData> data)
+        : mData{std::move(data)}
+    {
+    }
+
+    std::shared_ptr<const Detail::TextureData> mData;
+};
 } // namespace VOG::Engine

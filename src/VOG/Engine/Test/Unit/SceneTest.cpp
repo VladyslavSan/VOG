@@ -1,5 +1,3 @@
-#include "VOG/Engine/Renderer/MaterialDefinition.hpp"
-#include "VOG/Engine/Renderer/MeshDefinition.hpp"
 #include <VOG/Engine/Scene/Scene.hpp>
 
 #include <gtest/gtest.h>
@@ -17,6 +15,7 @@
 #include <vector>
 
 #include "AllocationFailure.hpp"
+#include "HandleTestAccess.hpp"
 #include "RenderQueueTestAccess.hpp"
 
 using namespace VOG::Engine;
@@ -467,7 +466,7 @@ TEST(SceneTest, updateAndClearInsideEachRun)
 {
     Log        log;
     Scene      scene;
-    auto       mesh   = std::make_shared<const Mesh>();
+    const Mesh mesh   = HandleTestAccess::makeMesh();
     GameObject first  = startedObject(scene, log, "a");
     GameObject second = scene.createGameObject();
     second.addComponent<MeshRenderer>(MeshRenderer{.mesh = mesh});
@@ -487,12 +486,12 @@ TEST(SceneTest, updateAndClearInsideEachRun)
             // The objects are gone at once, their components when the each() returns.
             scene.clear();
             EXPECT_FALSE(second.isValid());
-            EXPECT_EQ(mesh.use_count(), 2);
+            EXPECT_EQ(HandleTestAccess::useCount(mesh), 2);
         });
 
     // clear() destroyed the second object before the walk reached it.
     EXPECT_EQ(visited, 1);
-    EXPECT_EQ(mesh.use_count(), 1);
+    EXPECT_EQ(HandleTestAccess::useCount(mesh), 1);
 }
 
 /**
@@ -620,7 +619,7 @@ TEST(SceneTest, createGameObjectInsideEach)
 TEST(SceneTest, removeComponentInsideEachKeepsReference)
 {
     Scene      scene;
-    auto       mesh   = std::make_shared<const Mesh>();
+    const Mesh mesh   = HandleTestAccess::makeMesh();
     GameObject object = scene.createGameObject();
     object.addComponent<MeshRenderer>(MeshRenderer{.mesh = mesh});
 
@@ -631,10 +630,10 @@ TEST(SceneTest, removeComponentInsideEachKeepsReference)
 
             EXPECT_EQ(visited.getComponent<MeshRenderer>(), nullptr);
             EXPECT_EQ(renderer.mesh, mesh);
-            EXPECT_EQ(mesh.use_count(), 2);
+            EXPECT_EQ(HandleTestAccess::useCount(mesh), 2);
         });
 
-    EXPECT_EQ(mesh.use_count(), 1);
+    EXPECT_EQ(HandleTestAccess::useCount(mesh), 1);
 }
 
 TEST(SceneTest, destroyInsideEachIsDeferred)
@@ -708,9 +707,9 @@ TEST(SceneTest, secondCameraThrowsAtAddComponent)
 
 TEST(SceneTest, meshRendererSubmitsTransformMatrix)
 {
-    Scene scene;
-    auto  mesh     = std::make_shared<const Mesh>();
-    auto  material = std::make_shared<const Material>();
+    Scene          scene;
+    const Mesh     mesh     = HandleTestAccess::makeMesh();
+    const Material material = HandleTestAccess::makeMaterial();
 
     GameObject object              = scene.createGameObject();
     object.getTransform().position = {1.0f, 2.0f, 3.0f};

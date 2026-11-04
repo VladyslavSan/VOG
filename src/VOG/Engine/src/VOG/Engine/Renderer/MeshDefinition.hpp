@@ -14,7 +14,9 @@ VOG_DECLARE_PTR(Buffer);
 
 namespace VOG::Engine
 {
-class Mesh
+namespace Detail
+{
+class MeshData
 {
 public:
     /** Vertices at offset 0, then the indices at indexOffset. */
@@ -26,6 +28,7 @@ public:
     std::uint32_t  indexCount  = 0u;
     vk::DeviceSize indexOffset = 0u;
 };
+} // namespace Detail
 
 /** Size of one attribute in bytes. */
 constexpr std::uint32_t

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace VOG::Engine
@@ -39,7 +40,40 @@ struct MeshDescription
     std::vector<VertexAttribute> attributes;
 };
 
-/** Immutable after creation; made by Renderer::createMesh(). */
-class Mesh;
-using MeshPtr = std::shared_ptr<const Mesh>;
+namespace Detail
+{
+class MeshData;
+} // namespace Detail
+
+class Renderer;
+
+/**
+ * Immutable after creation; made by Renderer::createMesh(). A copy shares the mesh with the
+ * original. A default-constructed Mesh is empty: it is no mesh, and a draw of it is skipped.
+ */
+class Mesh
+{
+public:
+    Mesh() = default;
+
+    /** True for a mesh that createMesh() made. */
+    explicit
+    operator bool() const
+    {
+        return static_cast<bool>(mData);
+    }
+
+    bool operator==(const Mesh&) const = default;
+
+private:
+    friend class Renderer;
+    friend struct HandleTestAccess;
+
+    explicit Mesh(std::shared_ptr<const Detail::MeshData> data)
+        : mData{std::move(data)}
+    {
+    }
+
+    std::shared_ptr<const Detail::MeshData> mData;
+};
 } // namespace VOG::Engine

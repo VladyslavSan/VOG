@@ -186,6 +186,13 @@ step builds on the previous. Completed work is kept for context.
   bind of their kind in the same frame. Draw order is unchanged (no sorting: depth and blending
   are off, so submission order is the output). The cheap first step of recording cost;
   `repeatedBindsAreSkipped` counts the binds that reach the driver.
+- **Engine API O1: value handles**: `Mesh`, `Material` and `Texture` are copyable classes around a
+  private `shared_ptr<const MeshData>` (`MaterialData`, `TextureData`), and `MeshPtr`,
+  `MaterialPtr` and `TexturePtr` have left the Engine API. A default-constructed handle is empty: a
+  draw with an empty mesh or material is skipped, and `createMaterial` rejects an empty texture. No
+  public signature of these types takes or returns a pointer, and the three factories are
+  `[[nodiscard]]`. Behaviour and retention are unchanged. See `ResourceOwnership.md`, "Meshes and
+  materials".
 
 ## Later milestones (in rough order)
 

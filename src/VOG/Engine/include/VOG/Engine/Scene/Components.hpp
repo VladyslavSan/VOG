@@ -25,12 +25,12 @@ struct Transform
     }
 };
 
-/** Draws a mesh with a material at the Transform of its object. A null mesh or material draws
+/** Draws a mesh with a material at the Transform of its object. An empty mesh or material draws
  *  nothing. */
 struct MeshRenderer
 {
-    MeshPtr     mesh;
-    MaterialPtr material;
+    Mesh     mesh;
+    Material material;
 };
 
 /**

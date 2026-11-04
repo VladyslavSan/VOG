@@ -11,12 +11,15 @@ VOG_DECLARE_PTR(Texture);
 
 namespace VOG::Engine
 {
-class Texture
+namespace Detail
+{
+class TextureData
 {
 public:
     /** Its descriptor sits in the renderer's heap; a draw pushes its heap index. */
     Graphics::Vulkan::TexturePtr texture;
 };
+} // namespace Detail
 
 constexpr vk::Format
 toVk(TextureFormat format)

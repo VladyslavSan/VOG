@@ -142,7 +142,7 @@ public:
      *         maxVertexInputAttributeOffset of the device; its index count is not a multiple of 3;
      *         or an index is not less than the vertex count.
      */
-    MeshPtr createMesh(const MeshDescription& description);
+    [[nodiscard]] Mesh createMesh(const MeshDescription& description);
 
     /**
      * Copies the pixels of @p description. Any thread: the allocator is internally synchronized.
@@ -154,17 +154,17 @@ public:
      * @throws std::runtime_error if the renderer's descriptor heap is full or the image cannot be
      *         created.
      */
-    TexturePtr createTexture(const TextureDescription& description);
+    [[nodiscard]] Texture createTexture(const TextureDescription& description);
 
     /**
      * Looks up the shader of @p description and copies the parameters into a uniform block. Any
      * thread: the shader cache is only read, and the allocator is internally synchronized.
      * @throws std::invalid_argument for an unknown shader, more than 16384 bytes of parameters,
-     *         more than 4 textures, a null texture, or a push-constant range of the shader that
+     *         more than 4 textures, an empty texture, or a push-constant range of the shader that
      *         ends past the 84 bytes the renderer pushes.
      * @throws std::runtime_error if the renderer's descriptor heap is full.
      */
-    MaterialPtr createMaterial(MaterialDescription description);
+    [[nodiscard]] Material createMaterial(MaterialDescription description);
 
     /**
      * New window size in pixels. Any thread; the render thread recreates the swapchain at that

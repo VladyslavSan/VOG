@@ -16,7 +16,10 @@ namespace
 using namespace Graphics::Vulkan;
 
 GraphicsPipelinePtr
-makePipeline(Device& device, const Mesh& mesh, const Material& material, vk::Format colorFormat)
+makePipeline(Device&                     device,
+             const Detail::MeshData&     mesh,
+             const Detail::MaterialData& material,
+             vk::Format                  colorFormat)
 {
     VertexLayout vertexLayout{
         .bindingDescription = {
@@ -52,7 +55,9 @@ PipelineCache::PipelineCache(Graphics::Vulkan::DevicePtr device)
 }
 
 const Graphics::Vulkan::GraphicsPipelinePtr&
-PipelineCache::get(const Mesh& mesh, const Material& material, vk::Format colorFormat)
+PipelineCache::get(const Detail::MeshData&     mesh,
+                   const Detail::MaterialData& material,
+                   vk::Format                  colorFormat)
 {
     const auto found = std::ranges::find_if(
         mEntries,

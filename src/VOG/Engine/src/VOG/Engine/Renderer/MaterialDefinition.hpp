@@ -31,12 +31,15 @@ constexpr std::size_t gPushDataSize = gTexturesOffset + (gMaxTextures * sizeof(s
 constexpr std::size_t gShaderPushBlockSize = 84u;
 static_assert(gPushDataSize == gShaderPushBlockSize);
 
-class Material
+namespace Detail
+{
+class MaterialData
 {
 public:
     Graphics::Vulkan::ShaderProgramPtr program;
     /** The parameters; its heap index is pushed as `material`. */
     Graphics::Vulkan::UniformBlockPtr block;
-    std::vector<TexturePtr>           textures;
+    std::vector<Texture>              textures;
 };
+} // namespace Detail
 } // namespace VOG::Engine

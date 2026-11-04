@@ -35,6 +35,7 @@
 #include <utility>
 #include <vector>
 
+#include "HandleTestAccess.hpp"
 #include "SyncValidationSetting.hpp"
 
 #ifndef _WIN32
@@ -436,7 +437,7 @@ texturedLayout()
     return {{VertexFormat::eFloat2, 0u}, {VertexFormat::eFloat2, sizeOf(VertexFormat::eFloat2)}};
 }
 
-MeshPtr
+Mesh
 makeTexturedMesh(Renderer& renderer)
 {
     return renderer.createMesh({.vertices   = std::vector<std::byte>(3u * gTexturedStride),
@@ -445,7 +446,7 @@ makeTexturedMesh(Renderer& renderer)
 }
 
 /** A black 2x2 texture. */
-TexturePtr
+Texture
 makeTexture(Renderer& renderer)
 {
     const std::vector<std::byte> pixels(std::size_t{2u} * 2u * gPixelSize);
@@ -454,15 +455,15 @@ makeTexture(Renderer& renderer)
 }
 
 /** The Textured shader with a 16-byte tint and @p texture. */
-MaterialPtr
-makeTexturedMaterial(Renderer& renderer, TexturePtr texture)
+Material
+makeTexturedMaterial(Renderer& renderer, Texture texture)
 {
     return renderer.createMaterial({.shader     = "Textured",
                                     .parameters = std::vector<std::byte>(gTintSize),
                                     .textures   = {std::move(texture)}});
 }
 
-MeshPtr
+Mesh
 makeMesh(Renderer& renderer, const std::vector<VertexAttribute>& attributes)
 {
     return renderer.createMesh({.vertices   = std::vector<std::byte>(3u * gQuadStride),
@@ -472,7 +473,7 @@ makeMesh(Renderer& renderer, const std::vector<VertexAttribute>& attributes)
 
 /** A renderable that draws @p mesh with @p material in every frame. */
 std::shared_ptr<Renderable>
-drawing(MeshPtr mesh, MaterialPtr material)
+drawing(Mesh mesh, Material material)
 {
     return std::make_shared<LambdaRenderable>(
         [mesh = std::move(mesh), material = std::move(material)](const FrameContext& /*context*/,
@@ -775,20 +776,30 @@ TEST_F(RendererTest, incompatibleMeshFailsRenderThread)
 
 /**
  * A draw without a mesh or a material is dropped when the packet is built, and the other draws
- * of the frame are drawn: the valid draw's pipeline is in the cache afterwards.
+ * of the frame are drawn: the valid draw's pipeline is in the cache afterwards. A default handle is
+ * empty, which is what "without" means, and a created one is not; a copy shares the mesh.
  */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST_F(RendererTest, drawWithoutMeshOrMaterialIsSkipped)
 {
     auto renderer = makeRenderer();
     auto material = renderer->createMaterial({.shader = "WorldSpace"});
     auto mesh     = makeMesh(*renderer, compatibleLayout());
 
+    EXPECT_FALSE(Mesh{});
+    EXPECT_FALSE(Material{});
+    EXPECT_NE(makeMesh(*renderer, compatibleLayout()), mesh);
+    ASSERT_TRUE(mesh);
+    ASSERT_TRUE(material);
+    EXPECT_EQ(Mesh{mesh}, mesh);
+
     renderer->addRenderable(std::make_shared<LambdaRenderable>(
         [&](const FrameContext& /*context*/, RenderQueue& queue)
         {
-            queue.submit(nullptr, nullptr, Math::Matrix4x4f{1.0f});
-            queue.submit(mesh, nullptr, Math::Matrix4x4f{1.0f});
-            queue.submit(nullptr, material, Math::Matrix4x4f{1.0f});
+            queue.submit({}, {}, Math::Matrix4x4f{1.0f});
+            queue.submit(mesh, {}, Math::Matrix4x4f{1.0f});
+            queue.submit({}, material, Math::Matrix4x4f{1.0f});
             queue.submit(mesh, material, Math::Matrix4x4f{1.0f});
         }));
     renderer->start();
@@ -930,36 +941,38 @@ TEST_F(RendererTest, createMeshRejectsMalformedDescription)
 
     auto renderer = makeRenderer();
 
-    EXPECT_THROW(renderer->createMesh({.stride = kStride, .attributes = {float2}}),
+    EXPECT_THROW(std::ignore = renderer->createMesh({.stride = kStride, .attributes = {float2}}),
                  std::invalid_argument);
-    EXPECT_THROW(renderer->createMesh({.vertices = bytes, .attributes = {float2}}),
+    EXPECT_THROW(std::ignore = renderer->createMesh({.vertices = bytes, .attributes = {float2}}),
                  std::invalid_argument);
-    EXPECT_THROW(renderer->createMesh({.vertices   = std::span{bytes}.first(kStride + 1u),
-                                       .stride     = kStride,
-                                       .attributes = {float2}}),
+    EXPECT_THROW(std::ignore =
+                     renderer->createMesh({.vertices   = std::span{bytes}.first(kStride + 1u),
+                                           .stride     = kStride,
+                                           .attributes = {float2}}),
                  std::invalid_argument);
     EXPECT_THROW(
-        renderer->createMesh(
+        std::ignore = renderer->createMesh(
             {.vertices = bytes, .stride = kStride, .attributes = {{VertexFormat::eFloat2, 4u}}}),
         std::invalid_argument);
-    EXPECT_THROW(renderer->createMesh({.vertices   = bytes,
-                                       .stride     = kStride,
-                                       .attributes = std::vector(9u, VertexAttribute{})}),
+    EXPECT_THROW(std::ignore =
+                     renderer->createMesh({.vertices   = bytes,
+                                           .stride     = kStride,
+                                           .attributes = std::vector(9u, VertexAttribute{})}),
                  std::invalid_argument);
 
     // A stride or an offset off a multiple of 4 puts a component at a misaligned address.
     constexpr std::size_t        kOddStride = 10u;
     const std::vector<std::byte> oddBytes(2u * kOddStride);
-    EXPECT_THROW(renderer->createMesh({.vertices   = oddBytes,
-                                       .stride     = kOddStride,
-                                       .attributes = {{VertexFormat::eFloat2, 0u}}}),
+    EXPECT_THROW(std::ignore = renderer->createMesh({.vertices   = oddBytes,
+                                                     .stride     = kOddStride,
+                                                     .attributes = {{VertexFormat::eFloat2, 0u}}}),
                  std::invalid_argument);
     // The attribute fits the stride (2 + 8 <= 12), so only the multiple-of-4 rule rejects it.
     constexpr std::size_t        kFitStride = 12u;
     const std::vector<std::byte> fitBytes(2u * kFitStride);
-    EXPECT_THROW(renderer->createMesh({.vertices   = fitBytes,
-                                       .stride     = kFitStride,
-                                       .attributes = {{VertexFormat::eFloat2, 2u}}}),
+    EXPECT_THROW(std::ignore = renderer->createMesh({.vertices   = fitBytes,
+                                                     .stride     = kFitStride,
+                                                     .attributes = {{VertexFormat::eFloat2, 2u}}}),
                  std::invalid_argument);
 
     // One vertex whose stride is the device maximum plus 4. Devices with a huge maximum would make
@@ -970,16 +983,17 @@ TEST_F(RendererTest, createMeshRejectsMalformedDescription)
     if (maxStride <= kLargestTestable)
     {
         const std::vector<std::byte> hugeVertex(std::size_t{maxStride} + 4u);
-        EXPECT_THROW(renderer->createMesh({.vertices   = hugeVertex,
-                                           .stride     = maxStride + 4u,
-                                           .attributes = {{VertexFormat::eFloat2, 0u}}}),
+        EXPECT_THROW(std::ignore =
+                         renderer->createMesh({.vertices   = hugeVertex,
+                                               .stride     = maxStride + 4u,
+                                               .attributes = {{VertexFormat::eFloat2, 0u}}}),
                      std::invalid_argument);
     }
 
-    const MeshPtr mesh =
+    const Mesh mesh =
         renderer->createMesh({.vertices = bytes, .stride = kStride, .attributes = {float2}});
     ASSERT_TRUE(mesh);
-    EXPECT_EQ(mesh->vertexCount, 2u);
+    EXPECT_EQ(HandleTestAccess::data(mesh).vertexCount, 2u);
 }
 
 /** Indices are Renderer's to check: without robustBufferAccess an index past the vertices reads
@@ -998,23 +1012,23 @@ TEST_F(RendererTest, createMeshRejectsMalformedIndices)
     auto renderer = makeRenderer();
 
     EXPECT_THROW(
-        renderer->createMesh(
+        std::ignore = renderer->createMesh(
             {.vertices = bytes, .indices = quad, .stride = kStride, .attributes = {float2}}),
         std::invalid_argument);
     EXPECT_THROW(
-        renderer->createMesh(
+        std::ignore = renderer->createMesh(
             {.vertices = bytes, .indices = pastEnd, .stride = kStride, .attributes = {float2}}),
         std::invalid_argument);
 
-    const MeshPtr indexed = renderer->createMesh(
+    const Mesh indexed = renderer->createMesh(
         {.vertices = bytes, .indices = triangle, .stride = kStride, .attributes = {float2}});
     ASSERT_TRUE(indexed);
-    EXPECT_EQ(indexed->indexCount, 3u);
+    EXPECT_EQ(HandleTestAccess::data(indexed).indexCount, 3u);
 
-    const MeshPtr plain =
+    const Mesh plain =
         renderer->createMesh({.vertices = bytes, .stride = kStride, .attributes = {float2}});
     ASSERT_TRUE(plain);
-    EXPECT_EQ(plain->indexCount, 0u);
+    EXPECT_EQ(HandleTestAccess::data(plain).indexCount, 0u);
 }
 
 /**
@@ -1036,12 +1050,12 @@ TEST_F(RendererTest, createMeshStagesIndicesAfterVertices)
 
     auto renderer = makeRenderer();
 
-    const MeshPtr mesh = renderer->createMesh({.vertices   = vertices,
-                                               .indices    = indices,
-                                               .stride     = kStride,
-                                               .attributes = {{VertexFormat::eFloat2, 0u}}});
+    const Mesh mesh = renderer->createMesh({.vertices   = vertices,
+                                            .indices    = indices,
+                                            .stride     = kStride,
+                                            .attributes = {{VertexFormat::eFloat2, 0u}}});
     ASSERT_TRUE(mesh);
-    EXPECT_EQ(mesh->indexOffset, 36u);
+    EXPECT_EQ(HandleTestAccess::data(mesh).indexOffset, 36u);
 
     // The bytes wait in the staging buffer, which the render thread copies into the buffer of
     // the mesh. Reading it back through mapForWrite() is meant for writing; it is legal
@@ -1049,12 +1063,15 @@ TEST_F(RendererTest, createMeshStagesIndicesAfterVertices)
     ASSERT_EQ(RendererTestAccess::pendingUploadCount(*renderer), 1u);
     const auto staging = RendererTestAccess::pendingStaging(*renderer, 0u).lock();
     ASSERT_TRUE(staging);
-    EXPECT_EQ(staging->byteSize(), mesh->indexOffset + sizeof(indices));
-    EXPECT_EQ(mesh->buffer->byteSize(), staging->byteSize());
+    EXPECT_EQ(staging->byteSize(), HandleTestAccess::data(mesh).indexOffset + sizeof(indices));
+    EXPECT_EQ(HandleTestAccess::data(mesh).buffer->byteSize(), staging->byteSize());
     const auto mapping = staging->mapForWrite();
-    ASSERT_GE(mapping.size, mesh->indexOffset + sizeof(indices));
+    ASSERT_GE(mapping.size, HandleTestAccess::data(mesh).indexOffset + sizeof(indices));
     EXPECT_EQ(std::memcmp(mapping.data, vertices.data(), vertices.size()), 0);
-    EXPECT_EQ(std::memcmp(mapping.data + mesh->indexOffset, indices, sizeof(indices)), 0);
+    EXPECT_EQ(std::memcmp(mapping.data + HandleTestAccess::data(mesh).indexOffset,
+                          indices,
+                          sizeof(indices)),
+              0);
 }
 
 /** An indexed mesh reaches the render thread; the validation layer checks the draw. */
@@ -1104,11 +1121,11 @@ TEST_F(RendererTest, repeatedBindsAreSkipped)
                                      .stride     = gQuadStride,
                                      .attributes = compatibleLayout()});
     };
-    const MeshPtr     meshA = indexed();
-    const MeshPtr     meshB = makeMesh(*renderer, compatibleLayout());
-    const MeshPtr     meshC = indexed();
-    const MaterialPtr first = renderer->createMaterial({.shader = "WorldSpace"});
-    const MaterialPtr other = renderer->createMaterial({.shader = "ScreenSpacePositionColor"});
+    const Mesh     meshA = indexed();
+    const Mesh     meshB = makeMesh(*renderer, compatibleLayout());
+    const Mesh     meshC = indexed();
+    const Material first = renderer->createMaterial({.shader = "WorldSpace"});
+    const Material other = renderer->createMaterial({.shader = "ScreenSpacePositionColor"});
 
     // Only the first frame draws, so the counts are those of one frame.
     bool drawn = false;
@@ -1147,7 +1164,8 @@ TEST_F(RendererTest, createMaterialChecksShaderTexturesAndParameterSize)
 {
     auto renderer = makeRenderer();
 
-    EXPECT_THROW(renderer->createMaterial({.shader = "NoSuchShader"}), std::invalid_argument);
+    EXPECT_THROW(std::ignore = renderer->createMaterial({.shader = "NoSuchShader"}),
+                 std::invalid_argument);
 
     // The parameters are a uniform block, not push constants: size 0 to 16384 bytes are fine.
     for (const std::size_t size :
@@ -1157,30 +1175,36 @@ TEST_F(RendererTest, createMaterialChecksShaderTexturesAndParameterSize)
             {.shader = "WorldSpace", .parameters = std::vector<std::byte>(size)}))
             << size << " bytes";
     }
-    EXPECT_THROW(
-        renderer->createMaterial({.shader     = "WorldSpace",
-                                  .parameters = std::vector<std::byte>(gMaxParametersSize + 1u)}),
-        std::invalid_argument);
+    EXPECT_THROW(std::ignore = renderer->createMaterial(
+                     {.shader     = "WorldSpace",
+                      .parameters = std::vector<std::byte>(gMaxParametersSize + 1u)}),
+                 std::invalid_argument);
 
-    // At most four textures, none null.
-    const TexturePtr texture = makeTexture(*renderer);
+    // At most four textures, none empty.
+    const Texture texture = makeTexture(*renderer);
+    EXPECT_FALSE(Texture{});
+    EXPECT_TRUE(texture);
+    EXPECT_EQ(Texture{texture}, texture);
+    EXPECT_NE(makeTexture(*renderer), texture);
     EXPECT_TRUE(renderer->createMaterial(
-        {.shader = "Textured", .textures = std::vector<TexturePtr>(gMaxTextures, texture)}));
+        {.shader = "Textured", .textures = std::vector<Texture>(gMaxTextures, texture)}));
     EXPECT_THROW(
-        renderer->createMaterial({.shader   = "Textured",
-                                  .textures = std::vector<TexturePtr>(gMaxTextures + 1u, texture)}),
+        std::ignore = renderer->createMaterial(
+            {.shader = "Textured", .textures = std::vector<Texture>(gMaxTextures + 1u, texture)}),
         std::invalid_argument);
-    EXPECT_THROW(renderer->createMaterial({.shader = "Textured", .textures = {texture, nullptr}}),
+    EXPECT_THROW(std::ignore =
+                     renderer->createMaterial({.shader = "Textured", .textures = {texture, {}}}),
                  std::invalid_argument);
 
     // The shader reads 128 bytes of push constants, more than the 84 the renderer pushes, however
     // many parameters the material has.
     const WideShaderDirectory wide;
     auto                      wideRenderer = makeRenderer(wide.path());
-    EXPECT_THROW(wideRenderer->createMaterial({.shader = "Wide"}), std::invalid_argument);
-    EXPECT_THROW(
-        wideRenderer->createMaterial({.shader = "Wide", .parameters = std::vector<std::byte>(64u)}),
-        std::invalid_argument);
+    EXPECT_THROW(std::ignore = wideRenderer->createMaterial({.shader = "Wide"}),
+                 std::invalid_argument);
+    EXPECT_THROW(std::ignore = wideRenderer->createMaterial(
+                     {.shader = "Wide", .parameters = std::vector<std::byte>(64u)}),
+                 std::invalid_argument);
 }
 
 // The score comes from the gtest assertion macros.
@@ -1190,23 +1214,30 @@ TEST_F(RendererTest, createTextureRejectsMalformedDescription)
     auto renderer = makeRenderer();
 
     const std::vector<std::byte> pixels(std::size_t{2u} * 3u * gPixelSize);
-    EXPECT_NO_THROW(renderer->createTexture({.pixels = pixels, .width = 2u, .height = 3u}));
-    EXPECT_NO_THROW(renderer->createTexture(
-        {.pixels = pixels, .width = 2u, .height = 3u, .format = TextureFormat::eRGBA8Unorm}));
+    EXPECT_NO_THROW(std::ignore =
+                        renderer->createTexture({.pixels = pixels, .width = 2u, .height = 3u}));
+    EXPECT_NO_THROW(
+        std::ignore = renderer->createTexture(
+            {.pixels = pixels, .width = 2u, .height = 3u, .format = TextureFormat::eRGBA8Unorm}));
 
-    EXPECT_THROW(renderer->createTexture({.width = 2u, .height = 3u}), std::invalid_argument);
-    // No pixels for no extent are still no texture.
-    EXPECT_THROW(renderer->createTexture({}), std::invalid_argument);
-    EXPECT_THROW(renderer->createTexture({.pixels = pixels, .width = 0u, .height = 3u}),
+    EXPECT_THROW(std::ignore = renderer->createTexture({.width = 2u, .height = 3u}),
                  std::invalid_argument);
-    EXPECT_THROW(renderer->createTexture({.pixels = pixels, .width = 2u, .height = 0u}),
+    // No pixels for no extent are still no texture.
+    EXPECT_THROW(std::ignore = renderer->createTexture({}), std::invalid_argument);
+    EXPECT_THROW(std::ignore =
+                     renderer->createTexture({.pixels = pixels, .width = 0u, .height = 3u}),
+                 std::invalid_argument);
+    EXPECT_THROW(std::ignore =
+                     renderer->createTexture({.pixels = pixels, .width = 2u, .height = 0u}),
                  std::invalid_argument);
     // One past the device limit: the pixels fit the byte count, the image does not exist.
     const std::uint32_t tooWide = RendererTestAccess::limits(*renderer).maxImageDimension2D + 1u;
     const std::vector<std::byte> tooWidePixels(std::size_t{tooWide} * gPixelSize);
-    EXPECT_THROW(renderer->createTexture({.pixels = tooWidePixels, .width = tooWide, .height = 1u}),
+    EXPECT_THROW(std::ignore = renderer->createTexture(
+                     {.pixels = tooWidePixels, .width = tooWide, .height = 1u}),
                  std::invalid_argument);
-    EXPECT_THROW(renderer->createTexture({.pixels = tooWidePixels, .width = 1u, .height = tooWide}),
+    EXPECT_THROW(std::ignore = renderer->createTexture(
+                     {.pixels = tooWidePixels, .width = 1u, .height = tooWide}),
                  std::invalid_argument);
 #ifndef _WIN32
     // A square over the limit whose pixels have the exact byte count (4 GiB and a bit). The extent
@@ -1218,19 +1249,21 @@ TEST_F(RendererTest, createTextureRejectsMalformedDescription)
     {
         const InaccessibleBytes huge{std::size_t{kHugeSide} * kHugeSide * gPixelSize};
         ASSERT_NE(huge.data(), nullptr);
-        EXPECT_THROW(renderer->createTexture(
+        EXPECT_THROW(std::ignore = renderer->createTexture(
                          {.pixels = huge.bytes(), .width = kHugeSide, .height = kHugeSide}),
                      std::invalid_argument);
     }
 #endif
     // One byte too few, one byte too many, and the right size for the other extent.
     EXPECT_THROW(
-        renderer->createTexture(
+        std::ignore = renderer->createTexture(
             {.pixels = std::span{pixels}.first(pixels.size() - 1u), .width = 2u, .height = 3u}),
         std::invalid_argument);
-    EXPECT_THROW(renderer->createTexture({.pixels = pixels, .width = 2u, .height = 2u}),
+    EXPECT_THROW(std::ignore =
+                     renderer->createTexture({.pixels = pixels, .width = 2u, .height = 2u}),
                  std::invalid_argument);
-    EXPECT_THROW(renderer->createTexture({.pixels = pixels, .width = 6u, .height = 6u}),
+    EXPECT_THROW(std::ignore =
+                     renderer->createTexture({.pixels = pixels, .width = 6u, .height = 6u}),
                  std::invalid_argument);
 
     // Only the two valid calls left an upload.
@@ -1259,10 +1292,10 @@ TEST_F(RendererTest, meshBufferOutlivesMeshWhileFrameInFlight)
 {
     auto renderer = makeRenderer();
 
-    MeshPtr mesh        = makeMesh(*renderer, compatibleLayout());
-    auto    weakMesh    = std::weak_ptr<const Mesh>{mesh};
-    auto    weakBuffer  = std::weak_ptr<Graphics::Vulkan::Buffer>{mesh->buffer};
-    auto    weakStaging = RendererTestAccess::pendingStaging(*renderer, 0u);
+    Mesh mesh        = makeMesh(*renderer, compatibleLayout());
+    auto weakMesh    = HandleTestAccess::weak(mesh);
+    auto weakBuffer  = std::weak_ptr<Graphics::Vulkan::Buffer>{HandleTestAccess::data(mesh).buffer};
+    auto weakStaging = RendererTestAccess::pendingStaging(*renderer, 0u);
 
     // Upload first, and wait for the frame that recorded it to be gone: its staging buffer is
     // released with it, and so is every hold of the upload on the buffer.
@@ -1280,9 +1313,9 @@ TEST_F(RendererTest, meshBufferOutlivesMeshWhileFrameInFlight)
         {
             // The first frame draws the mesh and lets go of it; later frames draw nothing.
             queue.submit(mesh, material, Math::Matrix4x4f{1.0f});
-            mesh.reset();
+            mesh = {};
         }));
-    mesh.reset();
+    mesh = {};
     renderer->submitFrame({});
     renderer->submitFrame({});
     EXPECT_FALSE(renderer->stop());
@@ -1316,10 +1349,11 @@ TEST_F(RendererTest, textureOutlivesMaterialWhileFrameInFlight)
 {
     auto renderer = makeRenderer();
 
-    TexturePtr texture     = makeTexture(*renderer);
-    auto       weakTexture = std::weak_ptr<const Texture>{texture};
-    auto       weakImage   = std::weak_ptr<Graphics::Vulkan::Texture>{texture->texture};
-    auto       weakStaging = RendererTestAccess::pendingStaging(*renderer, 0u);
+    Texture texture     = makeTexture(*renderer);
+    auto    weakTexture = HandleTestAccess::weak(texture);
+    auto    weakImage =
+        std::weak_ptr<Graphics::Vulkan::Texture>{HandleTestAccess::data(texture).texture};
+    auto weakStaging = RendererTestAccess::pendingStaging(*renderer, 0u);
 
     // Upload first, and wait for the frame that recorded it to be gone: its staging buffer is
     // released with it.
@@ -1339,8 +1373,8 @@ TEST_F(RendererTest, textureOutlivesMaterialWhileFrameInFlight)
             // The first frame draws the mesh and lets go of it and the material; later frames
             // draw nothing.
             queue.submit(mesh, material, Math::Matrix4x4f{1.0f});
-            mesh.reset();
-            material.reset();
+            mesh     = {};
+            material = {};
         }));
     renderer->submitFrame({});
     renderer->submitFrame({});
@@ -1369,16 +1403,16 @@ TEST_F(RendererTest, parameterBlockOutlivesMaterialWhileFrameInFlight)
 
     std::weak_ptr<Graphics::Vulkan::UniformBlock> weakBlock;
     {
-        MaterialPtr material = renderer->createMaterial(
+        Material material = renderer->createMaterial(
             {.shader = "WorldSpace", .parameters = std::vector<std::byte>(gTintSize)});
-        weakBlock = material->block;
+        weakBlock = HandleTestAccess::data(material).block;
         renderer->addRenderable(std::make_shared<LambdaRenderable>(
             [mesh = makeMesh(*renderer, compatibleLayout()), material = std::move(material)](
                 const FrameContext& /*context*/, RenderQueue& queue) mutable
             {
                 queue.submit(mesh, material, Math::Matrix4x4f{1.0f});
-                mesh.reset();
-                material.reset();
+                mesh     = {};
+                material = {};
             }));
     }
 
@@ -1525,12 +1559,12 @@ TEST_F(RendererTest, createTextureWhileRendering)
     auto renderer = makeRenderer();
     auto mesh     = makeTexturedMesh(*renderer);
 
-    std::mutex  currentMutex;
-    MaterialPtr current;
+    std::mutex currentMutex;
+    Material   current;
     renderer->addRenderable(std::make_shared<LambdaRenderable>(
         [&](const FrameContext& /*context*/, RenderQueue& queue)
         {
-            MaterialPtr material;
+            Material material;
             {
                 const std::scoped_lock lock{currentMutex};
                 material = current;
@@ -1547,7 +1581,7 @@ TEST_F(RendererTest, createTextureWhileRendering)
                             {
                                 for (int i = 0; i < kTextures; ++i)
                                 {
-                                    MaterialPtr material =
+                                    Material material =
                                         makeTexturedMaterial(*renderer, makeTexture(*renderer));
                                     const std::scoped_lock lock{currentMutex};
                                     current = std::move(material);
@@ -1568,7 +1602,7 @@ TEST_F(RendererTest, createTextureWhileRendering)
 
     {
         const std::scoped_lock lock{currentMutex};
-        current.reset();
+        current = {};
     }
     EXPECT_TRUE(becomesTrue(
         [&]

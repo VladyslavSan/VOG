@@ -221,7 +221,7 @@ Renderer::resize(Extent extent)
     mRequestedExtent.store(extent);
 }
 
-MeshPtr
+Mesh
 Renderer::createMesh(const MeshDescription& description)
 {
     if (description.vertices.empty() || description.stride == 0u ||
@@ -324,16 +324,16 @@ Renderer::createMesh(const MeshDescription& description)
         mPendingUploads.push_back({.staging = std::move(staging), .destination = buffer});
     }
 
-    return std::make_shared<const Mesh>(
-        Mesh{.buffer      = std::move(buffer),
-             .vertexCount = vertexCount,
-             .stride      = description.stride,
-             .attributes  = description.attributes,
-             .indexCount  = static_cast<std::uint32_t>(description.indices.size()),
-             .indexOffset = indexOffset});
+    return Mesh{std::make_shared<const Detail::MeshData>(
+        Detail::MeshData{.buffer      = std::move(buffer),
+                         .vertexCount = vertexCount,
+                         .stride      = description.stride,
+                         .attributes  = description.attributes,
+                         .indexCount  = static_cast<std::uint32_t>(description.indices.size()),
+                         .indexOffset = indexOffset})};
 }
 
-TexturePtr
+Texture
 Renderer::createTexture(const TextureDescription& description)
 {
     if (description.width == 0u || description.height == 0u)
@@ -373,10 +373,11 @@ Renderer::createTexture(const TextureDescription& description)
         mPendingUploads.push_back({.staging = std::move(staging), .destination = texture});
     }
 
-    return std::make_shared<const Texture>(Texture{.texture = std::move(texture)});
+    return Texture{std::make_shared<const Detail::TextureData>(
+        Detail::TextureData{.texture = std::move(texture)})};
 }
 
-MaterialPtr
+Material
 Renderer::createMaterial(MaterialDescription description)
 {
     if (description.parameters.size() > gMaxParametersSize)
@@ -393,12 +394,12 @@ Renderer::createMaterial(MaterialDescription description)
                                                 description.textures.size())};
     }
     if (std::ranges::any_of(description.textures,
-                            [](const TexturePtr& texture)
+                            [](const Texture& texture)
                             {
                                 return !texture;
                             }))
     {
-        throw std::invalid_argument{"A material texture is null."};
+        throw std::invalid_argument{"A material texture is empty."};
     }
 
     Graphics::Vulkan::ShaderProgramPtr program = mShaderProgramCache->get(description.shader);
@@ -418,10 +419,10 @@ Renderer::createMaterial(MaterialDescription description)
         }
     }
 
-    return std::make_shared<const Material>(
-        Material{.program  = std::move(program),
-                 .block    = mVulkanDevice->createUniformBlock(mHeap, description.parameters),
-                 .textures = std::move(description.textures)});
+    return Material{std::make_shared<const Detail::MaterialData>(Detail::MaterialData{
+        .program  = std::move(program),
+        .block    = mVulkanDevice->createUniformBlock(mHeap, description.parameters),
+        .textures = std::move(description.textures)})};
 }
 
 void
@@ -465,7 +466,7 @@ Renderer::resolvePipelines(const RenderQueue& draws)
     for (const RenderQueue::Draw& draw : draws.mDraws)
     {
         mPipelines.push_back(
-            mPipelineCache->get(*draw.mesh, *draw.material, mSwapchain->getFormat()));
+            mPipelineCache->get(*draw.mesh.mData, *draw.material.mData, mSwapchain->getFormat()));
     }
 }
 
@@ -614,8 +615,9 @@ Renderer::renderFrame(FramePacket packet)
 
             for (std::size_t i = 0u; i < packet.draws.mDraws.size(); ++i)
             {
-                const RenderQueue::Draw& draw     = packet.draws.mDraws[i];
-                const Material&          material = *draw.material;
+                const RenderQueue::Draw&    draw     = packet.draws.mDraws[i];
+                const Detail::MeshData&     mesh     = *draw.mesh.mData;
+                const Detail::MaterialData& material = *draw.material.mData;
 
                 // The matrix, then the heap indices of the parameter block and the textures;
                 // createMaterial checked that the shader's ranges end inside what is filled here.
@@ -632,7 +634,7 @@ Renderer::renderFrame(FramePacket packet)
                      ++textureIndex)
                 {
                     const std::shared_ptr<Graphics::Vulkan::Texture>& texture =
-                        material.textures[textureIndex]->texture;
+                        material.textures[textureIndex].mData->texture;
                     const std::uint32_t index = texture->heapIndex();
                     std::memcpy(pushData.data() + gTexturesOffset + (textureIndex * sizeof(index)),
                                 &index,
@@ -640,15 +642,15 @@ Renderer::renderFrame(FramePacket packet)
                     pass.useResource(texture);
                 }
                 pass.pushData(0u, pushData);
-                binder.vertexBuffer(draw.mesh->buffer);
-                if (draw.mesh->indexCount == 0u)
+                binder.vertexBuffer(mesh.buffer);
+                if (mesh.indexCount == 0u)
                 {
-                    pass.draw(draw.mesh->vertexCount, 1, 0, 0);
+                    pass.draw(mesh.vertexCount, 1, 0, 0);
                 }
                 else
                 {
-                    binder.indexBuffer(draw.mesh->buffer, draw.mesh->indexOffset);
-                    pass.drawIndexed(draw.mesh->indexCount, 1, 0, 0, 0);
+                    binder.indexBuffer(mesh.buffer, mesh.indexOffset);
+                    pass.drawIndexed(mesh.indexCount, 1, 0, 0, 0);
                 }
             }
         }

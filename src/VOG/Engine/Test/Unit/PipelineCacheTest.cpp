@@ -18,7 +18,7 @@ namespace
 class PipelineCacheTest : public testing::Test
 {
 protected:
-    Material
+    Detail::MaterialData
     material(const char* shader) const
     {
         return {.program = mShaderPrograms.get(shader)};
@@ -26,7 +26,9 @@ protected:
 
     /** The cache keeps the pipeline, so the pointer stays valid. */
     const Graphics::Vulkan::GraphicsPipeline*
-    pipeline(const Mesh& mesh, const Material& material, vk::Format colorFormat)
+    pipeline(const Detail::MeshData&     mesh,
+             const Detail::MaterialData& material,
+             vk::Format                  colorFormat)
     {
         return mCache.get(mesh, material, colorFormat).get();
     }
@@ -38,14 +40,14 @@ protected:
     Graphics::ShaderProgramCache mShaderPrograms{mDevice, VOG_TEST_SHADER_PATH};
     PipelineCache                mCache{mDevice};
 
-    const Mesh mQuad{.stride     = 24u,
-                     .attributes = {{VertexFormat::eFloat2, 0u}, {VertexFormat::eFloat4, 8u}}};
+    const Detail::MeshData mQuad{
+        .stride = 24u, .attributes = {{VertexFormat::eFloat2, 0u}, {VertexFormat::eFloat4, 8u}}};
 };
 } // namespace
 
 TEST_F(PipelineCacheTest, sameLayoutProgramAndFormatShareAPipeline)
 {
-    const Material worldSpace = material("WorldSpace");
+    const Detail::MaterialData worldSpace = material("WorldSpace");
 
     const auto* first = pipeline(mQuad, worldSpace, vk::Format::eB8G8R8A8Unorm);
 
@@ -56,7 +58,7 @@ TEST_F(PipelineCacheTest, sameLayoutProgramAndFormatShareAPipeline)
 
 TEST_F(PipelineCacheTest, differentFormatLayoutOrProgramBuildsAnotherPipeline)
 {
-    const Material worldSpace = material("WorldSpace");
+    const Detail::MaterialData worldSpace = material("WorldSpace");
 
     const auto* first = pipeline(mQuad, worldSpace, vk::Format::eB8G8R8A8Unorm);
 
@@ -65,12 +67,12 @@ TEST_F(PipelineCacheTest, differentFormatLayoutOrProgramBuildsAnotherPipeline)
               first);
 
     // Each field of the vertex layout alone.
-    const Mesh wider{.stride     = 32u,
-                     .attributes = {{VertexFormat::eFloat2, 0u}, {VertexFormat::eFloat4, 8u}}};
+    const Detail::MeshData wider{
+        .stride = 32u, .attributes = {{VertexFormat::eFloat2, 0u}, {VertexFormat::eFloat4, 8u}}};
     EXPECT_NE(pipeline(wider, worldSpace, vk::Format::eB8G8R8A8Unorm), first);
 
-    const Mesh swapped{.stride     = 24u,
-                       .attributes = {{VertexFormat::eFloat4, 0u}, {VertexFormat::eFloat2, 16u}}};
+    const Detail::MeshData swapped{
+        .stride = 24u, .attributes = {{VertexFormat::eFloat4, 0u}, {VertexFormat::eFloat2, 16u}}};
     EXPECT_NE(pipeline(swapped, worldSpace, vk::Format::eB8G8R8A8Unorm), first);
 }
 } // namespace VOG::Tests

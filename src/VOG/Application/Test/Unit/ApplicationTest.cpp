@@ -421,7 +421,8 @@ TEST_F(ApplicationRunTest, applicationTeardownRunsOnDestroyWhileRendererLives)
             rendererGoneSeen = true;
             return;
         }
-        materialCreated = raw->getRenderer().createMaterial({.shader = "WorldSpace"}) != nullptr;
+        materialCreated =
+            static_cast<bool>(raw->getRenderer().createMaterial({.shader = "WorldSpace"}));
     };
     const Watchdog watchdog;
 

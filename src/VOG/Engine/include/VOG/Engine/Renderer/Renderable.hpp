@@ -21,11 +21,11 @@ class RenderQueue
 {
 public:
     /**
-     * Adds a draw. A draw without a mesh or without a material is removed when the frame is
+     * Adds a draw. A draw with an empty mesh or an empty material is removed when the frame is
      * submitted.
      */
     void
-    submit(MeshPtr mesh, MaterialPtr material, const Math::Matrix4x4f& world)
+    submit(Mesh mesh, Material material, const Math::Matrix4x4f& world)
     {
         mDraws.push_back(
             {.mesh = std::move(mesh), .material = std::move(material), .world = world});
@@ -47,8 +47,8 @@ private:
 
     struct Draw
     {
-        MeshPtr          mesh;
-        MaterialPtr      material;
+        Mesh             mesh;
+        Material         material;
         Math::Matrix4x4f world{1.0f};
     };
 
