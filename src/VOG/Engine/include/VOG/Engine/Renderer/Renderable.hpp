@@ -6,12 +6,30 @@
 #include <VOG/Engine/Renderer/Mesh.hpp>
 #include <VOG/Math/Math.hpp>
 
+#include <stdexcept>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace VOG::Engine
 {
 class Renderer;
+
+namespace Detail
+{
+class DrawCheck;
+} // namespace Detail
+
+/**
+ * A mesh and a material that cannot be drawn together: the mesh does not provide a vertex input
+ * of the shader of the material. The message names the object, the mesh with its layout, the shader
+ * and the first input that is missing.
+ */
+class DrawError : public std::invalid_argument
+{
+public:
+    using std::invalid_argument::invalid_argument;
+};
 
 /**
  * The draws and the camera of one frame, filled by Renderable::onDraw(). Each draw is one mesh
@@ -21,15 +39,18 @@ class RenderQueue
 {
 public:
     /**
-     * Adds a draw. A draw with an empty mesh or an empty material is removed when the frame is
-     * submitted.
+     * Adds a draw. A draw with an empty mesh or an empty material is dropped silently. Otherwise
+     * checks that the mesh provides every vertex input of the shader of the material: once for
+     * each pair of vertex layout and shader, the verdict is kept, so a draw that fails the check
+     * fails it again each time it is submitted, under the name it is given then.
+     *
+     * @param debugName Names the object that draws, for the DrawError; not kept.
+     * @throws DrawError if the mesh cannot feed the shader. The draw is not added.
      */
-    void
-    submit(Mesh mesh, Material material, const Math::Matrix4x4f& world)
-    {
-        mDraws.push_back(
-            {.mesh = std::move(mesh), .material = std::move(material), .world = world});
-    }
+    void submit(Mesh                    mesh,
+                Material                material,
+                const Math::Matrix4x4f& world,
+                std::string_view        debugName = {});
 
     /**
      * Sets the view the frame is drawn with. The last call of the frame wins; a frame without a
@@ -43,6 +64,7 @@ public:
 
 private:
     friend class Renderer;
+    friend struct FramePacket;
     friend struct DrawRecording;
     friend struct RenderQueueTestAccess;
 
@@ -53,8 +75,16 @@ private:
         Math::Matrix4x4f world{1.0f};
     };
 
-    std::vector<Draw> mDraws;
-    CameraView        mCamera;
+    /** @p recycled is the empty vector of the draws of an earlier frame: its capacity is reused. */
+    RenderQueue(Detail::DrawCheck& check, std::vector<Draw> recycled)
+        : mCheck{&check}
+        , mDraws{std::move(recycled)}
+    {
+    }
+
+    Detail::DrawCheck* mCheck;
+    std::vector<Draw>  mDraws;
+    CameraView         mCamera;
 };
 
 /**

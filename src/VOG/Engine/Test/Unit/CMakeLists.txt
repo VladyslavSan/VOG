@@ -10,12 +10,13 @@ target_sources(VOG.Engine.Unit
         FrameContextTest.cpp
         FramePacketQueueTest.cpp
         MaterialTest.cpp
-        PipelineCacheTest.cpp
+        PipelineTableTest.cpp
         RegistryTest.cpp
         RenderQueueTest.cpp
         RendererTest.cpp
         SceneTest.cpp
         TestShaders.hpp
+        UploadQueueTest.cpp
 )
 
 # The renderer compiles every shader of its shader directory when it is constructed. The tests

@@ -16,9 +16,15 @@ namespace VOG::Graphics::Frame
 class FrameObjectManager
 {
 public:
-    FrameObjectManager(const Vulkan::DevicePtr& device,
-                       std::size_t              frameCount,
-                       std::size_t              threadCount);
+    /** How many slots the manager makes, and how many threads record into each of them. A struct,
+     *  because two counts in a row of parameters are easily swapped. */
+    struct Counts
+    {
+        std::size_t frames  = 1u;
+        std::size_t threads = 1u;
+    };
+
+    FrameObjectManager(const Vulkan::DevicePtr& device, Counts counts);
 
     /**
      * The slot the next frame renders into, ready to record: its pools are reset and its previous

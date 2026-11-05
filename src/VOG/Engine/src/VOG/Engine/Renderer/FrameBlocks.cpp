@@ -5,26 +5,22 @@
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/HeapBuffer.hpp>
 
-#include <algorithm>
-
 namespace VOG::Engine
 {
-FrameBlocks::FrameBlocks(Graphics::Vulkan::DevicePtr         device,
-                         Graphics::Vulkan::DescriptorHeapPtr heap)
-    : mDevice{std::move(device)}
-    , mHeap{std::move(heap)}
+FrameBlocks::FrameBlocks(const Graphics::Vulkan::DevicePtr&         device,
+                         const Graphics::Vulkan::DescriptorHeapPtr& heap,
+                         std::size_t                                slotCount)
 {
+    mBlocks.reserve(slotCount);
+    for (std::size_t slot = 0u; slot < slotCount; ++slot)
+    {
+        mBlocks.push_back(device->createHeapBuffer(heap, sizeof(FrameBlock)));
+    }
 }
 
-Graphics::Vulkan::HeapBufferPtr
-FrameBlocks::of(const Graphics::Frame::FrameObjectsPtr& slot)
+const Graphics::Vulkan::HeapBufferPtr&
+FrameBlocks::of(const Graphics::Frame::FrameObjects& slot) const
 {
-    const auto found = std::ranges::find(mBlocks, slot, &decltype(mBlocks)::value_type::first);
-    if (found != mBlocks.end())
-    {
-        return found->second;
-    }
-
-    return mBlocks.emplace_back(slot, mDevice->createHeapBuffer(mHeap, sizeof(FrameBlock))).second;
+    return mBlocks.at(slot.index());
 }
 } // namespace VOG::Engine

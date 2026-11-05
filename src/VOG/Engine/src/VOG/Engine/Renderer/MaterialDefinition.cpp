@@ -1,9 +1,9 @@
 #include "VOG/Engine/Renderer/MaterialDefinition.hpp"
 
 #include "VOG/Engine/Renderer/DrawPushData.hpp"
+#include "VOG/Engine/Renderer/ResourceFactory.hpp"
 #include "VOG/Engine/Renderer/ShaderDefinition.hpp"
 #include "VOG/Engine/Renderer/TextureDefinition.hpp"
-#include <VOG/Engine/Renderer/Renderer.hpp>
 #include <VOG/Graphics/Vulkan/Texture.hpp>
 
 #include <algorithm>
@@ -153,9 +153,9 @@ writeBytes(std::span<std::byte> block, std::uint32_t offset, const Value& value)
 } // namespace
 
 void
-Renderer::writeMaterialValue(std::span<std::byte>  block,
-                             const MaterialMember& member,
-                             const MaterialValue&  value)
+ResourceFactory::writeMaterialValue(std::span<std::byte>  block,
+                                    const MaterialMember& member,
+                                    const MaterialValue&  value)
 {
     std::visit(
         [&](const auto& held)
@@ -189,9 +189,9 @@ Renderer::writeMaterialValue(std::span<std::byte>  block,
 }
 
 std::vector<std::byte>
-Renderer::packMaterialBlock(const Detail::ShaderInfo&          shader,
-                            std::span<const MaterialParameter> parameters,
-                            std::string_view                   context)
+ResourceFactory::packMaterialBlock(const Detail::ShaderInfo&          shader,
+                                   std::span<const MaterialParameter> parameters,
+                                   std::string_view                   context)
 {
     const auto fail = [&context](const std::string& message) -> std::invalid_argument
     {

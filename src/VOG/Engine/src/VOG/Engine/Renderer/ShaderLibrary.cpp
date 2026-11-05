@@ -264,7 +264,8 @@ checkHeapBlocks(const ShaderProgram& program, Detail::ShaderInfo& info)
 std::shared_ptr<const Detail::ShaderInfo>
 load(const Graphics::Vulkan::DevicePtr& device,
      const std::filesystem::path&       directory,
-     const std::string&                 name)
+     const std::string&                 name,
+     std::uint32_t                      programId)
 {
     const std::filesystem::path vertexPath   = directory / (name + std::string{gVertexSuffix});
     const std::filesystem::path fragmentPath = directory / (name + std::string{gFragmentSuffix});
@@ -287,9 +288,10 @@ load(const Graphics::Vulkan::DevicePtr& device,
             }
         };
 
-        auto info     = std::make_shared<Detail::ShaderInfo>();
-        info->name    = name;
-        info->program = ShaderProgram::create(
+        auto info       = std::make_shared<Detail::ShaderInfo>();
+        info->name      = name;
+        info->programId = programId;
+        info->program   = ShaderProgram::create(
             {.vertex   = {.shader = compile(Shader::ShadingStage::eVertex, vertexPath)},
              .fragment = {.shader = compile(Shader::ShadingStage::eFragment, fragmentPath)}});
 
@@ -305,6 +307,13 @@ load(const Graphics::Vulkan::DevicePtr& device,
                 name)});
         }
         checkHeapBlocks(*info->program, *info);
+        for (const auto& input : info->program->stages.vertex.shader->reflection.inAttributes)
+        {
+            info->inputs.push_back({.location      = input.location,
+                                    .locationCount = input.locationCount,
+                                    .name          = input.name,
+                                    .type          = input.format});
+        }
 
         return info;
     }
@@ -370,7 +379,7 @@ ShaderLibrary::ShaderLibrary(const Graphics::Vulkan::DevicePtr& device,
                             gVertexSuffix,
                             directory.string())};
         }
-        mShaders.emplace(name, load(device, directory, name));
+        mShaders.emplace(name, load(device, directory, name, ++mLastProgramId));
     }
 }
 

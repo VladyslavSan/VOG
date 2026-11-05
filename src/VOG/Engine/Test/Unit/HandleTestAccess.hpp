@@ -5,8 +5,10 @@
 #include "VOG/Engine/Renderer/ShaderDefinition.hpp"
 #include "VOG/Engine/Renderer/TextureDefinition.hpp"
 
+#include <cstdint>
 #include <memory>
 #include <utility>
+#include <vector>
 
 namespace VOG::Engine
 {
@@ -16,18 +18,26 @@ namespace VOG::Engine
  */
 struct HandleTestAccess
 {
-    /** A mesh without a Renderer. */
+    /** A mesh without a Renderer, with the layout @p layout, which has the id @p layoutId. */
     static Mesh
-    makeMesh()
+    makeMesh(const VertexLayout& layout = {}, std::uint32_t layoutId = 1u)
     {
-        return Mesh{std::make_shared<const Detail::MeshData>()};
+        return Mesh{std::make_shared<const Detail::MeshData>(
+            Detail::MeshData{.name = "mesh", .layout = layout, .layoutId = layoutId})};
     }
 
-    /** A material without a Renderer. */
+    /** A material without a Renderer, of a shader that reads @p inputs and has the id
+     *  @p programId. */
     static Material
-    makeMaterial()
+    makeMaterial(std::vector<Detail::VertexInput> inputs = {}, std::uint32_t programId = 1u)
     {
-        return Material{std::make_shared<const Detail::MaterialData>()};
+        auto shader       = std::make_shared<Detail::ShaderInfo>();
+        shader->name      = "shader";
+        shader->programId = programId;
+        shader->inputs    = std::move(inputs);
+
+        return Material{std::make_shared<const Detail::MaterialData>(
+            Detail::MaterialData{.shader = std::move(shader)})};
     }
 
     /** The handle must not be empty. */
@@ -59,6 +69,12 @@ struct HandleTestAccess
     weak(const Mesh& mesh)
     {
         return mesh.mData;
+    }
+
+    static std::weak_ptr<const Detail::MaterialData>
+    weak(const Material& material)
+    {
+        return material.mData;
     }
 
     static std::weak_ptr<const Detail::TextureData>

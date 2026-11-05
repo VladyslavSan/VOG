@@ -60,7 +60,8 @@ public:
     /** Any time, before or between run()s. */
     void addRenderable(std::shared_ptr<Engine::Renderable> renderable);
 
-    /** For createMesh and createMaterial; run() owns start and stop. */
+    /** For createMesh and createMaterial. The render thread runs from the construction of the
+     *  renderer, so a resource made here is copied while run() is not called too. */
     Engine::Renderer& getRenderer();
 
     /**
@@ -71,11 +72,12 @@ public:
     Engine::Scene& getScene();
 
     /**
-     * Starts rendering and, on the calling thread, pumps events and runs a frame per iteration
-     * (Scene::update(), then the submission of the draws), until a quit is requested or the
-     * render thread fails; then stops the renderer and rethrows that failure. May be called
-     * again. An exception from a Renderable::onDraw() or from a Behaviour::start() or update()
-     * stops the renderer too and reaches the caller.
+     * On the calling thread, pumps events and runs a frame per iteration (Scene::update(), then
+     * the submission of the draws), until a quit is requested or the render thread fails; then
+     * rethrows that failure. May be called again, unless the render thread failed: that is final,
+     * and every call rethrows the failure at once. An exception from a Renderable::onDraw(), a
+     * DrawError of a draw included, or from a Behaviour::start() or update() ends run() and
+     * reaches the caller; the renderer keeps running.
      *
      * Call it on the main thread. While the OS resizes the window, macOS and Windows keep the
      * calling thread in their own loop instead of returning to run(); an SDL event watch runs

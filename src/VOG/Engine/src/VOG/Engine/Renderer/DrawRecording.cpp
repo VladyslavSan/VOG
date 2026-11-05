@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <ranges>
 #include <span>
 
 namespace VOG::Engine
@@ -77,11 +78,26 @@ private:
 } // namespace
 
 void
+DrawRecording::resolve(const FramePacket&         packet,
+                       PipelineTable&             pipelines,
+                       vk::Format                 colorFormat,
+                       std::vector<ResolvedDraw>& resolved)
+{
+    resolved.clear();
+    for (const auto& [index, draw] : std::views::zip(std::views::iota(0u), packet.draws))
+    {
+        resolved.push_back({.index         = index,
+                            .pipelineIndex = pipelines.resolve(
+                                *draw.mesh.mData, *draw.material.mData, colorFormat)});
+    }
+}
+
+void
 DrawRecording::writeFrameBlock(Graphics::Vulkan::HeapBuffer& block,
                                const FramePacket&            packet,
                                vk::Extent2D                  extent)
 {
-    const CameraView& camera = packet.draws.mCamera;
+    const CameraView& camera = packet.camera;
     const Extent      viewport{.width = extent.width, .height = extent.height};
     const FrameBlock  frameBlock{
         .view           = camera.view(),
@@ -99,7 +115,8 @@ DrawRecording::writeFrameBlock(Graphics::Vulkan::HeapBuffer& block,
 void
 DrawRecording::recordDraws(Graphics::Vulkan::CommandBufferRecorder::RenderingPass& pass,
                            const FramePacket&                                      packet,
-                           std::span<const Graphics::Vulkan::GraphicsPipelinePtr>  pipelines,
+                           std::span<const ResolvedDraw>                           resolved,
+                           const PipelineTable&                                    pipelines,
                            const Graphics::Vulkan::HeapBufferPtr&                  frameBlock,
                            vk::Extent2D                                            extent)
 {
@@ -125,9 +142,9 @@ DrawRecording::recordDraws(Graphics::Vulkan::CommandBufferRecorder::RenderingPas
     PassBinder binder{pass};
     pass.useResource(frameBlock);
 
-    for (std::size_t i = 0u; i < packet.draws.mDraws.size(); ++i)
+    for (const ResolvedDraw& resolvedDraw : resolved)
     {
-        const RenderQueue::Draw&    draw     = packet.draws.mDraws[i];
+        const RenderQueue::Draw&    draw     = packet.draws[resolvedDraw.index];
         const Detail::MeshData&     mesh     = *draw.mesh.mData;
         const Detail::MaterialData& material = *draw.material.mData;
 
@@ -135,7 +152,7 @@ DrawRecording::recordDraws(Graphics::Vulkan::CommandBufferRecorder::RenderingPas
                                     .material = material.block->heapIndex(),
                                     .frame    = frameBlock->heapIndex()};
 
-        binder.pipeline(pipelines[i]);
+        binder.pipeline(pipelines.at(resolvedDraw.pipelineIndex));
         pass.useResource(material.block);
         for (const Texture& texture : material.textures)
         {

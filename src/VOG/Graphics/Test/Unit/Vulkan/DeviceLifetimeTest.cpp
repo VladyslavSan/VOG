@@ -375,7 +375,7 @@ TEST_F(DeviceLifetime, frameObjectsKeepDeviceAlive)
 TEST_F(DeviceLifetime, frameObjectManagerKeepsDeviceAlive)
 {
     auto manager = std::make_unique<Graphics::Frame::FrameObjectManager>(
-        mDevice, std::size_t{2}, std::size_t{1});
+        mDevice, Graphics::Frame::FrameObjectManager::Counts{.frames = 2u, .threads = 1u});
     const auto released = releaseDevice();
 
     expectDependentHoldsDevice(released,

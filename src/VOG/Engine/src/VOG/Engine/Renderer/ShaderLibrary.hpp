@@ -2,6 +2,7 @@
 
 #include <VOG/Graphics/Typedefs.hpp>
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -53,6 +54,10 @@ public:
 
 private:
     std::filesystem::path mDirectory;
+
+    /** The programId of the last shader made. It only grows: a program that replaces another
+     *  gets a new id, so the tables keyed by the id cannot mistake the one for the other. */
+    std::uint32_t mLastProgramId = 0u;
 
     std::map<std::string, std::shared_ptr<const Detail::ShaderInfo>, std::less<>> mShaders;
 };

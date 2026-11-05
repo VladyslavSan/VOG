@@ -11,19 +11,17 @@ namespace
 constexpr std::size_t gDefaultPoolSize = 32;
 }
 
-FrameObjectManager::FrameObjectManager(const Vulkan::DevicePtr& device,
-                                       std::size_t              frameCount,
-                                       std::size_t              threadCount)
+FrameObjectManager::FrameObjectManager(const Vulkan::DevicePtr& device, Counts counts)
     : mDevice{device}
     , mRenderFrame{0u}
 {
-    mFrameObjects.reserve(frameCount);
-    std::generate_n(std::back_inserter(mFrameObjects),
-                    frameCount,
-                    [this, threadCount]()
-                    {
-                        return std::make_shared<FrameObjects>(mDevice, threadCount);
-                    });
+    mFrameObjects.reserve(counts.frames);
+    for (std::size_t index = 0u; index < counts.frames; ++index)
+    {
+        auto& frame =
+            mFrameObjects.emplace_back(std::make_shared<FrameObjects>(mDevice, counts.threads));
+        frame->mIndex = index;
+    }
 }
 
 FrameObjectsPtr

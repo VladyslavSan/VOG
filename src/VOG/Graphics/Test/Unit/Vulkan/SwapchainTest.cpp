@@ -203,8 +203,8 @@ protected:
         return {.queue     = mDevice->getGraphicsQueue(),
                 .fencePool = FencePool::create(mDevice),
                 .swapchain = std::move(swapchain),
-                .frames =
-                    std::make_unique<Graphics::Frame::FrameObjectManager>(mDevice, slots, 1u)};
+                .frames    = std::make_unique<Graphics::Frame::FrameObjectManager>(
+                    mDevice, Graphics::Frame::FrameObjectManager::Counts{.frames = slots})};
     }
 };
 
@@ -408,11 +408,12 @@ TEST_F(SwapchainTest, acquireSemaphoreIsReusedOnlyAfterItsWaitCompleted)
 
 /**
  * A frame that is dropped (skipped or out-of-date acquire) prepares its slot and does not advance,
- * so the next frame gets the same slot; each slot has its own acquire semaphore.
+ * so the next frame gets the same slot; each slot has its own acquire semaphore and its own index,
+ * which is its position in the manager.
  */
 TEST_F(SwapchainTest, prepareNextFrameAdvancesOnlyOnAdvance)
 {
-    Graphics::Frame::FrameObjectManager frames{mDevice, 3u, 1u};
+    Graphics::Frame::FrameObjectManager frames{mDevice, {.frames = 3u}};
 
     const auto first = frames.prepareNextFrame();
     EXPECT_EQ(frames.prepareNextFrame().get(), first.get());
@@ -421,10 +422,14 @@ TEST_F(SwapchainTest, prepareNextFrameAdvancesOnlyOnAdvance)
     const auto second = frames.prepareNextFrame();
     EXPECT_NE(second.get(), first.get());
     EXPECT_NE(second->getAcquireSemaphore().get(), first->getAcquireSemaphore().get());
+    EXPECT_NE(second->index(), first->index());
+    EXPECT_LT(first->index(), 3u);
+    EXPECT_LT(second->index(), 3u);
 
     frames.advance();
     frames.advance();
     EXPECT_EQ(frames.prepareNextFrame().get(), first.get());
+    EXPECT_EQ(frames.prepareNextFrame()->index(), first->index());
 }
 
 /**

@@ -131,6 +131,9 @@ public:
 
 private:
     friend class Renderer;
+    friend class ResourceFactory;
+    friend class RenderQueue;
+    friend class FrameLoop;
     friend struct DrawRecording;
     friend struct HandleTestAccess;
 

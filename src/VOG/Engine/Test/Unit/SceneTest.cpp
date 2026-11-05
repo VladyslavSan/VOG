@@ -716,7 +716,8 @@ TEST(SceneTest, meshRendererSubmitsTransformMatrix)
     object.getTransform().scale    = {2.0f, 2.0f, 2.0f};
     object.addComponent<MeshRenderer>(MeshRenderer{.mesh = mesh, .material = material});
 
-    RenderQueue queue;
+    Detail::DrawCheck check;
+    RenderQueue       queue = RenderQueueTestAccess::make(check);
     scene.onDraw(gFrame, queue);
 
     const auto& draws = RenderQueueTestAccess::draws(queue);
@@ -732,7 +733,8 @@ TEST(SceneTest, objectWithoutMeshRendererDrawsNothing)
     scene.createGameObject();
     scene.createGameObject().addComponent<Camera>();
 
-    RenderQueue queue;
+    Detail::DrawCheck check;
+    RenderQueue       queue = RenderQueueTestAccess::make(check);
     scene.onDraw(gFrame, queue);
 
     EXPECT_TRUE(RenderQueueTestAccess::draws(queue).empty());
@@ -749,7 +751,8 @@ TEST(SceneTest, cameraComponentSetsFrameView)
         glm::angleAxis(glm::radians(90.0f), Vector3f{0.0f, 1.0f, 0.0f});
     object.addComponent<Camera>(Camera{.nearPlane = 2.0f, .farPlane = 300.0f});
 
-    RenderQueue queue;
+    Detail::DrawCheck check;
+    RenderQueue       queue = RenderQueueTestAccess::make(check);
     scene.onDraw(gFrame, queue);
 
     const CameraView& view = RenderQueueTestAccess::camera(queue);
@@ -770,7 +773,8 @@ TEST(SceneTest, noCameraLeavesDefaultView)
     scene.createGameObject();
 
     // A view the queue already has survives: the scene sets none without a Camera.
-    RenderQueue queue;
+    Detail::DrawCheck check;
+    RenderQueue       queue = RenderQueueTestAccess::make(check);
     queue.setCamera(CameraView{.nearPlane = 7.0f});
     scene.onDraw(gFrame, queue);
 

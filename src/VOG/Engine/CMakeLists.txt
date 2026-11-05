@@ -37,22 +37,36 @@ target_sources(Engine
             include/VOG/Engine/Scene/Scene.hpp
     PRIVATE
         src/VOG/Engine/Renderer/CameraView.cpp
+        src/VOG/Engine/Renderer/DrawCheck.cpp
+        src/VOG/Engine/Renderer/DrawCheck.hpp
         src/VOG/Engine/Renderer/DrawPushData.hpp
         src/VOG/Engine/Renderer/DrawRecording.cpp
         src/VOG/Engine/Renderer/DrawRecording.hpp
         src/VOG/Engine/Renderer/FrameBlocks.cpp
         src/VOG/Engine/Renderer/FrameBlocks.hpp
+        src/VOG/Engine/Renderer/FrameLoop.cpp
+        src/VOG/Engine/Renderer/FrameLoop.hpp
         src/VOG/Engine/Renderer/FramePacketQueue.hpp
+        src/VOG/Engine/Renderer/GpuContext.cpp
+        src/VOG/Engine/Renderer/GpuContext.hpp
         src/VOG/Engine/Renderer/MaterialDefinition.cpp
         src/VOG/Engine/Renderer/MaterialDefinition.hpp
         src/VOG/Engine/Renderer/MeshDefinition.hpp
-        src/VOG/Engine/Renderer/PipelineCache.cpp
-        src/VOG/Engine/Renderer/PipelineCache.hpp
+        src/VOG/Engine/Renderer/PipelineTable.cpp
+        src/VOG/Engine/Renderer/PipelineTable.hpp
+        src/VOG/Engine/Renderer/RenderQueue.cpp
         src/VOG/Engine/Renderer/Renderer.cpp
+        src/VOG/Engine/Renderer/RendererImpl.hpp
+        src/VOG/Engine/Renderer/ResourceFactory.cpp
+        src/VOG/Engine/Renderer/ResourceFactory.hpp
         src/VOG/Engine/Renderer/ShaderDefinition.hpp
         src/VOG/Engine/Renderer/ShaderLibrary.cpp
         src/VOG/Engine/Renderer/ShaderLibrary.hpp
         src/VOG/Engine/Renderer/TextureDefinition.hpp
+        src/VOG/Engine/Renderer/UploadQueue.cpp
+        src/VOG/Engine/Renderer/UploadQueue.hpp
+        src/VOG/Engine/Renderer/UploadTicket.cpp
+        src/VOG/Engine/Renderer/UploadTicket.hpp
         src/VOG/Engine/Scene/Registry.cpp
         src/VOG/Engine/Scene/Scene.cpp
 )

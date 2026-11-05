@@ -8,57 +8,19 @@
 #include <VOG/Engine/Renderer/Shader.hpp>
 #include <VOG/Engine/Renderer/Texture.hpp>
 
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <exception>
+#include <expected>
 #include <filesystem>
 #include <functional>
-#include <future>
 #include <memory>
-#include <mutex>
-#include <span>
 #include <string>
 #include <string_view>
-#include <thread>
-#include <utility>
-#include <variant>
 #include <vector>
-
-namespace VOG::Graphics::Frame
-{
-class FrameObjectManager;
-} // namespace VOG::Graphics::Frame
-
-namespace VOG::Graphics::Vulkan
-{
-class Instance;
-class Buffer;
-class Device;
-class DescriptorHeap;
-class FencePool;
-class GraphicsPipeline;
-class Queue;
-class Swapchain;
-class Texture;
-class TimelineSemaphore;
-} // namespace VOG::Graphics::Vulkan
 
 namespace VOG::Engine
 {
-class FrameBlocks;
-class FramePacketQueue;
-class PipelineCache;
-class ShaderLibrary;
-struct FramePacket;
-
-namespace Detail
-{
-class ShaderInfo;
-struct MaterialMember;
-} // namespace Detail
-
 /**
  * Owns the Vulkan objects of one window and the thread that renders into it.
  *
@@ -67,10 +29,13 @@ struct MaterialMember;
  *
  * Two threads work with it. The main thread, or whichever thread calls submitFrame(), runs the
  * Renderables: it calls onDraw() for each frame and queues the result as a packet. The render
- * thread takes the packets and records and presents them; it runs no user code.
+ * thread takes the packets and records and presents them, and it copies the meshes and textures
+ * to the GPU; it runs no user code. The render thread starts in the constructor and ends in the
+ * destructor. It does not wait for a frame to copy: a resource that was created is copied while
+ * no frame is submitted too.
  *
- * The render thread owns nothing: it captures `this`, is the last member and is joined before
- * anything it uses is destroyed. Nothing reachable from it owns the Renderer, so
+ * The render thread owns nothing: it is the last member of the implementation and is joined
+ * before anything it uses is destroyed. Nothing reachable from it owns the Renderer, so
  * `~Renderer` cannot run on the render thread.
  */
 class Renderer final
@@ -78,7 +43,15 @@ class Renderer final
 public:
     static constexpr std::uint8_t kMaxFramesInFlight = 3;
 
-    /** Everything the renderer needs to bring up Vulkan; JSON stays at the file-loading edge. */
+    /** The default of Config::resourceSlots. */
+    static constexpr std::uint32_t kDefaultResourceSlots = 4096u;
+
+    static constexpr std::uint64_t kBytesPerMebibyte = std::uint64_t{1} << 20u;
+
+    /** The default of Config::backgroundUploadBytesPerFrame: 64 MiB. */
+    static constexpr std::uint64_t kDefaultBackgroundUploadBytes = 64u * kBytesPerMebibyte;
+
+    /** Everything the renderer needs to bring up Vulkan and to find its shaders. */
     struct Config
     {
         std::string appName;
@@ -119,20 +92,57 @@ public:
          * must live that long.
          */
         std::function<void(std::string_view)> onValidationMessage;
+
+        /**
+         * Images and parameter blocks the descriptor heap holds at once. The Renderer uses one
+         * slot for the Frame block of each frame slot; the rest is for textures and materials.
+         * When the heap is full, createTexture() and createMaterial() throw. The size is fixed:
+         * growing means binding another heap.
+         */
+        std::uint32_t resourceSlots = kDefaultResourceSlots;
+
+        /**
+         * Bytes of copies that the render thread records in one iteration for resources that no
+         * draw of that iteration uses. A resource that a frame draws is always copied in the
+         * iteration of that frame, whatever this is. It bounds how long one submit to the transfer
+         * queue runs; it is not a guarantee of bandwidth. The entry that reaches the limit is
+         * recorded, so a resource bigger than the limit still goes through, alone. 0 copies only
+         * what a draw uses.
+         */
+        std::uint64_t backgroundUploadBytesPerFrame = kDefaultBackgroundUploadBytes;
     };
 
     enum class State : std::uint8_t
     {
-        /** No render thread: not started, or stopped. */
-        eStopped,
         eRunning,
-        /** The render thread ended with an exception; stop() returns it. */
+        /** The render thread ended with an exception; failure() returns it. Final: destroy the
+         *  Renderer. createMesh() and createTexture() still queue after that, and nothing
+         *  drains the queue: a thread that imports resources should stop when getState() is
+         *  eFailed. */
         eFailed
     };
 
+    /** What the render thread has not yet copied to the GPU. */
+    struct UploadStatus
+    {
+        std::size_t   pendingCount = 0u;
+        std::uint64_t pendingBytes = 0u;
+    };
+
+    /**
+     * Brings Vulkan up, compiles and checks every shader of the shader directory, then starts the
+     * render thread, last: a shader error throws before any thread exists.
+     * @throws std::runtime_error (nested) naming the shader and file that failed to compile, link
+     *         or follow VOG/Draw.glsl.
+     */
     Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& config);
 
-    /** Stops the render thread. A failure nobody collected with stop() is logged. */
+    /**
+     * Joins the render thread, then takes the GPU state down. A failure nobody read with failure()
+     * is logged. Must not run while another thread is inside any member of this Renderer: join
+     * the threads that create resources first. A handle of a mesh, texture or material may outlive
+     * the Renderer.
+     */
     ~Renderer();
 
     Renderer(const Renderer&)            = delete;
@@ -146,24 +156,27 @@ public:
 
     /**
      * Copies the vertices and indices of @p description into staging memory. The render thread
-     * copies them into the memory of the mesh, preferably device-local, on the transfer queue, in
-     * the first frame it renders after this call, and a draw of the mesh in that frame waits for
-     * the copy on the GPU. The upload stays pending through frames that are dropped or fail. Any
-     * thread: the allocator is internally synchronized.
+     * copies them into the memory of the mesh, preferably device-local, on the transfer queue: in
+     * the iteration of the first frame that draws the mesh, or in the background, within
+     * Config::backgroundUploadBytesPerFrame, while no frame is submitted too. A draw of the mesh
+     * before the copy has finished waits for it on the GPU; Mesh::isResident() tells. Any thread:
+     * the allocator is internally synchronized. After a failure of the render thread (getState()
+     * is eFailed) the mesh is queued and never copied.
      * @throws std::invalid_argument if the description is empty, the stride is zero, or its size is
-     *         not a multiple of the stride; an attribute overruns the stride; it has more
-     *         attributes than a pipeline can take; the stride or an attribute offset is not a
+     *         not a multiple of the stride; the layout has more attributes than a pipeline can
+     *         take; an attribute overruns the stride; the stride or an attribute offset is not a
      *         multiple of 4, or exceeds maxVertexInputBindingStride or
      *         maxVertexInputAttributeOffset of the device; its index count is not a multiple of 3;
-     *         or an index is not less than the vertex count.
+     *         or an index is not less than the vertex count. The name of the description starts
+     *         the message.
      */
     [[nodiscard]] Mesh createMesh(const MeshDescription& description);
 
     /**
      * Copies the pixels of @p description. Any thread: the allocator is internally synchronized.
-     * The image is uploaded by the render thread on the transfer queue, in the first frame it
-     * renders after this call, and a draw of the texture in that frame waits on the GPU for the
-     * upload's timeline signal. The upload stays pending through frames that are dropped or fail.
+     * The render thread uploads the image like the vertices of a mesh, on the transfer queue;
+     * Texture::isResident() tells when it has finished. After a failure of the render thread
+     * (getState() is eFailed) the texture is queued and never copied.
      * @throws std::invalid_argument if the extent is zero or exceeds maxImageDimension2D of the
      *         device, or the pixels are not exactly width * height * 4 bytes.
      * @throws std::runtime_error if the renderer's descriptor heap is full or the image cannot be
@@ -190,156 +203,65 @@ public:
     [[nodiscard]] Material createMaterial(MaterialDescription description);
 
     /**
+     * Whether @p mesh provides every vertex input of the shader of @p material; the error names
+     * the mesh, the shader and the first input that is missing. An empty mesh or material is
+     * compatible: it draws nothing. RenderQueue::submit() makes the same check. Any thread; it
+     * changes nothing.
+     */
+    [[nodiscard]] std::expected<void, std::string> checkDraw(const Mesh&     mesh,
+                                                             const Material& material) const;
+
+    /**
+     * What is queued for the render thread and was not submitted to the GPU yet: a progress bar,
+     * not an answer for one resource (Mesh::isResident() is that). pendingBytes is also the
+     * staging memory that the queue holds. Any thread.
+     */
+    [[nodiscard]] UploadStatus uploads() const noexcept;
+
+    /**
      * New window size in pixels. Any thread; the render thread recreates the swapchain at that
      * size before its next frame. Surfaces that report their own size (macOS, Windows, X11) ignore
      * it; Wayland and headless surfaces take it as given.
      */
-    void resize(Extent extent);
-
-    /** Starts the render thread. @throws std::logic_error unless getState() is eStopped. */
-    void start();
+    void resize(Extent extent) noexcept;
 
     /**
      * Calls Renderable::onDraw() of every renderable on the calling thread and queues the draws
      * with the camera view an onDraw() set as one frame. Waits while the render thread still holds
-     * the previous frame, so this paces the caller to the render thread. Does nothing when the
-     * renderer is stopped. When the render thread has failed it still calls onDraw(), and the frame
-     * is dropped; check getState().
+     * the previous frame, so this paces the caller to the render thread. When the render thread
+     * has failed it still calls onDraw(), and the frame is dropped; check getState().
      *
-     * One thread at a time, and not from onDraw(). An exception from onDraw() reaches the caller;
-     * the renderer keeps running. stop() from another thread wakes a call that waits.
+     * One thread at a time, and not from onDraw(). An exception from onDraw(), also a DrawError
+     * from RenderQueue::submit(), reaches the caller. The frame is not queued then and the
+     * renderer keeps running. The renderables that ran before the one that threw have run for a
+     * frame that is dropped.
      */
     void submitFrame(const FrameContext& frameContext);
 
     /**
      * Like submitFrame(), but never waits for the render thread: if it still holds the previous
-     * frame, returns at once without calling onDraw(). It may wait for a start() or stop() in
-     * progress on another thread. For callers that must not block on the render thread, like an
-     * event watch.
+     * frame, returns at once without calling onDraw(). For callers that must not block on the
+     * render thread, like an event watch.
      */
     void trySubmitFrame(const FrameContext& frameContext);
 
-    /**
-     * Requests stop, joins the render thread and returns its failure, or null if it ended
-     * normally or was not running. The Renderer can be started again afterwards. After a failure
-     * between the swapchain acquire and the enqueue of the present (a present that enqueues
-     * nothing is one), a restart may stall until the swapchain is recreated, or misuse a semaphore
-     * (known gap in docs/SwapchainSync.md). The stop is observed within one acquire timeout and one
-     * frame, plus the fence waits of the frame slot, which have no timeout (docs/SwapchainSync.md).
-     * After a normal stop, a packet still queued at stop() is rendered first after the next
-     * start(); after a failure, the packets queued before stop() are dropped.
-     */
-    [[nodiscard]] std::exception_ptr stop() noexcept;
+    /** Any thread. */
+    [[nodiscard]] State getState() const noexcept;
 
-    State getState() const;
+    /**
+     * The exception that ended the render thread, or null if it runs. Every call returns it.
+     * Calling it marks the failure as collected, so ~Renderer does not log what the caller has
+     * seen. Any thread.
+     */
+    [[nodiscard]] std::exception_ptr failure() noexcept;
 
 private:
-    /** Lets RendererTest read the swapchain, the packet queue, the pipeline cache and the pending
-     *  uploads; nothing else uses it. */
+    /** Lets RendererTest read the parts of the implementation; nothing else uses it. */
     friend struct RendererTestAccess;
 
-    /** min(framesInFlight, imageCount); logs when it clamps. */
-    static std::uint8_t frameSlotCount(std::uint8_t framesInFlight, std::size_t imageCount);
+    /** The components of the renderer. It names Graphics types, so it stays out of this header. */
+    struct Impl;
 
-    /** Submitting thread. Moves the pending renderables into mRenderables. */
-    void adoptPendingRenderables();
-
-    /** Submitting thread. Calls onDraw() of every renderable and returns the draws and the
-     *  camera view they set as a packet. */
-    FramePacket makePacket(const FrameContext& frameContext);
-
-    /** The bytes of the Material block of @p shader holding @p parameters, which are checked first;
-     *  @p context starts an error message. See createMaterial(). */
-    static std::vector<std::byte> packMaterialBlock(const Detail::ShaderInfo&          shader,
-                                                    std::span<const MaterialParameter> parameters,
-                                                    std::string_view                   context);
-
-    /** Writes @p value at the offset of @p member in @p block. */
-    static void writeMaterialValue(std::span<std::byte>          block,
-                                   const Detail::MaterialMember& member,
-                                   const MaterialValue&          value);
-
-    /** Render thread. Finds the pipeline of each draw of @p draws in mPipelines. */
-    void resolvePipelines(const RenderQueue& draws);
-
-    /** Render thread. Rebuilds the swapchain for @p requested; false if it is zero-sized. */
-    bool applyExtent(Extent requested);
-
-    /** Render thread. One frame; an exception ends the thread. */
-    void renderFrame(const FramePacket& packet);
-
-    /** The bytes of a mesh or of a texture, waiting for the render thread to copy them from
-     *  staging into the buffer or image, which are preferably device-local. */
-    struct PendingUpload
-    {
-        std::shared_ptr<Graphics::Vulkan::Buffer> staging;
-        std::variant<std::shared_ptr<Graphics::Vulkan::Buffer>,
-                     std::shared_ptr<Graphics::Vulkan::Texture>>
-            destination;
-    };
-
-    const std::uint8_t mFramesInFlight;
-
-    std::shared_ptr<Graphics::Vulkan::Instance>          mVulkanInstance;
-    std::shared_ptr<Graphics::Vulkan::Device>            mVulkanDevice;
-    std::shared_ptr<const Graphics::Vulkan::Queue>       mGraphicsQueue;
-    std::shared_ptr<const Graphics::Vulkan::Queue>       mTransferQueue;
-    std::shared_ptr<Graphics::Vulkan::FencePool>         mFencePool;
-    std::unique_ptr<ShaderLibrary>                       mShaderLibrary;
-    std::shared_ptr<Graphics::Vulkan::DescriptorHeap>    mHeap;
-    std::unique_ptr<Graphics::Vulkan::Swapchain>         mSwapchain;
-    std::unique_ptr<Graphics::Frame::FrameObjectManager> mFrameObjectManager;
-
-    /** Render thread only: the buffers of the Frame block of the frame slots. */
-    std::unique_ptr<FrameBlocks> mFrameBlocks;
-
-    /** Written by resize() on any thread. Extent is trivially copyable and 8 bytes, so the atomic
-     * is lock-free (Renderer.cpp asserts it). */
-    std::atomic<Extent> mRequestedExtent;
-
-    /** Render thread only: the last requested extent that was applied. Surfaces that report their
-     *  own size ignore the request, so this is not necessarily the size of the images. */
-    Extent mAppliedExtent;
-
-    /** Signaled by the transfer submit of every frame that uploads, waited by the graphics submit
-     * of every frame. */
-    std::shared_ptr<Graphics::Vulkan::TimelineSemaphore> mUploadTimeline;
-
-    /** Render thread only: the last value the upload timeline was signaled with. Raised after the
-     *  submit that signals it returned, so a submit that throws leaves it unchanged. It lives as
-     *  long as the renderer, across stop() and start(), so it only ever grows. */
-    std::uint64_t mUploadValue = 0u;
-
-    /** Appended by createMesh() and createTexture() on any thread, copied and erased by the render
-     * thread. Entries leave only after the submit that recorded them returned. */
-    std::mutex                mUploadMutex;
-    std::deque<PendingUpload> mPendingUploads;
-
-    /** Written by any thread, drained by the submitting thread. No callback runs under it. */
-    std::mutex                              mPendingMutex;
-    std::deque<std::shared_ptr<Renderable>> mPending;
-
-    /** Submitting thread only. */
-    std::vector<std::shared_ptr<Renderable>> mRenderables;
-
-    /** Render thread only. */
-    std::unique_ptr<PipelineCache> mPipelineCache;
-
-    /** The pipeline of each draw of the frame being rendered, at the same index. Render-thread
-     *  scratch space, kept to reuse its capacity across frames. */
-    std::vector<std::shared_ptr<Graphics::Vulkan::GraphicsPipeline>> mPipelines;
-
-    /** The frames between the submitting thread and the render thread. Declared above
-     *  mRenderThread, which is joined before it is destroyed. */
-    std::unique_ptr<FramePacketQueue> mPackets;
-
-    /** Serializes start, stop and getState. */
-    mutable std::mutex mStateMutex;
-
-    /** Fulfilled by the render thread when it exits; get() rethrows its failure. */
-    std::future<void> mExit;
-
-    /** Last member: joined before anything above is destroyed. */
-    std::jthread mRenderThread;
+    std::unique_ptr<Impl> mImpl;
 };
 } // namespace VOG::Engine

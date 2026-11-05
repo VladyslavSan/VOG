@@ -36,6 +36,10 @@ public:
      */
     ~FrameObjects() = default;
 
+    /** The position of the slot in its FrameObjectManager: below the number of slots, and the
+     *  same for the whole life of the slot. 0 for a slot that no manager made. */
+    [[nodiscard]] std::size_t index() const noexcept;
+
     const Vulkan::SemaphorePtr& getRenderFinishedSemaphore() const;
 
     /**
@@ -67,14 +71,6 @@ public:
      */
     Vulkan::CommandBufferPoolPtr getCommandBufferPoolForThread(std::size_t threadId);
 
-    /**
-     * The pool of the slot for command buffers of the transfer queue's family. Reset together
-     * with the other pools when the slot starts again.
-     *
-     * @note Render thread only, like the other pools.
-     */
-    const Vulkan::CommandBufferPoolPtr& getTransferCommandBufferPool() const;
-
 protected:
     /**
      * Frame cleanups from previous usage like resetting the command buffers and command pools, and
@@ -91,6 +87,9 @@ protected:
     /** Vulkan device provider */
     Vulkan::DevicePtr mDevice;
 
+    /** Set by FrameObjectManager when it makes the slot. */
+    std::size_t mIndex = 0u;
+
     /** Signaled by the swapchain acquire; waited by the graphics submit. The submit fence, which
      *  onFrameStart() waits, shows that the wait is done, so the next acquire may signal it again.
      */
@@ -104,10 +103,6 @@ protected:
 
     /** Per working thread command buffer pools */
     std::vector<Vulkan::CommandBufferPoolPtr> mCommandBufferPools;
-
-    /** Command buffers of the transfer queue's family; the graphics family when the device has no
-     *  family of its own for transfer. */
-    Vulkan::CommandBufferPoolPtr mTransferCommandBufferPool;
 
     /** The last presentation of this slot; it holds the swapchain the presentation uses. */
     std::optional<Vulkan::Swapchain::Presentation> mPresentation;

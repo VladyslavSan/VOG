@@ -174,11 +174,13 @@ main(int argc, const char** argv) // NOLINT(bugprone-exception-escape)
 
         const auto checkerboardPixels = makeCheckerboard();
         const auto texturedQuad       = renderer.createMesh({
-            .vertices   = std::as_bytes(std::span{gTexturedVertexData}),
-            .indices    = gTexturedIndexData,
-            .stride     = sizeof(TexturedVertex),
-            .attributes = {{VOG::Engine::VertexFormat::eFloat2, 0u},
-                           {VOG::Engine::VertexFormat::eFloat2, offsetof(TexturedVertex, uv)}},
+            .name     = "quad",
+            .vertices = std::as_bytes(std::span{gTexturedVertexData}),
+            .indices  = gTexturedIndexData,
+            .layout   = VOG::Engine::vertexLayout(
+                sizeof(TexturedVertex),
+                {{VOG::Engine::VertexFormat::eFloat2, 0u},
+                 {VOG::Engine::VertexFormat::eFloat2, offsetof(TexturedVertex, uv)}}),
         });
 
         // The same checkerboard, as two textures: one that the shader smooths when it magnifies

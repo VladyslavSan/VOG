@@ -4,8 +4,8 @@
 #include "VOG/Engine/Renderer/FramePacketQueue.hpp"
 #include "VOG/Engine/Renderer/MaterialDefinition.hpp"
 #include "VOG/Engine/Renderer/MeshDefinition.hpp"
-#include "VOG/Engine/Renderer/PipelineCache.hpp"
-#include "VOG/Engine/Renderer/ShaderLibrary.hpp"
+#include "VOG/Engine/Renderer/PipelineTable.hpp"
+#include "VOG/Engine/Renderer/RendererImpl.hpp"
 #include "VOG/Engine/Renderer/TextureDefinition.hpp"
 #include <VOG/Engine/Renderer/Renderer.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/RenderTarget.hpp>
@@ -26,6 +26,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -37,6 +38,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -62,115 +64,80 @@ namespace VOG::Engine
 /** Test-only window into the renderer, befriended by Renderer. */
 struct RendererTestAccess
 {
-    /** While no render thread runs. */
+    /**
+     * Joins the render thread, as ~Renderer does. The tests that read what the render thread
+     * leaves behind call it first: the join orders everything the thread did before the reads, and
+     * it ends the thread, so a test that joined submits no more frames. A packet that waits in the
+     * queue is dropped by it.
+     */
+    static void
+    join(Renderer& renderer)
+    {
+        renderer.mImpl->loop.stop();
+    }
+
+    /** After join(). */
     static Extent
     swapchainExtent(const Renderer& renderer)
     {
-        const vk::Extent2D extent = renderer.mSwapchain->getExtent();
+        const vk::Extent2D extent = renderer.mImpl->gpu.swapchain->getExtent();
 
         return {.width = extent.width, .height = extent.height};
     }
 
-    /** While no render thread runs. */
+    /** After join(). */
     static std::size_t
     pipelineCount(const Renderer& renderer)
     {
-        return renderer.mPipelineCache->mEntries.size();
+        return renderer.mImpl->loop.mPipelines.mPipelines.size();
     }
 
     static FramePacketQueue&
     packets(Renderer& renderer)
     {
-        return *renderer.mPackets;
+        return renderer.mImpl->packets;
     }
 
-    /** Uploads that createMesh() and createTexture() queued and no submitted frame has recorded
-     *  yet. */
-    static std::size_t
-    pendingUploadCount(Renderer& renderer)
-    {
-        const std::scoped_lock lock{renderer.mUploadMutex};
-
-        return renderer.mPendingUploads.size();
-    }
-
-    /** The staging buffer of pending upload @p index; it must exist. */
+    /** The staging buffer of the job @p index that was pushed and that no iteration has taken yet;
+     *  it must exist. Only while the render thread is held in a submit. */
     static std::weak_ptr<Graphics::Vulkan::Buffer>
-    pendingStaging(Renderer& renderer, std::size_t index)
+    arrivedStaging(Renderer& renderer, std::size_t index)
     {
-        const std::scoped_lock lock{renderer.mUploadMutex};
+        const std::scoped_lock lock{renderer.mImpl->uploads.mMutex};
 
-        return renderer.mPendingUploads.at(index).staging;
+        return renderer.mImpl->uploads.mArrived.at(index).staging;
     }
 
     static Graphics::Vulkan::DevicePtr
     device(const Renderer& renderer)
     {
-        return renderer.mVulkanDevice;
+        return renderer.mImpl->gpu.device;
     }
 
     static std::shared_ptr<Graphics::Vulkan::DescriptorHeap>
     heap(const Renderer& renderer)
     {
-        return renderer.mHeap;
-    }
-
-    /** While no render thread runs: the pipeline of each draw of @p packet for a color target of
-     *  @p format. */
-    static std::vector<Graphics::Vulkan::GraphicsPipelinePtr>
-    pipelines(Renderer& renderer, const FramePacket& packet, vk::Format format)
-    {
-        std::vector<Graphics::Vulkan::GraphicsPipelinePtr> pipelines;
-        for (const auto& draw : RenderQueueTestAccess::draws(packet.draws))
-        {
-            pipelines.push_back(renderer.mPipelineCache->get(
-                HandleTestAccess::data(draw.mesh), HandleTestAccess::data(draw.material), format));
-        }
-
-        return pipelines;
-    }
-
-    /** While no render thread runs: records the copies of the pending uploads into @p recorder,
-     *  for the queue family @p family of the pool, which also draws. */
-    static void
-    recordPendingUploads(Renderer&                                renderer,
-                         Graphics::Vulkan::CommandBufferRecorder& recorder,
-                         std::uint32_t                            family)
-    {
-        for (const Renderer::PendingUpload& upload : renderer.mPendingUploads)
-        {
-            if (const auto* buffer = std::get_if<Graphics::Vulkan::BufferPtr>(&upload.destination))
-            {
-                recorder.copyBuffer(upload.staging, *buffer, family);
-            }
-            else
-            {
-                recorder.copyBufferToTexture(
-                    upload.staging,
-                    std::get<Graphics::Vulkan::TexturePtr>(upload.destination),
-                    family);
-            }
-        }
+        return renderer.mImpl->gpu.heap;
     }
 
     static const vk::PhysicalDeviceLimits&
     limits(const Renderer& renderer)
     {
-        return renderer.mVulkanDevice->limits;
+        return renderer.mImpl->gpu.device->limits;
     }
 
-    /** While no render thread runs: the buffers of the Frame block that the frames wrote, one per
-     *  frame slot that was rendered into. */
+    /** After join(): the buffers of the Frame block, one per frame slot. */
     static std::vector<Graphics::Vulkan::HeapBufferPtr>
     frameBlocks(const Renderer& renderer)
     {
-        std::vector<Graphics::Vulkan::HeapBufferPtr> buffers;
-        for (const auto& [slot, buffer] : renderer.mFrameBlocks->mBlocks)
-        {
-            buffers.push_back(buffer);
-        }
+        return renderer.mImpl->gpu.frameBlocks.mBlocks;
+    }
 
-        return buffers;
+    /** Whether failure() returned the exception of the render thread. */
+    static bool
+    failureCollected(const Renderer& renderer)
+    {
+        return renderer.mImpl->loop.failureCollected();
     }
 
     /** The function table that every command buffer of the renderer's device records through. */
@@ -179,7 +146,7 @@ struct RendererTestAccess
     {
         // The device owns the table and keeps it mutable; getDispatcher() only hands it out const.
         return const_cast<vk::raii::detail::DeviceDispatcher&>(
-            *renderer.mVulkanDevice->getDispatcher());
+            *renderer.mImpl->gpu.device->getDispatcher());
     }
 };
 } // namespace VOG::Engine
@@ -480,38 +447,32 @@ private:
 };
 #endif
 
-constexpr std::size_t gQuadStride = 24u;
+constexpr std::uint32_t gQuadStride = 24u;
 
 /** As the WorldSpace shader reads them: a vec3 position (fed two floats) and a vec4 color. */
-std::vector<VertexAttribute>
-compatibleLayout()
-{
-    return {{VertexFormat::eFloat2, 0u}, {VertexFormat::eFloat4, sizeOf(VertexFormat::eFloat2)}};
-}
+constexpr VertexLayout gCompatibleLayout = vertexLayout(
+    gQuadStride,
+    {{VertexFormat::eFloat2, 0u}, {VertexFormat::eFloat4, sizeOf(VertexFormat::eFloat2)}});
 
 /** WorldSpace also reads location 1, which this layout lacks. */
-std::vector<VertexAttribute>
-incompatibleLayout()
-{
-    return {{VertexFormat::eFloat2, 0u}};
-}
+constexpr VertexLayout gIncompatibleLayout =
+    vertexLayout(gQuadStride, {{VertexFormat::eFloat2, 0u}});
 
-constexpr std::size_t gTexturedStride = 16u;
-constexpr std::size_t gPixelSize      = 4u;
+constexpr std::uint32_t gTexturedStride = 16u;
+constexpr std::size_t   gPixelSize      = 4u;
 
 /** As the Textured shader reads them: a position and a uv, two floats each. */
-std::vector<VertexAttribute>
-texturedLayout()
-{
-    return {{VertexFormat::eFloat2, 0u}, {VertexFormat::eFloat2, sizeOf(VertexFormat::eFloat2)}};
-}
+constexpr VertexLayout gTexturedLayout = vertexLayout(
+    gTexturedStride,
+    {{VertexFormat::eFloat2, 0u}, {VertexFormat::eFloat2, sizeOf(VertexFormat::eFloat2)}});
 
 Mesh
 makeTexturedMesh(Renderer& renderer)
 {
-    return renderer.createMesh({.vertices   = std::vector<std::byte>(3u * gTexturedStride),
-                                .stride     = gTexturedStride,
-                                .attributes = texturedLayout()});
+    return renderer.createMesh(
+        {.name     = "textured",
+         .vertices = std::vector<std::byte>(std::size_t{3u} * gTexturedStride),
+         .layout   = gTexturedLayout});
 }
 
 /** A black 2x2 texture. */
@@ -539,23 +500,34 @@ makeMaterial(Renderer& renderer, std::string_view shader)
     return renderer.createMaterial({.shader = renderer.getShader(shader)});
 }
 
+/** A mesh of three vertices of @p layout, the size of which is gQuadStride of them, all zero. */
 Mesh
-makeMesh(Renderer& renderer, const std::vector<VertexAttribute>& attributes)
+makeMesh(Renderer& renderer, const VertexLayout& layout, std::string name = "mesh")
 {
-    return renderer.createMesh({.vertices   = std::vector<std::byte>(3u * gQuadStride),
-                                .stride     = gQuadStride,
-                                .attributes = attributes});
+    return renderer.createMesh({.name     = std::move(name),
+                                .vertices = std::vector<std::byte>(std::size_t{3u} * layout.stride),
+                                .layout   = layout});
 }
+
+/** The bytes that the staging buffer of a mesh of gCompatibleLayout holds. */
+constexpr std::uint64_t gMeshBytes = std::uint64_t{3u} * gQuadStride;
+
+/**
+ * Makes the ring of the upload queue let go of what its earlier copies hold: the pools of its
+ * command buffers reset when they are used again, which is two copies later. Each of the two
+ * small meshes is a copy of its own, waited for.
+ */
+void releaseTheUploadRing(Renderer& renderer);
 
 /** A renderable that draws @p mesh with @p material in every frame. */
 std::shared_ptr<Renderable>
-drawing(Mesh mesh, Material material)
+drawing(Mesh mesh, Material material, std::string_view debugName = {})
 {
     return std::make_shared<LambdaRenderable>(
-        [mesh = std::move(mesh), material = std::move(material)](const FrameContext& /*context*/,
-                                                                 RenderQueue& queue)
+        [mesh = std::move(mesh), material = std::move(material), name = std::string{debugName}](
+            const FrameContext& /*context*/, RenderQueue& queue)
         {
-            queue.submit(mesh, material, Math::Matrix4x4f{1.0f});
+            queue.submit(mesh, material, Math::Matrix4x4f{1.0f}, name);
         });
 }
 
@@ -627,6 +599,252 @@ public:
 private:
     vk::raii::detail::DeviceDispatcher& mTable;
 };
+
+/** One call of vkQueueSubmit2 that a QueueSpy saw. */
+struct SpiedSubmit
+{
+    /** Copies (vkCmdCopyBuffer and vkCmdCopyBufferToImage) recorded since the call before. */
+    std::size_t copies = 0u;
+    /** The binary semaphore it signals: that of a frame slot for a frame's submit, null for a
+     *  submit of copies, which signals a timeline semaphore only. */
+    VkSemaphore signal = VK_NULL_HANDLE;
+};
+
+std::mutex               gSpyMutex;
+std::condition_variable  gSpyChanged;
+std::vector<SpiedSubmit> gSpiedSubmits;
+std::size_t              gSpiedCopies = 0u;
+bool                     gSpyHoldNext = false;
+bool                     gSpyHeld     = false;
+bool                     gSpyReleased = false;
+
+PFN_vkQueueSubmit2         gRealQueueSubmit2      = nullptr;
+PFN_vkCmdCopyBuffer        gRealCopyBuffer        = nullptr;
+PFN_vkCmdCopyBufferToImage gRealCopyBufferToImage = nullptr;
+
+VKAPI_ATTR void VKAPI_CALL
+spyCopyBuffer(VkCommandBuffer     commandBuffer,
+              VkBuffer            source,
+              VkBuffer            destination,
+              uint32_t            regionCount,
+              const VkBufferCopy* regions)
+{
+    {
+        const std::scoped_lock lock{gSpyMutex};
+        ++gSpiedCopies;
+    }
+    gRealCopyBuffer(commandBuffer, source, destination, regionCount, regions);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+spyCopyBufferToImage(VkCommandBuffer          commandBuffer,
+                     VkBuffer                 source,
+                     VkImage                  destination,
+                     VkImageLayout            layout,
+                     uint32_t                 regionCount,
+                     const VkBufferImageCopy* regions)
+{
+    {
+        const std::scoped_lock lock{gSpyMutex};
+        ++gSpiedCopies;
+    }
+    gRealCopyBufferToImage(commandBuffer, source, destination, layout, regionCount, regions);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL
+spyQueueSubmit2(VkQueue queue, uint32_t submitCount, const VkSubmitInfo2* submits, VkFence fence)
+{
+    {
+        std::unique_lock lock{gSpyMutex};
+        SpiedSubmit      spied{.copies = std::exchange(gSpiedCopies, 0u)};
+        for (const VkSubmitInfo2& submit : std::span{submits, submitCount})
+        {
+            for (const VkSemaphoreSubmitInfo& signal :
+                 std::span{submit.pSignalSemaphoreInfos, submit.signalSemaphoreInfoCount})
+            {
+                // The value of a binary semaphore is ignored and 0; a timeline signal rises.
+                if (signal.value == 0u)
+                {
+                    spied.signal = signal.semaphore;
+                }
+            }
+        }
+        gSpiedSubmits.push_back(spied);
+
+        if (std::exchange(gSpyHoldNext, false))
+        {
+            gSpyHeld = true;
+            gSpyChanged.notify_all();
+            // A test that fails before it releases must not hang the render thread for ever.
+            gSpyChanged.wait_for(lock,
+                                 2 * gDeadline,
+                                 []
+                                 {
+                                     return gSpyReleased;
+                                 });
+            gSpyReleased = false;
+            gSpyHeld     = false;
+        }
+    }
+
+    return gRealQueueSubmit2(queue, submitCount, submits, fence);
+}
+
+/**
+ * Sees the submits and the copies of the render thread, by swapping them in the device's function
+ * table for forwarders that note them, like BindCounter. It can also hold the render thread in its
+ * next submit: what is created meanwhile waits in the upload queue, and no iteration takes it. The
+ * thread that holds it is the test's; the call that waits is bounded by a deadline.
+ *
+ * Make it while the render thread is not recording (before anything is created, or after a
+ * join()): the thread reads the table.
+ */
+// The state is in globals, because the forwarders it swaps in are plain functions; the members are
+// the interface of the instance.
+// NOLINTBEGIN(readability-convert-member-functions-to-static)
+class QueueSpy
+{
+public:
+    explicit QueueSpy(vk::raii::detail::DeviceDispatcher& table)
+        : mTable{table}
+    {
+        gSpiedSubmits.clear();
+        gSpiedCopies = 0u;
+        gSpyHoldNext = gSpyHeld = gSpyReleased = false;
+
+        gRealQueueSubmit2            = table.vkQueueSubmit2;
+        gRealCopyBuffer              = table.vkCmdCopyBuffer;
+        gRealCopyBufferToImage       = table.vkCmdCopyBufferToImage;
+        table.vkQueueSubmit2         = spyQueueSubmit2;
+        table.vkCmdCopyBuffer        = spyCopyBuffer;
+        table.vkCmdCopyBufferToImage = spyCopyBufferToImage;
+    }
+
+    ~QueueSpy()
+    {
+        release();
+        mTable.vkQueueSubmit2         = gRealQueueSubmit2;
+        mTable.vkCmdCopyBuffer        = gRealCopyBuffer;
+        mTable.vkCmdCopyBufferToImage = gRealCopyBufferToImage;
+    }
+
+    QueueSpy(const QueueSpy&)            = delete;
+    QueueSpy& operator=(const QueueSpy&) = delete;
+
+    /** The next submit of the render thread, or of any thread, waits for release(). */
+    void
+    holdNextSubmit()
+    {
+        const std::scoped_lock lock{gSpyMutex};
+        gSpyHoldNext = true;
+    }
+
+    /** Waits for gDeadline until a submit is held; false if none was. */
+    [[nodiscard]] bool
+    waitUntilHeld()
+    {
+        std::unique_lock lock{gSpyMutex};
+
+        return gSpyChanged.wait_for(lock,
+                                    gDeadline,
+                                    []
+                                    {
+                                        return gSpyHeld;
+                                    });
+    }
+
+    void
+    release()
+    {
+        {
+            const std::scoped_lock lock{gSpyMutex};
+            gSpyReleased = true;
+        }
+        gSpyChanged.notify_all();
+    }
+
+    /** The submits so far, in order. */
+    [[nodiscard]] std::vector<SpiedSubmit>
+    submits() const
+    {
+        const std::scoped_lock lock{gSpyMutex};
+
+        return gSpiedSubmits;
+    }
+
+    /** The copies of each submit of copies, in order: the submits that signal no binary
+     *  semaphore. */
+    [[nodiscard]] std::vector<std::size_t>
+    copiesPerUpload() const
+    {
+        std::vector<std::size_t> copies;
+        for (const SpiedSubmit& submit : submits())
+        {
+            if (submit.signal == VK_NULL_HANDLE)
+            {
+                copies.push_back(submit.copies);
+            }
+        }
+
+        return copies;
+    }
+
+private:
+    vk::raii::detail::DeviceDispatcher& mTable;
+};
+
+// NOLINTEND(readability-convert-member-functions-to-static)
+
+PFN_vkAcquireNextImageKHR gRealAcquireNextImage = nullptr;
+
+VKAPI_ATTR VkResult VKAPI_CALL
+failAcquireNextImage(VkDevice /*device*/,
+                     VkSwapchainKHR /*swapchain*/,
+                     uint64_t /*timeout*/,
+                     VkSemaphore /*semaphore*/,
+                     VkFence /*fence*/,
+                     uint32_t* /*imageIndex*/)
+{
+    return VK_ERROR_SURFACE_LOST_KHR;
+}
+
+/**
+ * Makes every acquire of the swapchain image fail as a lost surface does: the render thread gets a
+ * vk::SurfaceLostKHRError, the one failure of the render thread that a driver, not the renderer,
+ * causes. Scope it around a renderer that renders nothing yet.
+ */
+class SurfaceLoss
+{
+public:
+    explicit SurfaceLoss(vk::raii::detail::DeviceDispatcher& table)
+        : mTable{table}
+    {
+        gRealAcquireNextImage       = table.vkAcquireNextImageKHR;
+        table.vkAcquireNextImageKHR = failAcquireNextImage;
+    }
+
+    ~SurfaceLoss() { mTable.vkAcquireNextImageKHR = gRealAcquireNextImage; }
+
+    SurfaceLoss(const SurfaceLoss&)            = delete;
+    SurfaceLoss& operator=(const SurfaceLoss&) = delete;
+
+private:
+    vk::raii::detail::DeviceDispatcher& mTable;
+};
+
+void
+releaseTheUploadRing(Renderer& renderer)
+{
+    for (int copy = 0; copy < 2; ++copy)
+    {
+        const Mesh mesh = makeMesh(renderer, gCompatibleLayout);
+        EXPECT_TRUE(becomesTrue(
+            [&]
+            {
+                return mesh.isResident();
+            }));
+    }
+}
 } // namespace
 
 /**
@@ -645,7 +863,6 @@ TEST_F(RendererTest, destroyWhileFrameInFlightJoins)
 
     auto renderer = makeRenderer();
     renderer->addRenderable(std::move(renderable));
-    renderer->start();
     for (int frame = 0; frame < 3; ++frame)
     {
         renderer->submitFrame({});
@@ -660,6 +877,24 @@ TEST_F(RendererTest, destroyWhileFrameInFlightJoins)
 
     EXPECT_TRUE(weak.expired());
     EXPECT_EQ(destroyedOn, dropperId);
+}
+
+/** ~Renderer wakes a render thread that waits for the next frame or for uploads. */
+TEST_F(RendererTest, destroyingAnIdleRendererReturns)
+{
+    auto              renderer = makeRenderer();
+    FramePacketQueue& packets  = RendererTestAccess::packets(*renderer);
+
+    EXPECT_TRUE(returnsInTime(
+        [&]
+        {
+            renderer.reset();
+        },
+        [&]
+        {
+            // The thread has not seen the stop: a packet wakes it, and it ends at the next check.
+            packets.push({}, {});
+        }));
 }
 
 /**
@@ -682,38 +917,90 @@ TEST_F(RendererTest, throwingOnDrawPropagatesFromSubmitFrame)
                 throw std::runtime_error{"onDraw failed"};
             }
         }));
-    renderer->start();
 
     EXPECT_THROW(renderer->submitFrame({}), std::runtime_error);
     EXPECT_EQ(renderer->getState(), Renderer::State::eRunning);
+    EXPECT_FALSE(renderer->failure());
 
     EXPECT_NO_THROW(renderer->submitFrame({}));
-    EXPECT_FALSE(renderer->stop());
 }
 
 /**
- * A draw whose vertex layout the shader cannot read ends the render thread, and stop() hands the
- * exception to the caller. While it is down, submitFrame() does not wait for it: the dead thread
- * keeps taking and dropping packets. The renderable stays: after a restart it draws a mesh that
- * fits.
+ * A mesh whose layout does not cover the inputs of the shader is a mistake of the renderable, and
+ * it is the renderable that is told: RenderQueue::submit() throws the DrawError, with the name the
+ * draw gave, the mesh, the shader and the input that is missing, and submitFrame() lets it reach
+ * the caller. The frame is not queued and the renderer keeps running: the next frame, with a mesh
+ * that fits, is drawn. Renderer::checkDraw() says the same without a frame.
  */
 // The score comes from the gtest assertion macros.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-TEST_F(RendererTest, renderThreadFailureIsReportedAndRestartable)
+TEST_F(RendererTest, incompatibleDrawThrowsDrawErrorFromSubmitFrameAndTheRendererRuns)
 {
     auto renderer = makeRenderer();
     auto material = makeMaterial(*renderer, "WorldSpace");
-    auto bad      = makeMesh(*renderer, incompatibleLayout());
-    auto good     = makeMesh(*renderer, compatibleLayout());
+    auto bad      = makeMesh(*renderer, gIncompatibleLayout, "quad");
+    auto good     = makeMesh(*renderer, gCompatibleLayout, "quad");
 
     bool first = true;
     renderer->addRenderable(std::make_shared<LambdaRenderable>(
         [&](const FrameContext& /*context*/, RenderQueue& queue)
         {
-            queue.submit(first ? bad : good, material, Math::Matrix4x4f{1.0f});
-            first = false;
+            queue.submit(first ? bad : good, material, Math::Matrix4x4f{1.0f}, "ball");
         }));
-    renderer->start();
+
+    try
+    {
+        renderer->submitFrame({});
+        FAIL() << "submitFrame() did not throw.";
+    }
+    catch (const DrawError& error)
+    {
+        EXPECT_EQ(std::string_view{error.what()},
+                  "ball: mesh \"quad\" (float2 @0) does not provide location 1 (vec4 inColor) of "
+                  "shader \"WorldSpace\"");
+    }
+    EXPECT_EQ(renderer->getState(), Renderer::State::eRunning);
+    EXPECT_TRUE(RendererTestAccess::packets(*renderer).empty());
+
+    const auto verdict = renderer->checkDraw(bad, material);
+    ASSERT_FALSE(verdict);
+    EXPECT_EQ(verdict.error(),
+              "mesh \"quad\" (float2 @0) does not provide location 1 (vec4 inColor) of shader "
+              "\"WorldSpace\"");
+    EXPECT_TRUE(renderer->checkDraw(good, material));
+    EXPECT_TRUE(renderer->checkDraw({}, material));
+    EXPECT_TRUE(renderer->checkDraw(bad, {}));
+
+    first = false;
+    for (int frame = 0; frame < 3; ++frame)
+    {
+        EXPECT_NO_THROW(renderer->submitFrame({}));
+    }
+    EXPECT_EQ(renderer->getState(), Renderer::State::eRunning);
+    EXPECT_FALSE(renderer->failure());
+}
+
+/**
+ * A failure of the render thread that the renderer did not cause (here a lost surface at the
+ * acquire) ends it for good: the state is eFailed and failure() has the exception, every time it is
+ * called. The thread keeps taking and dropping packets, so submitFrame() does not wait for it, and
+ * there is no way back: the state stays. What is created afterwards is queued and never copied,
+ * and its handle, which outlives the renderer, still says it is not resident. A failure that
+ * failure() returned is collected, so ~Renderer does not log it.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, renderThreadFailureIsReportedAndFinal)
+{
+    auto       renderer = makeRenderer();
+    const Mesh early    = makeMesh(*renderer, gCompatibleLayout);
+    EXPECT_TRUE(becomesTrue(
+        [&]
+        {
+            return early.isResident();
+        }));
+
+    const SurfaceLoss loss{RendererTestAccess::dispatcher(*renderer)};
     renderer->submitFrame({});
 
     ASSERT_TRUE(becomesTrue(
@@ -721,6 +1008,7 @@ TEST_F(RendererTest, renderThreadFailureIsReportedAndRestartable)
         {
             return renderer->getState() == Renderer::State::eFailed;
         }));
+    EXPECT_FALSE(RendererTestAccess::failureCollected(*renderer));
 
     // The first of these fills the slot, the second waits for a consumer.
     EXPECT_TRUE(returnsInTime(
@@ -733,21 +1021,31 @@ TEST_F(RendererTest, renderThreadFailureIsReportedAndRestartable)
         },
         [&]
         {
-            // Wakes the submit that waits. The test has failed already, so losing the exception
-            // to this stop() does not matter.
-            std::ignore = renderer->stop();
+            // Frees the submits that wait, one at a time: takes what the slot holds, and never
+            // waits itself.
+            std::stop_source stopped;
+            stopped.request_stop();
+            for (int frame = 0; frame < 3; ++frame)
+            {
+                std::ignore = RendererTestAccess::packets(*renderer).pop(stopped.get_token());
+                std::this_thread::sleep_for(std::chrono::milliseconds{10});
+            }
         }));
 
-    const std::exception_ptr failure = renderer->stop();
+    const std::exception_ptr failure = renderer->failure();
     ASSERT_TRUE(failure);
-    EXPECT_THROW(std::rethrow_exception(failure), std::invalid_argument);
-    EXPECT_EQ(renderer->getState(), Renderer::State::eStopped);
+    EXPECT_THROW(std::rethrow_exception(failure), vk::SurfaceLostKHRError);
+    EXPECT_TRUE(RendererTestAccess::failureCollected(*renderer));
+    EXPECT_EQ(renderer->failure(), failure);
+    EXPECT_EQ(renderer->getState(), Renderer::State::eFailed);
 
-    renderer->start();
-    renderer->submitFrame({});
-    renderer->submitFrame({});
-    EXPECT_EQ(renderer->getState(), Renderer::State::eRunning);
-    EXPECT_FALSE(renderer->stop());
+    const Mesh late = makeMesh(*renderer, gCompatibleLayout);
+    EXPECT_EQ(renderer->uploads().pendingCount, 1u);
+    EXPECT_FALSE(late.isResident());
+
+    renderer.reset();
+    EXPECT_TRUE(early.isResident());
+    EXPECT_FALSE(late.isResident());
 }
 
 /**
@@ -778,42 +1076,17 @@ TEST_F(RendererTest, addRenderableFromOnDrawIsDrawnNextFrame)
                     }));
             }
         }));
-    renderer->start();
 
     renderer->submitFrame({});
     EXPECT_EQ(log, (std::vector<std::string>{"parent.onDraw"}));
 
     renderer->submitFrame({});
     EXPECT_EQ(log, (std::vector<std::string>{"parent.onDraw", "child.onDraw"}));
-    EXPECT_FALSE(renderer->stop());
 }
 
 /**
- * A mesh whose attributes do not cover the shader's inputs is a bug of the renderable: it fails
- * the render thread, when the pipeline is looked up, instead of being drawn with garbage.
- */
-TEST_F(RendererTest, incompatibleMeshFailsRenderThread)
-{
-    auto renderer = makeRenderer();
-    renderer->addRenderable(
-        drawing(makeMesh(*renderer, incompatibleLayout()), makeMaterial(*renderer, "WorldSpace")));
-    renderer->start();
-    renderer->submitFrame({});
-
-    EXPECT_TRUE(becomesTrue(
-        [&]
-        {
-            return renderer->getState() == Renderer::State::eFailed;
-        }));
-
-    const std::exception_ptr failure = renderer->stop();
-    ASSERT_TRUE(failure);
-    EXPECT_THROW(std::rethrow_exception(failure), std::invalid_argument);
-}
-
-/**
- * A draw without a mesh or a material is dropped when the packet is built, and the other draws
- * of the frame are drawn: the valid draw's pipeline is in the cache afterwards. A default handle is
+ * A draw without a mesh or a material is dropped when it is submitted, and the other draws of the
+ * frame are drawn: the valid draw's pipeline is in the table afterwards. A default handle is
  * empty, which is what "without" means, and a created one is not; a copy shares the mesh.
  */
 // The score comes from the gtest assertion macros.
@@ -822,11 +1095,11 @@ TEST_F(RendererTest, drawWithoutMeshOrMaterialIsSkipped)
 {
     auto renderer = makeRenderer();
     auto material = makeMaterial(*renderer, "WorldSpace");
-    auto mesh     = makeMesh(*renderer, compatibleLayout());
+    auto mesh     = makeMesh(*renderer, gCompatibleLayout);
 
     EXPECT_FALSE(Mesh{});
     EXPECT_FALSE(Material{});
-    EXPECT_NE(makeMesh(*renderer, compatibleLayout()), mesh);
+    EXPECT_NE(makeMesh(*renderer, gCompatibleLayout), mesh);
     ASSERT_TRUE(mesh);
     ASSERT_TRUE(material);
     EXPECT_EQ(Mesh{mesh}, mesh);
@@ -839,14 +1112,14 @@ TEST_F(RendererTest, drawWithoutMeshOrMaterialIsSkipped)
             queue.submit({}, material, Math::Matrix4x4f{1.0f});
             queue.submit(mesh, material, Math::Matrix4x4f{1.0f});
         }));
-    renderer->start();
     for (int frame = 0; frame < 3; ++frame)
     {
         renderer->submitFrame({});
     }
 
     EXPECT_EQ(renderer->getState(), Renderer::State::eRunning);
-    EXPECT_FALSE(renderer->stop());
+    RendererTestAccess::join(*renderer);
+    EXPECT_FALSE(renderer->failure());
 
     // The valid draw reached the render thread: it asked for its pipeline.
     EXPECT_EQ(RendererTestAccess::pipelineCount(*renderer), 1u);
@@ -867,57 +1140,16 @@ TEST_F(RendererTest, onDrawRunsOnSubmittingThread)
             drawnOn  = std::this_thread::get_id();
             timeSeen = context.timeSeconds;
         }));
-    renderer->start();
     renderer->submitFrame({.timeSeconds = kTime});
-    EXPECT_FALSE(renderer->stop());
 
     EXPECT_EQ(drawnOn, std::this_thread::get_id());
     EXPECT_EQ(timeSeen, kTime);
 }
 
 /**
- * submitFrame() on a renderer that is not running returns at once and calls no renderable. It would
- * otherwise wait for a consumer that does not exist.
- */
-TEST_F(RendererTest, submitFrameWhenStoppedReturns)
-{
-    std::size_t draws = 0u;
-
-    auto renderer = makeRenderer();
-    renderer->addRenderable(std::make_shared<LambdaRenderable>(
-        [&draws](const FrameContext& /*context*/, RenderQueue& /*queue*/)
-        {
-            ++draws;
-        }));
-
-    // The second call would wait for a consumer if the first had queued a frame. start() gives it
-    // one.
-    const auto submitTwice = [&]
-    {
-        return returnsInTime(
-            [&]
-            {
-                renderer->submitFrame({});
-                renderer->submitFrame({});
-            },
-            [&]
-            {
-                renderer->start();
-            });
-    };
-
-    EXPECT_TRUE(submitTwice());
-    renderer->start();
-    EXPECT_FALSE(renderer->stop());
-    EXPECT_TRUE(submitTwice());
-
-    EXPECT_EQ(draws, 0u);
-}
-
-/**
- * trySubmitFrame() calls no renderable while the render thread still holds the previous frame, and
- * none when stopped. A zero-sized window makes the render thread sleep after each frame, which
- * keeps the slot full long enough to see.
+ * trySubmitFrame() calls no renderable while the render thread still holds the previous frame. A
+ * zero-sized window makes the render thread sleep after each frame, which keeps the slot full long
+ * enough to see.
  */
 TEST_F(RendererTest, trySubmitFrameSkipsWhileQueued)
 {
@@ -930,11 +1162,7 @@ TEST_F(RendererTest, trySubmitFrameSkipsWhileQueued)
             ++draws;
         }));
 
-    renderer->trySubmitFrame({});
-    EXPECT_EQ(draws, 0u);
-
     renderer->resize({});
-    renderer->start();
     std::size_t calls    = 0u;
     const auto  deadline = std::chrono::steady_clock::now() + gDeadline;
     while (calls == draws && std::chrono::steady_clock::now() < deadline)
@@ -943,73 +1171,53 @@ TEST_F(RendererTest, trySubmitFrameSkipsWhileQueued)
         ++calls;
     }
     EXPECT_LT(draws, calls) << "No call found the slot full.";
-    EXPECT_FALSE(renderer->stop());
-
-    const std::size_t drawsWhenStopped = draws;
-    renderer->trySubmitFrame({});
-    EXPECT_EQ(draws, drawsWhenStopped);
-}
-
-/** stop() wakes a render thread that waits for the next frame. */
-TEST_F(RendererTest, stopInterruptsIdleRenderThread)
-{
-    auto renderer = makeRenderer();
-    renderer->start();
-
-    EXPECT_TRUE(returnsInTime(
-        [&]
-        {
-            EXPECT_FALSE(renderer->stop());
-        },
-        [&]
-        {
-            // stop() holds the state lock while it waits, so submitFrame() would wait for it.
-            RendererTestAccess::packets(*renderer).push({}, {});
-        }));
 }
 
 // The score comes from the gtest assertion macros.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST_F(RendererTest, createMeshRejectsMalformedDescription)
 {
-    constexpr std::size_t        kStride = 8u;
-    const std::vector<std::byte> bytes(2u * kStride);
-    const VertexAttribute        float2{VertexFormat::eFloat2, 0u};
+    constexpr std::uint32_t      kStride = 8u;
+    const std::vector<std::byte> bytes(std::size_t{2u} * kStride);
+    const VertexLayout           float2 = vertexLayout(kStride, {{VertexFormat::eFloat2, 0u}});
 
     auto renderer = makeRenderer();
 
-    EXPECT_THROW(std::ignore = renderer->createMesh({.stride = kStride, .attributes = {float2}}),
-                 std::invalid_argument);
-    EXPECT_THROW(std::ignore = renderer->createMesh({.vertices = bytes, .attributes = {float2}}),
-                 std::invalid_argument);
-    EXPECT_THROW(std::ignore =
-                     renderer->createMesh({.vertices   = std::span{bytes}.first(kStride + 1u),
-                                           .stride     = kStride,
-                                           .attributes = {float2}}),
+    EXPECT_THROW(std::ignore = renderer->createMesh({.layout = float2}), std::invalid_argument);
+    EXPECT_THROW(
+        std::ignore = renderer->createMesh(
+            {.vertices = bytes, .layout = vertexLayout(0u, {{VertexFormat::eFloat2, 0u}})}),
+        std::invalid_argument);
+    EXPECT_THROW(std::ignore = renderer->createMesh(
+                     {.vertices = std::span{bytes}.first(kStride + 1u), .layout = float2}),
                  std::invalid_argument);
     EXPECT_THROW(
         std::ignore = renderer->createMesh(
-            {.vertices = bytes, .stride = kStride, .attributes = {{VertexFormat::eFloat2, 4u}}}),
+            {.vertices = bytes, .layout = vertexLayout(kStride, {{VertexFormat::eFloat2, 4u}})}),
         std::invalid_argument);
-    EXPECT_THROW(std::ignore =
-                     renderer->createMesh({.vertices   = bytes,
-                                           .stride     = kStride,
-                                           .attributes = std::vector(9u, VertexAttribute{})}),
+
+    // More attributes than a pipeline takes: the helper refuses to make such a layout, and a layout
+    // that was filled by hand is refused by the renderer.
+    EXPECT_THROW(std::ignore = vertexLayout(kStride, {{}, {}, {}, {}, {}, {}, {}, {}, {}}),
+                 std::invalid_argument);
+    VertexLayout tooMany   = float2;
+    tooMany.attributeCount = static_cast<std::uint8_t>(gMaxVertexAttributes + 1u);
+    EXPECT_THROW(std::ignore = renderer->createMesh({.vertices = bytes, .layout = tooMany}),
                  std::invalid_argument);
 
     // A stride or an offset off a multiple of 4 puts a component at a misaligned address.
-    constexpr std::size_t        kOddStride = 10u;
-    const std::vector<std::byte> oddBytes(2u * kOddStride);
-    EXPECT_THROW(std::ignore = renderer->createMesh({.vertices   = oddBytes,
-                                                     .stride     = kOddStride,
-                                                     .attributes = {{VertexFormat::eFloat2, 0u}}}),
+    constexpr std::uint32_t      kOddStride = 10u;
+    const std::vector<std::byte> oddBytes(std::size_t{2u} * kOddStride);
+    EXPECT_THROW(std::ignore = renderer->createMesh(
+                     {.vertices = oddBytes,
+                      .layout   = vertexLayout(kOddStride, {{VertexFormat::eFloat2, 0u}})}),
                  std::invalid_argument);
     // The attribute fits the stride (2 + 8 <= 12), so only the multiple-of-4 rule rejects it.
-    constexpr std::size_t        kFitStride = 12u;
-    const std::vector<std::byte> fitBytes(2u * kFitStride);
-    EXPECT_THROW(std::ignore = renderer->createMesh({.vertices   = fitBytes,
-                                                     .stride     = kFitStride,
-                                                     .attributes = {{VertexFormat::eFloat2, 2u}}}),
+    constexpr std::uint32_t      kFitStride = 12u;
+    const std::vector<std::byte> fitBytes(std::size_t{2u} * kFitStride);
+    EXPECT_THROW(std::ignore = renderer->createMesh(
+                     {.vertices = fitBytes,
+                      .layout   = vertexLayout(kFitStride, {{VertexFormat::eFloat2, 2u}})}),
                  std::invalid_argument);
 
     // One vertex whose stride is the device maximum plus 4. Devices with a huge maximum would make
@@ -1020,15 +1228,24 @@ TEST_F(RendererTest, createMeshRejectsMalformedDescription)
     if (maxStride <= kLargestTestable)
     {
         const std::vector<std::byte> hugeVertex(std::size_t{maxStride} + 4u);
-        EXPECT_THROW(std::ignore =
-                         renderer->createMesh({.vertices   = hugeVertex,
-                                               .stride     = maxStride + 4u,
-                                               .attributes = {{VertexFormat::eFloat2, 0u}}}),
+        EXPECT_THROW(std::ignore = renderer->createMesh(
+                         {.vertices = hugeVertex,
+                          .layout   = vertexLayout(maxStride + 4u, {{VertexFormat::eFloat2, 0u}})}),
                      std::invalid_argument);
     }
 
-    const Mesh mesh =
-        renderer->createMesh({.vertices = bytes, .stride = kStride, .attributes = {float2}});
+    // The name of the description starts the message.
+    try
+    {
+        std::ignore = renderer->createMesh({.name = "ship.obj", .layout = float2});
+        FAIL() << "createMesh() did not throw.";
+    }
+    catch (const std::invalid_argument& error)
+    {
+        EXPECT_TRUE(std::string_view{error.what()}.starts_with("Mesh \"ship.obj\": "));
+    }
+
+    const Mesh mesh = renderer->createMesh({.vertices = bytes, .layout = float2});
     ASSERT_TRUE(mesh);
     EXPECT_EQ(HandleTestAccess::data(mesh).vertexCount, 2u);
 }
@@ -1039,66 +1256,85 @@ TEST_F(RendererTest, createMeshRejectsMalformedDescription)
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST_F(RendererTest, createMeshRejectsMalformedIndices)
 {
-    constexpr std::size_t        kStride = 8u;
-    const std::vector<std::byte> bytes(3u * kStride);
-    const VertexAttribute        float2{VertexFormat::eFloat2, 0u};
+    constexpr std::uint32_t      kStride = 8u;
+    const std::vector<std::byte> bytes(std::size_t{3u} * kStride);
+    const VertexLayout           float2     = vertexLayout(kStride, {{VertexFormat::eFloat2, 0u}});
     const std::uint32_t          triangle[] = {0u, 1u, 2u};
     const std::uint32_t          quad[]     = {0u, 1u, 2u, 0u};
     const std::uint32_t          pastEnd[]  = {0u, 1u, 3u};
 
     auto renderer = makeRenderer();
 
-    EXPECT_THROW(
-        std::ignore = renderer->createMesh(
-            {.vertices = bytes, .indices = quad, .stride = kStride, .attributes = {float2}}),
-        std::invalid_argument);
-    EXPECT_THROW(
-        std::ignore = renderer->createMesh(
-            {.vertices = bytes, .indices = pastEnd, .stride = kStride, .attributes = {float2}}),
-        std::invalid_argument);
+    EXPECT_THROW(std::ignore =
+                     renderer->createMesh({.vertices = bytes, .indices = quad, .layout = float2}),
+                 std::invalid_argument);
+    EXPECT_THROW(std::ignore = renderer->createMesh(
+                     {.vertices = bytes, .indices = pastEnd, .layout = float2}),
+                 std::invalid_argument);
 
-    const Mesh indexed = renderer->createMesh(
-        {.vertices = bytes, .indices = triangle, .stride = kStride, .attributes = {float2}});
+    const Mesh indexed =
+        renderer->createMesh({.vertices = bytes, .indices = triangle, .layout = float2});
     ASSERT_TRUE(indexed);
     EXPECT_EQ(HandleTestAccess::data(indexed).indexCount, 3u);
 
-    const Mesh plain =
-        renderer->createMesh({.vertices = bytes, .stride = kStride, .attributes = {float2}});
+    const Mesh plain = renderer->createMesh({.vertices = bytes, .layout = float2});
     ASSERT_TRUE(plain);
     EXPECT_EQ(HandleTestAccess::data(plain).indexCount, 0u);
 }
 
 /**
+ * Meshes of one layout have one layout id, and a mesh of another layout has another: the tables of
+ * the renderer that hold an entry per layout key on it. Ids are not 0, which is none.
+ */
+TEST_F(RendererTest, meshesOfOneLayoutShareALayoutId)
+{
+    auto renderer = makeRenderer();
+
+    const Mesh first   = makeMesh(*renderer, gCompatibleLayout);
+    const Mesh second  = makeMesh(*renderer, gCompatibleLayout);
+    const Mesh another = makeMesh(*renderer, gIncompatibleLayout);
+
+    EXPECT_NE(HandleTestAccess::data(first).layoutId, 0u);
+    EXPECT_EQ(HandleTestAccess::data(first).layoutId, HandleTestAccess::data(second).layoutId);
+    EXPECT_NE(HandleTestAccess::data(first).layoutId, HandleTestAccess::data(another).layoutId);
+}
+
+/**
  * The indices follow the vertices, at a multiple of 4 bytes because the stride is one. The staging
- * buffer holds both.
+ * buffer holds both. The render thread is held in the submit of another mesh, so that the staging
+ * buffer is still in the queue when the test reads it.
  */
 // The score comes from the gtest assertion macros.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST_F(RendererTest, createMeshStagesIndicesAfterVertices)
 {
-    constexpr std::size_t kStride = 12u;
+    constexpr std::uint32_t kStride = 12u;
     // 36 bytes of vertices: the indices start at 36.
-    std::vector<std::byte> vertices(3u * kStride);
+    std::vector<std::byte> vertices(std::size_t{3u} * kStride);
     for (std::size_t i = 0u; i < vertices.size(); ++i)
     {
         vertices[i] = static_cast<std::byte>(i + 1u);
     }
     const std::uint32_t indices[] = {2u, 1u, 0u};
 
-    auto renderer = makeRenderer();
+    auto     renderer = makeRenderer();
+    QueueSpy spy{RendererTestAccess::dispatcher(*renderer)};
 
-    const Mesh mesh = renderer->createMesh({.vertices   = vertices,
-                                            .indices    = indices,
-                                            .stride     = kStride,
-                                            .attributes = {{VertexFormat::eFloat2, 0u}}});
+    spy.holdNextSubmit();
+    const Mesh held = makeMesh(*renderer, gCompatibleLayout);
+    ASSERT_TRUE(spy.waitUntilHeld());
+
+    const Mesh mesh =
+        renderer->createMesh({.vertices = vertices,
+                              .indices  = indices,
+                              .layout   = vertexLayout(kStride, {{VertexFormat::eFloat2, 0u}})});
     ASSERT_TRUE(mesh);
     EXPECT_EQ(HandleTestAccess::data(mesh).indexOffset, 36u);
 
     // The bytes wait in the staging buffer, which the render thread copies into the buffer of
     // the mesh. Reading it back through mapForWrite() is meant for writing; it is legal
     // on lavapipe, whose host memory is coherent.
-    ASSERT_EQ(RendererTestAccess::pendingUploadCount(*renderer), 1u);
-    const auto staging = RendererTestAccess::pendingStaging(*renderer, 0u).lock();
+    const auto staging = RendererTestAccess::arrivedStaging(*renderer, 0u).lock();
     ASSERT_TRUE(staging);
     EXPECT_EQ(staging->byteSize(), HandleTestAccess::data(mesh).indexOffset + sizeof(indices));
     EXPECT_EQ(HandleTestAccess::data(mesh).buffer->byteSize(), staging->byteSize());
@@ -1109,6 +1345,13 @@ TEST_F(RendererTest, createMeshStagesIndicesAfterVertices)
                           indices,
                           sizeof(indices)),
               0);
+
+    spy.release();
+    EXPECT_TRUE(becomesTrue(
+        [&]
+        {
+            return mesh.isResident();
+        }));
 }
 
 /** An indexed mesh reaches the render thread; the validation layer checks the draw. */
@@ -1117,19 +1360,19 @@ TEST_F(RendererTest, indexedMeshIsDrawn)
     const std::uint32_t indices[] = {0u, 1u, 2u};
 
     auto renderer = makeRenderer();
-    auto mesh     = renderer->createMesh({.vertices   = std::vector<std::byte>(3u * gQuadStride),
-                                          .indices    = indices,
-                                          .stride     = gQuadStride,
-                                          .attributes = compatibleLayout()});
+    auto mesh =
+        renderer->createMesh({.vertices = std::vector<std::byte>(std::size_t{3u} * gQuadStride),
+                              .indices  = indices,
+                              .layout   = gCompatibleLayout});
     renderer->addRenderable(drawing(mesh, makeMaterial(*renderer, "WorldSpace")));
-    renderer->start();
     for (int frame = 0; frame < 3; ++frame)
     {
         renderer->submitFrame({});
     }
 
     EXPECT_EQ(renderer->getState(), Renderer::State::eRunning);
-    EXPECT_FALSE(renderer->stop());
+    RendererTestAccess::join(*renderer);
+    EXPECT_FALSE(renderer->failure());
     EXPECT_EQ(RendererTestAccess::pipelineCount(*renderer), 1u);
 }
 
@@ -1148,18 +1391,16 @@ TEST_F(RendererTest, indexedMeshIsDrawn)
 TEST_F(RendererTest, repeatedBindsAreSkipped)
 {
     const std::uint32_t indices[] = {0u, 1u, 2u};
-    const auto          vertices  = std::vector<std::byte>(3u * gQuadStride);
+    const auto          vertices  = std::vector<std::byte>(std::size_t{3u} * gQuadStride);
 
     auto renderer = makeRenderer();
     auto indexed  = [&]
     {
-        return renderer->createMesh({.vertices   = vertices,
-                                     .indices    = indices,
-                                     .stride     = gQuadStride,
-                                     .attributes = compatibleLayout()});
+        return renderer->createMesh(
+            {.vertices = vertices, .indices = indices, .layout = gCompatibleLayout});
     };
     const Mesh     meshA = indexed();
-    const Mesh     meshB = makeMesh(*renderer, compatibleLayout());
+    const Mesh     meshB = makeMesh(*renderer, gCompatibleLayout);
     const Mesh     meshC = indexed();
     const Material first = makeMaterial(*renderer, "WorldSpace");
     const Material other = makeMaterial(*renderer, "ScreenSpacePositionColor");
@@ -1182,12 +1423,22 @@ TEST_F(RendererTest, repeatedBindsAreSkipped)
             queue.submit(meshC, other, world);
         }));
 
+    for (const Mesh& mesh : {meshA, meshB, meshC})
     {
+        ASSERT_TRUE(becomesTrue(
+            [&]
+            {
+                return mesh.isResident();
+            }));
+    }
+
+    {
+        // The render thread is idle: nothing is left to copy, and no frame is submitted.
         const BindCounter counter{RendererTestAccess::dispatcher(*renderer)};
-        renderer->start();
         renderer->submitFrame({});
         renderer->submitFrame({});
-        EXPECT_FALSE(renderer->stop());
+        RendererTestAccess::join(*renderer);
+        EXPECT_FALSE(renderer->failure());
         EXPECT_EQ(RendererTestAccess::pipelineCount(*renderer), 2u);
         EXPECT_EQ(gPipelineBinds, 2);
         EXPECT_EQ(gVertexBufferBinds, 4);
@@ -1217,12 +1468,18 @@ TEST_F(RendererTest, createTextureRejectsMalformedDescription)
 {
     auto renderer = makeRenderer();
 
+    // The render thread is held in the submit of the first valid texture, so that what is queued
+    // can be counted at the end.
+    QueueSpy spy{RendererTestAccess::dispatcher(*renderer)};
+    spy.holdNextSubmit();
+
+    // The handles are kept: a texture that nobody holds is dropped from the queue.
     const std::vector<std::byte> pixels(std::size_t{2u} * 3u * gPixelSize);
-    EXPECT_NO_THROW(std::ignore =
-                        renderer->createTexture({.pixels = pixels, .width = 2u, .height = 3u}));
+    std::vector<Texture>         valid;
     EXPECT_NO_THROW(
-        std::ignore = renderer->createTexture(
-            {.pixels = pixels, .width = 2u, .height = 3u, .format = TextureFormat::eRGBA8Unorm}));
+        valid.push_back(renderer->createTexture({.pixels = pixels, .width = 2u, .height = 3u})));
+    EXPECT_NO_THROW(valid.push_back(renderer->createTexture(
+        {.pixels = pixels, .width = 2u, .height = 3u, .format = TextureFormat::eRGBA8Unorm})));
 
     EXPECT_THROW(std::ignore = renderer->createTexture({.width = 2u, .height = 3u}),
                  std::invalid_argument);
@@ -1271,20 +1528,27 @@ TEST_F(RendererTest, createTextureRejectsMalformedDescription)
                  std::invalid_argument);
 
     // Only the two valid calls left an upload.
-    EXPECT_EQ(RendererTestAccess::pendingUploadCount(*renderer), 2u);
+    EXPECT_EQ(renderer->uploads().pendingCount, 2u);
+
+    spy.release();
+    EXPECT_TRUE(becomesTrue(
+        [&]
+        {
+            return renderer->uploads().pendingCount == 0u;
+        }));
 }
 
 /**
  * A frame in flight keeps the mesh's buffer alive after the renderer let go of the mesh: the frame
  * that drew it is rendered and gone, but its slot is not reused yet. Once the slot is reused,
- * nothing holds the buffer. The upload went in frames before, and is released by then (the
- * staging buffer has expired), so only the draw's recording holds the buffer: the copy and the
- * acquire of the upload frame would otherwise hide a missing retention of the draw.
+ * nothing holds the buffer. The copy of the mesh was submitted before, and its command buffer let
+ * go of the buffer when the ring of the upload queue reused the pool of that copy, so only the
+ * draw's recording holds the buffer: the copy would otherwise hide a missing retention of the draw.
  *
- * A popped packet is rendered unless the acquire skips it; on a headless surface only an acquire
- * timeout does, and the first frames find a free image. Submitting N+1 returns only once N has been
- * popped. The test submits no third frame after the draw, and reusing the slot of the draw takes
- * one (the renderer has two frame slots).
+ * The packet of a frame dies on the render thread after the frame, which lets go of the mesh, so
+ * the test waits for the handle to expire; that is when the frame was recorded. The test submits
+ * no third frame after the draw, and reusing the slot of the draw takes one (the renderer has two
+ * frame slots).
  *
  * It proves that Engine records the buffer through the retaining path and the renderer holds
  * nothing on top. GPU safety rests on the Graphics retention tests; a validation error fails the
@@ -1296,20 +1560,17 @@ TEST_F(RendererTest, meshBufferOutlivesMeshWhileFrameInFlight)
 {
     auto renderer = makeRenderer();
 
-    Mesh mesh        = makeMesh(*renderer, compatibleLayout());
-    auto weakMesh    = HandleTestAccess::weak(mesh);
-    auto weakBuffer  = std::weak_ptr<Graphics::Vulkan::Buffer>{HandleTestAccess::data(mesh).buffer};
-    auto weakStaging = RendererTestAccess::pendingStaging(*renderer, 0u);
+    Mesh mesh       = makeMesh(*renderer, gCompatibleLayout);
+    auto weakMesh   = HandleTestAccess::weak(mesh);
+    auto weakBuffer = std::weak_ptr<Graphics::Vulkan::Buffer>{HandleTestAccess::data(mesh).buffer};
 
-    // Upload first, and wait for the frame that recorded it to be gone: its staging buffer is
-    // released with it, and so is every hold of the upload on the buffer.
-    renderer->start();
-    EXPECT_TRUE(becomesTrue(
+    ASSERT_TRUE(becomesTrue(
         [&]
         {
-            renderer->submitFrame({});
-            return weakStaging.expired();
+            return mesh.isResident();
         }));
+    releaseTheUploadRing(*renderer);
+    ASSERT_EQ(HandleTestAccess::data(mesh).buffer.use_count(), 1);
 
     renderer->addRenderable(std::make_shared<LambdaRenderable>(
         [mesh = std::move(mesh), material = makeMaterial(*renderer, "WorldSpace")](
@@ -1322,27 +1583,28 @@ TEST_F(RendererTest, meshBufferOutlivesMeshWhileFrameInFlight)
     mesh = {};
     renderer->submitFrame({});
     renderer->submitFrame({});
-    EXPECT_FALSE(renderer->stop());
 
-    EXPECT_TRUE(weakMesh.expired());
+    ASSERT_TRUE(becomesTrue(
+        [&]
+        {
+            return weakMesh.expired();
+        }));
     EXPECT_FALSE(weakBuffer.expired());
 
     // Frames that draw nothing cycle through the slots until the draw's slot is reused; the
     // deadline keeps a leak from hanging the test.
-    renderer->start();
     EXPECT_TRUE(becomesTrue(
         [&]
         {
             renderer->submitFrame({});
             return weakBuffer.expired();
         }));
-    EXPECT_FALSE(renderer->stop());
 }
 
 /**
  * A frame in flight keeps the image of a texture alive after the renderer let go of the material:
- * the draw recorded the texture, and the frame's slot is not reused yet. The upload went in a
- * frame before, and is released by then, so only the draw's recording holds the image.
+ * the draw recorded the texture, and the frame's slot is not reused yet. The copy of the image went
+ * before, and let go when the ring reused its pool, so only the draw's recording holds the image.
  *
  * It proves that the draw loop records the texture of a material (useResource) and the renderer
  * holds nothing on top. GPU safety rests on the Graphics retention tests.
@@ -1357,17 +1619,14 @@ TEST_F(RendererTest, textureOutlivesMaterialWhileFrameInFlight)
     auto    weakTexture = HandleTestAccess::weak(texture);
     auto    weakImage =
         std::weak_ptr<Graphics::Vulkan::Texture>{HandleTestAccess::data(texture).texture};
-    auto weakStaging = RendererTestAccess::pendingStaging(*renderer, 0u);
 
-    // Upload first, and wait for the frame that recorded it to be gone: its staging buffer is
-    // released with it.
-    renderer->start();
-    EXPECT_TRUE(becomesTrue(
+    ASSERT_TRUE(becomesTrue(
         [&]
         {
-            renderer->submitFrame({});
-            return weakStaging.expired();
+            return texture.isResident();
         }));
+    releaseTheUploadRing(*renderer);
+    ASSERT_EQ(HandleTestAccess::data(texture).texture.use_count(), 1);
 
     renderer->addRenderable(std::make_shared<LambdaRenderable>(
         [mesh     = makeTexturedMesh(*renderer),
@@ -1382,20 +1641,21 @@ TEST_F(RendererTest, textureOutlivesMaterialWhileFrameInFlight)
         }));
     renderer->submitFrame({});
     renderer->submitFrame({});
-    EXPECT_FALSE(renderer->stop());
 
-    EXPECT_TRUE(weakTexture.expired());
+    ASSERT_TRUE(becomesTrue(
+        [&]
+        {
+            return weakTexture.expired();
+        }));
     EXPECT_FALSE(weakImage.expired());
 
     // Frames that draw nothing cycle through the slots until the draw's slot is reused.
-    renderer->start();
     EXPECT_TRUE(becomesTrue(
         [&]
         {
             renderer->submitFrame({});
             return weakImage.expired();
         }));
-    EXPECT_FALSE(renderer->stop());
 }
 
 /** As for the texture, for the parameter block of a material. */
@@ -1406,11 +1666,19 @@ TEST_F(RendererTest, parameterBlockOutlivesMaterialWhileFrameInFlight)
     auto renderer = makeRenderer();
 
     std::weak_ptr<Graphics::Vulkan::HeapBuffer> weakBlock;
+    std::weak_ptr<const Detail::MaterialData>   weakMaterial;
     {
         Material material = makeMaterial(*renderer, "WorldSpace");
         weakBlock         = HandleTestAccess::data(material).block;
+        weakMaterial      = HandleTestAccess::weak(material);
+        auto mesh         = makeMesh(*renderer, gCompatibleLayout);
+        ASSERT_TRUE(becomesTrue(
+            [&]
+            {
+                return mesh.isResident();
+            }));
         renderer->addRenderable(std::make_shared<LambdaRenderable>(
-            [mesh = makeMesh(*renderer, compatibleLayout()), material = std::move(material)](
+            [mesh = std::move(mesh), material = std::move(material)](
                 const FrameContext& /*context*/, RenderQueue& queue) mutable
             {
                 queue.submit(mesh, material, Math::Matrix4x4f{1.0f});
@@ -1419,139 +1687,332 @@ TEST_F(RendererTest, parameterBlockOutlivesMaterialWhileFrameInFlight)
             }));
     }
 
-    renderer->start();
     renderer->submitFrame({});
     renderer->submitFrame({});
-    EXPECT_FALSE(renderer->stop());
 
+    // The packet of the frame let go of the material, and the recording holds the block.
+    ASSERT_TRUE(becomesTrue(
+        [&]
+        {
+            return weakMaterial.expired();
+        }));
     EXPECT_FALSE(weakBlock.expired());
 
-    renderer->start();
     EXPECT_TRUE(becomesTrue(
         [&]
         {
             renderer->submitFrame({});
             return weakBlock.expired();
         }));
-    EXPECT_FALSE(renderer->stop());
 }
 
 /**
- * A frame that is dropped does not consume the uploads, of a texture and of a mesh: a zero-sized
- * window ends each frame before it records anything, and the uploads are still pending. Once the
- * window has a size again, the next frame records them and the list drains.
+ * A minimized window drops every frame before it records anything, and its uploads go through
+ * all the same: they are the render thread's own work, before the frame and whatever becomes of
+ * it.
  */
 // The score comes from the gtest assertion macros.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-TEST_F(RendererTest, uploadsSurviveDroppedFrame)
+TEST_F(RendererTest, uploadsGoThroughDroppedFrames)
 {
     auto renderer = makeRenderer();
-    auto texture  = makeTexture(*renderer);
-    auto mesh     = makeMesh(*renderer, compatibleLayout());
 
     renderer->resize({});
-    renderer->start();
-    // The second call returns only after the render thread took, and dropped, the first frame.
+    auto texture = makeTexture(*renderer);
+    auto mesh    = makeMesh(*renderer, gCompatibleLayout);
     renderer->submitFrame({});
     renderer->submitFrame({});
-    EXPECT_FALSE(renderer->stop());
-    EXPECT_EQ(RendererTestAccess::pendingUploadCount(*renderer), 2u);
 
-    renderer->resize(gStartExtent);
-    renderer->start();
     EXPECT_TRUE(becomesTrue(
         [&]
         {
-            renderer->submitFrame({});
-            return RendererTestAccess::pendingUploadCount(*renderer) == 0u;
+            return mesh.isResident() && texture.isResident();
         }));
-    EXPECT_FALSE(renderer->stop());
+    EXPECT_EQ(renderer->uploads().pendingCount, 0u);
 }
 
 /**
- * The staging buffer of a texture and of a mesh lives in the pending list until the frame that
- * recorded the upload has been submitted, then in that frame's transfer command buffer, and is gone
- * once the frame's slot is reused.
+ * The staging buffer of a texture and of a mesh waits in the upload queue until a transfer submit
+ * took it, then in the command buffer of that submit, and is gone when the ring reuses the pool of
+ * the command buffer: two submits later. The render thread is held in the submit of a first mesh,
+ * so that the staging buffers can be taken from the queue.
  */
 // The score comes from the gtest assertion macros.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST_F(RendererTest, uploadsAreRecordedAndStagingReleased)
 {
-    auto renderer       = makeRenderer();
+    auto     renderer = makeRenderer();
+    QueueSpy spy{RendererTestAccess::dispatcher(*renderer)};
+
+    spy.holdNextSubmit();
+    const Mesh held = makeMesh(*renderer, gCompatibleLayout);
+    ASSERT_TRUE(spy.waitUntilHeld());
+
     auto texture        = makeTexture(*renderer);
-    auto mesh           = makeMesh(*renderer, compatibleLayout());
-    auto textureStaging = RendererTestAccess::pendingStaging(*renderer, 0u);
-    auto meshStaging    = RendererTestAccess::pendingStaging(*renderer, 1u);
+    auto mesh           = makeMesh(*renderer, gCompatibleLayout);
+    auto textureStaging = RendererTestAccess::arrivedStaging(*renderer, 0u);
+    auto meshStaging    = RendererTestAccess::arrivedStaging(*renderer, 1u);
     EXPECT_FALSE(textureStaging.expired());
     EXPECT_FALSE(meshStaging.expired());
 
-    // One frame only: the slot of the upload is reused by the third frame at the earliest, so the
-    // render thread cannot get there while this thread waits for the list to empty.
-    renderer->start();
-    renderer->submitFrame({});
-    EXPECT_TRUE(becomesTrue(
-        [&]
-        {
-            return RendererTestAccess::pendingUploadCount(*renderer) == 0u;
-        }));
-    EXPECT_FALSE(textureStaging.expired());
-    EXPECT_FALSE(meshStaging.expired());
-
-    EXPECT_TRUE(becomesTrue(
-        [&]
-        {
-            renderer->submitFrame({});
-            return textureStaging.expired() && meshStaging.expired();
-        }));
-    EXPECT_FALSE(renderer->stop());
-}
-
-/**
- * A render thread that fails in resolvePipelines, before it records anything, leaves the uploads
- * (a texture and two meshes) pending, and they are recorded after stop() and start().
- */
-// The score comes from the gtest assertion macros.
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
-TEST_F(RendererTest, pendingUploadsSurviveRenderThreadFailureAndRestart)
-{
-    auto renderer = makeRenderer();
-    auto texture  = makeTexture(*renderer);
-    auto material = makeMaterial(*renderer, "WorldSpace");
-    auto bad      = makeMesh(*renderer, incompatibleLayout());
-    auto good     = makeMesh(*renderer, compatibleLayout());
-
-    bool first = true;
-    renderer->addRenderable(std::make_shared<LambdaRenderable>(
-        [&](const FrameContext& /*context*/, RenderQueue& queue)
-        {
-            queue.submit(first ? bad : good, material, Math::Matrix4x4f{1.0f});
-            first = false;
-        }));
-    renderer->start();
-    renderer->submitFrame({});
+    spy.release();
     ASSERT_TRUE(becomesTrue(
         [&]
         {
-            return renderer->getState() == Renderer::State::eFailed;
+            return texture.isResident() && mesh.isResident();
         }));
-    EXPECT_EQ(RendererTestAccess::pendingUploadCount(*renderer), 3u);
+    // Submitted, and held by the command buffer of the submit.
+    EXPECT_FALSE(textureStaging.expired());
+    EXPECT_FALSE(meshStaging.expired());
 
-    ASSERT_TRUE(renderer->stop());
-    renderer->start();
+    releaseTheUploadRing(*renderer);
+    EXPECT_TRUE(textureStaging.expired());
+    EXPECT_TRUE(meshStaging.expired());
+}
+
+/**
+ * A mesh and a texture are copied while no frame is submitted at all, the way a window that is
+ * hidden never acquires an image and still has to stream: the render thread wakes for the upload
+ * and drains it. isResident() says false while the submit of the copy has not returned (the
+ * render thread is held in it) and true after, from the semaphore, with no help of a frame.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, isResidentFlipsAfterAnIdleDrainWithNoFrame)
+{
+    auto     renderer = makeRenderer();
+    QueueSpy spy{RendererTestAccess::dispatcher(*renderer)};
+
+    EXPECT_FALSE(Mesh{}.isResident());
+    EXPECT_FALSE(Texture{}.isResident());
+
+    spy.holdNextSubmit();
+    const Mesh    mesh    = makeMesh(*renderer, gCompatibleLayout);
+    const Texture texture = makeTexture(*renderer);
+    ASSERT_TRUE(spy.waitUntilHeld());
+    EXPECT_FALSE(mesh.isResident());
+    EXPECT_FALSE(texture.isResident());
+
+    spy.release();
     EXPECT_TRUE(becomesTrue(
         [&]
         {
-            renderer->submitFrame({});
-            return RendererTestAccess::pendingUploadCount(*renderer) == 0u;
+            return mesh.isResident() && texture.isResident();
         }));
+    EXPECT_TRUE(RendererTestAccess::packets(*renderer).empty());
+}
+
+/**
+ * Three meshes wait in the queue, and the budget has room for one: no iteration records more than
+ * one of them while no frame wants them. A frame that draws two of them gets both, in the iteration
+ * that renders it, over the budget, together with the one of the background that the budget lets
+ * through. The render thread is held in the submit of a first mesh while the queue is filled, and
+ * the copies of every submit to the transfer queue are read from the spy.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, backgroundUploadsAreBoundedAndTheOnesAFrameDrawsAreNot)
+{
+    Renderer::Config config              = makeConfig();
+    config.backgroundUploadBytesPerFrame = gMeshBytes;
+
+    auto     renderer = makeRenderer(config);
+    auto     material = makeMaterial(*renderer, "WorldSpace");
+    QueueSpy spy{RendererTestAccess::dispatcher(*renderer)};
+
+    spy.holdNextSubmit();
+    const Mesh held = makeMesh(*renderer, gCompatibleLayout);
+    ASSERT_TRUE(spy.waitUntilHeld());
+
+    // In the order of arrival: a background mesh, the two that the frame draws, a background mesh.
+    const Mesh background1 = makeMesh(*renderer, gCompatibleLayout);
+    const Mesh drawn1      = makeMesh(*renderer, gCompatibleLayout);
+    const Mesh drawn2      = makeMesh(*renderer, gCompatibleLayout);
+    const Mesh background2 = makeMesh(*renderer, gCompatibleLayout);
+    renderer->addRenderable(std::make_shared<LambdaRenderable>(
+        [&](const FrameContext& /*context*/, RenderQueue& queue)
+        {
+            queue.submit(drawn1, material, Math::Matrix4x4f{1.0f});
+            queue.submit(drawn2, material, Math::Matrix4x4f{1.0f});
+        }));
+    renderer->submitFrame({});
+
+    spy.release();
+    for (const Mesh& mesh : {held, background1, drawn1, drawn2, background2})
+    {
+        ASSERT_TRUE(becomesTrue(
+            [&]
+            {
+                return mesh.isResident();
+            }));
+    }
+
+    // The held mesh alone; then the iteration of the frame: the two it draws and the first of the
+    // background; then the last of the background, alone.
+    EXPECT_EQ(spy.copiesPerUpload(), (std::vector<std::size_t>{1u, 3u, 1u}));
     EXPECT_EQ(renderer->getState(), Renderer::State::eRunning);
-    EXPECT_FALSE(renderer->stop());
+}
+
+/**
+ * uploads() counts what is queued and not yet submitted, and counts down to nothing; a mesh whose
+ * handles were all dropped before the render thread took it is dropped from the queue and never
+ * copied. The render thread is held in the submit of a first mesh, so that the queue is full when
+ * it takes the rest.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, uploadsCountDownAndADroppedMeshIsNeverCopied)
+{
+    auto     renderer = makeRenderer();
+    QueueSpy spy{RendererTestAccess::dispatcher(*renderer)};
+
+    EXPECT_EQ(renderer->uploads().pendingCount, 0u);
+    EXPECT_EQ(renderer->uploads().pendingBytes, 0u);
+
+    spy.holdNextSubmit();
+    const Mesh held = makeMesh(*renderer, gCompatibleLayout);
+    ASSERT_TRUE(spy.waitUntilHeld());
+    // Taken and recorded, but the submit has not returned.
+    EXPECT_EQ(renderer->uploads().pendingCount, 1u);
+
+    Mesh       dropped = makeMesh(*renderer, gCompatibleLayout);
+    const Mesh kept    = makeMesh(*renderer, gCompatibleLayout);
+    EXPECT_EQ(renderer->uploads().pendingCount, 3u);
+    EXPECT_EQ(renderer->uploads().pendingBytes, 3u * gMeshBytes);
+
+    // Every handle of it is gone before the render thread looks at the queue again.
+    dropped = {};
+
+    spy.release();
+    ASSERT_TRUE(becomesTrue(
+        [&]
+        {
+            return held.isResident() && kept.isResident();
+        }));
+    EXPECT_TRUE(becomesTrue(
+        [&]
+        {
+            return renderer->uploads().pendingCount == 0u;
+        }));
+    EXPECT_EQ(renderer->uploads().pendingBytes, 0u);
+
+    // One copy for the held mesh and one for the kept one: the dropped mesh was not copied.
+    EXPECT_EQ(spy.copiesPerUpload(), (std::vector<std::size_t>{1u, 1u}));
+}
+
+/**
+ * A trickle of background uploads does not take the frame slots: every upload-only iteration used
+ * no slot, so the frames alternate between the two slots as they would without it. An iteration
+ * that took a slot would wait for the presentation of the slot's last frame and move the frames to
+ * one slot. Each round submits a frame, waits until the render thread has taken it, and creates a
+ * mesh, which the thread then copies in an iteration of its own, without a packet. The slot of a
+ * frame is the binary semaphore its submit signals, which the spy reads.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, framesInFlightStayTwoWhileBackgroundUploadsTrickle)
+{
+    constexpr int kRounds = 8;
+
+    auto     renderer = makeRenderer();
+    QueueSpy spy{RendererTestAccess::dispatcher(*renderer)};
+
+    std::vector<Mesh> meshes;
+    for (int round = 0; round < kRounds; ++round)
+    {
+        renderer->submitFrame({});
+        ASSERT_TRUE(becomesTrue(
+            [&]
+            {
+                return RendererTestAccess::packets(*renderer).empty();
+            }));
+        meshes.push_back(makeMesh(*renderer, gCompatibleLayout));
+        ASSERT_TRUE(becomesTrue(
+            [&]
+            {
+                return meshes.back().isResident();
+            }));
+    }
+    RendererTestAccess::join(*renderer);
+
+    std::vector<VkSemaphore> slots;
+    for (const SpiedSubmit& submit : spy.submits())
+    {
+        if (submit.signal != VK_NULL_HANDLE)
+        {
+            slots.push_back(submit.signal);
+        }
+    }
+    ASSERT_GE(slots.size(), std::size_t{kRounds} - 1u);
+
+    std::set<VkSemaphore> distinct{slots.begin(), slots.end()};
+    EXPECT_EQ(distinct.size(), 2u);
+    for (std::size_t frame = 1u; frame < slots.size(); ++frame)
+    {
+        EXPECT_NE(slots[frame], slots[frame - 1u]) << "frames " << frame - 1u << " and " << frame;
+    }
+}
+
+/**
+ * A mesh handle outlives the Renderer and still answers isResident(): the ticket holds the
+ * timeline semaphore, which the device keeps, so the answer comes from the semaphore with the
+ * renderer gone.
+ */
+TEST_F(RendererTest, handleOutlivingTheRendererStillAnswersIsResident)
+{
+    auto    renderer = makeRenderer();
+    Mesh    mesh     = makeMesh(*renderer, gCompatibleLayout);
+    Texture texture  = makeTexture(*renderer);
+    ASSERT_TRUE(becomesTrue(
+        [&]
+        {
+            return mesh.isResident() && texture.isResident();
+        }));
+
+    renderer.reset();
+
+    EXPECT_TRUE(mesh.isResident());
+    EXPECT_TRUE(texture.isResident());
+}
+
+/**
+ * The buffers of the Frame block take their heap slots when the Renderer is made, so a heap that
+ * materials fill fails createMaterial(), on the thread that asks, and never the render thread at
+ * its first frame. With room for the frame blocks and one more, the first material fits, the
+ * second does not, and the frames that draw the first are rendered. With no room for the frame
+ * blocks, the constructor fails.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, frameBlocksTakeTheirHeapSlotsAtConstruction)
+{
+    constexpr std::uint32_t kFrameSlots = 2u;
+
+    Renderer::Config config = makeConfig();
+    config.framesInFlight   = kFrameSlots;
+    config.resourceSlots    = kFrameSlots - 1u;
+    EXPECT_THROW(std::ignore = makeRenderer(config), std::runtime_error);
+
+    config.resourceSlots = kFrameSlots + 1u;
+    auto renderer        = makeRenderer(config);
+    ASSERT_EQ(RendererTestAccess::frameBlocks(*renderer).size(), std::size_t{kFrameSlots});
+
+    const Material material = makeMaterial(*renderer, "WorldSpace");
+    EXPECT_THROW(std::ignore = makeMaterial(*renderer, "WorldSpace"), std::runtime_error);
+
+    renderer->addRenderable(drawing(makeMesh(*renderer, gCompatibleLayout), material));
+    for (int frame = 0; frame < 4; ++frame)
+    {
+        renderer->submitFrame({});
+    }
+    EXPECT_EQ(renderer->getState(), Renderer::State::eRunning);
+    EXPECT_FALSE(renderer->failure());
 }
 
 /**
  * Another thread creates and drops textures and materials while the main thread submits frames
  * that draw them. The creator ends without an exception, nothing deadlocks (a hang here ends at
- * the test timeout), and the pending list drains.
+ * the test timeout), and the queue of uploads drains.
  */
 // The score comes from the gtest assertion macros.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -1574,7 +2035,6 @@ TEST_F(RendererTest, createTextureWhileRendering)
             }
             queue.submit(mesh, material, Math::Matrix4x4f{1.0f});
         }));
-    renderer->start();
 
     std::atomic<bool>  done{false};
     std::exception_ptr failure;
@@ -1611,39 +2071,29 @@ TEST_F(RendererTest, createTextureWhileRendering)
         [&]
         {
             renderer->submitFrame({});
-            return RendererTestAccess::pendingUploadCount(*renderer) == 0u;
+            return renderer->uploads().pendingCount == 0u;
         }));
     EXPECT_EQ(renderer->getState(), Renderer::State::eRunning);
-    EXPECT_FALSE(renderer->stop());
-}
-
-TEST_F(RendererTest, startTwiceThrows)
-{
-    auto renderer = makeRenderer();
-    renderer->start();
-
-    EXPECT_THROW(renderer->start(), std::logic_error);
-    EXPECT_FALSE(renderer->stop());
+    EXPECT_FALSE(renderer->failure());
 }
 
 /**
  * resize() takes effect before the next frame is rendered: the swapchain has the new extent once
- * the first packet after the request has been taken, whether the request came before start() or
- * while the thread ran. A second frame is submitted so that the first has been taken.
+ * the first packet after the request has been taken. A second frame is submitted so that the first
+ * has been taken, and the thread is joined before the extent is read.
  */
 TEST_F(RendererTest, resizeRecreatesAtRequestedExtent)
 {
-    auto renderer = makeRenderer();
-
     for (const std::uint32_t size : {gResizedExtent, gResizedAgainExtent})
     {
-        renderer->resize({.width = size, .height = size});
-        renderer->start();
-        renderer->submitFrame({});
-        renderer->submitFrame({});
-        EXPECT_FALSE(renderer->stop());
+        auto renderer = makeRenderer();
 
-        // stop() joined the render thread.
+        renderer->resize({.width = size, .height = size});
+        renderer->submitFrame({});
+        renderer->submitFrame({});
+        RendererTestAccess::join(*renderer);
+
+        EXPECT_FALSE(renderer->failure());
         EXPECT_EQ(RendererTestAccess::swapchainExtent(*renderer),
                   (Extent{.width = size, .height = size}));
     }
@@ -1657,30 +2107,42 @@ constexpr vk::Format gReadbackFormat = vk::Format::eR8G8B8A8Unorm;
 /**
  * Draws @p packet the way the render thread does (the Frame block, the push data, the pipelines,
  * the resources), but into a color target of @p size by @p size pixels instead of a swapchain
- * image, which no test can read, and returns its pixels, rows from the top. The uploads that the
- * renderer holds are recorded first, on the same queue. The renderer must not be running.
+ * image, which no test can read, and returns its pixels, rows from the top. It waits until the
+ * meshes and the textures of the draws have been copied by the render thread, which then has
+ * nothing to do, so the two never use the queue at the same time. The pipelines come from a table
+ * of the harness, not from the one of the render thread.
  */
 std::vector<std::byte>
 drawToPixels(Renderer& renderer, const FramePacket& packet, std::uint32_t size)
 {
     using namespace Graphics::Vulkan;
 
-    const DevicePtr                        device    = RendererTestAccess::device(renderer);
-    const auto                             queue     = device->getGraphicsQueue();
-    const auto                             heap      = RendererTestAccess::heap(renderer);
-    const auto                             fencePool = FencePool::create(device);
-    const auto                             pool      = device->createCommandBufferPool();
-    const vk::Extent2D                     extent{.width = size, .height = size};
-    const std::vector<GraphicsPipelinePtr> pipelines =
-        RendererTestAccess::pipelines(renderer, packet, gReadbackFormat);
-
+    for (const auto& draw : packet.draws)
     {
-        auto recorder = pool->record();
-        RendererTestAccess::recordPendingUploads(renderer, recorder, queue->familyIndex);
-        auto executable = recorder.finish();
-        queue->submit(*fencePool, {.commandBuffers = std::span{&executable, 1u}});
-        pool->reset();
+        EXPECT_TRUE(becomesTrue(
+            [&]
+            {
+                return draw.mesh.isResident();
+            }));
+        for (const Engine::Texture& texture : HandleTestAccess::data(draw.material).textures)
+        {
+            EXPECT_TRUE(becomesTrue(
+                [&]
+                {
+                    return texture.isResident();
+                }));
+        }
     }
+
+    const DevicePtr           device    = RendererTestAccess::device(renderer);
+    const auto                queue     = device->getGraphicsQueue();
+    const auto                heap      = RendererTestAccess::heap(renderer);
+    const auto                fencePool = FencePool::create(device);
+    const auto                pool      = device->createCommandBufferPool();
+    const vk::Extent2D        extent{.width = size, .height = size};
+    PipelineTable             pipelines{device};
+    std::vector<ResolvedDraw> resolved;
+    DrawRecording::resolve(packet, pipelines, gReadbackFormat, resolved);
 
     const RenderTargetPtr target = device->createRenderTarget(
         extent,
@@ -1714,7 +2176,7 @@ drawToPixels(Renderer& renderer, const FramePacket& packet, std::uint32_t size)
               .loadOp     = vk::AttachmentLoadOp::eClear,
               .storeOp    = vk::AttachmentStoreOp::eStore,
               .clearValue = vk::ClearColorValue{std::array{0.0f, 0.0f, 0.0f, 1.0f}}}});
-        DrawRecording::recordDraws(pass, packet, pipelines, frameBlock, extent);
+        DrawRecording::recordDraws(pass, packet, resolved, pipelines, frameBlock, extent);
     }
     recorder.setImageBarrier(target,
                              {.srcStageMask  = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
@@ -1772,10 +2234,10 @@ makeQuad(Renderer& renderer, float half)
                                                 0.0f};
     const std::array<std::uint32_t, 6> indices{0u, 1u, 2u, 2u, 3u, 0u};
 
-    return renderer.createMesh({.vertices   = std::as_bytes(std::span{vertices}),
-                                .indices    = indices,
-                                .stride     = gTexturedStride,
-                                .attributes = texturedLayout()});
+    return renderer.createMesh({.name     = "quad",
+                                .vertices = std::as_bytes(std::span{vertices}),
+                                .indices  = indices,
+                                .layout   = gTexturedLayout});
 }
 
 /** The camera that looks at the plane z = 0 from the distance of 20, where the near plane is not
@@ -1829,11 +2291,11 @@ TEST_F(RendererTest, textureFilterSelectsTheSamplerOfTheDraw)
                                      .width  = 2u,
                                      .height = 2u,
                                      .filter = filter});
-        FramePacket packet;
-        packet.draws.setCamera(cameraBeforeThePlane());
-        packet.draws.submit(makeQuad(*renderer, kHalf),
-                            makeTexturedMaterial(*renderer, texture),
-                            Math::Matrix4x4f{1.0f});
+        FramePacket packet{.camera = cameraBeforeThePlane()};
+        RenderQueueTestAccess::addDraw(packet,
+                                       makeQuad(*renderer, kHalf),
+                                       makeTexturedMaterial(*renderer, texture),
+                                       Math::Matrix4x4f{1.0f});
 
         return drawToPixels(*renderer, packet, kSize);
     };
@@ -1876,7 +2338,11 @@ TEST_F(RendererTest, renderedFramesWriteTheFrameBlockOfTheirSlot)
 {
     constexpr int kFrames = 6;
 
-    auto             renderer = makeRenderer();
+    // Two frame slots, as the test counts them below.
+    Renderer::Config config = makeConfig();
+    config.framesInFlight   = 2u;
+
+    auto             renderer = makeRenderer(config);
     const CameraView camera{.position = {10.0f, 20.0f, -30.0f}};
     renderer->addRenderable(std::make_shared<LambdaRenderable>(
         [camera](const FrameContext& /*context*/, RenderQueue& queue)
@@ -1884,14 +2350,16 @@ TEST_F(RendererTest, renderedFramesWriteTheFrameBlockOfTheirSlot)
             queue.setCamera(camera);
         }));
 
-    renderer->start();
     for (int frame = 0; frame < kFrames; ++frame)
     {
         // Frame i: the time is 1 + i, the time between frames is (1 + i) / 100.
         renderer->submitFrame(
             {.timeSeconds = 1.0 + frame, .deltaSeconds = static_cast<float>(1.0 + frame) / 100.0f});
     }
-    EXPECT_FALSE(renderer->stop());
+    // The blocks are read while no frame writes them: the join orders the writes of the frames
+    // that were rendered before the reads. The last frame may have been dropped by it.
+    RendererTestAccess::join(*renderer);
+    EXPECT_FALSE(renderer->failure());
 
     const Extent extent = RendererTestAccess::swapchainExtent(*renderer);
     ASSERT_NE(camera.view(), camera.projection(extent));
@@ -1968,7 +2436,7 @@ TEST_F(RendererTest, recordedDrawsRetainTheFrameBlockUntilThePoolIsReset)
                                                       .layerCount = 1u}});
     {
         auto pass = recorder.beginRendering({{.attachment = target}});
-        DrawRecording::recordDraws(pass, packet, {}, frameBlock, extent);
+        DrawRecording::recordDraws(pass, packet, {}, PipelineTable{device}, frameBlock, extent);
     }
     frameBlock.reset();
     auto executable = recorder.finish();
@@ -1996,9 +2464,9 @@ TEST_F(RendererTest, frameBlockTimeAndViewportReachTheShader)
 
     const auto draw = [&](double timeSeconds, float deltaSeconds)
     {
-        FramePacket packet{.frame = {.timeSeconds = timeSeconds, .deltaSeconds = deltaSeconds}};
-        packet.draws.setCamera(cameraBeforeThePlane());
-        packet.draws.submit(quad, material, Math::Matrix4x4f{1.0f});
+        FramePacket packet{.camera = cameraBeforeThePlane(),
+                           .frame  = {.timeSeconds = timeSeconds, .deltaSeconds = deltaSeconds}};
+        RenderQueueTestAccess::addDraw(packet, quad, material, Math::Matrix4x4f{1.0f});
 
         return drawToPixels(*renderer, packet, kSize);
     };

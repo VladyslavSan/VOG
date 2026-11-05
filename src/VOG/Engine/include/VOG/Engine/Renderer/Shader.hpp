@@ -47,6 +47,7 @@ public:
 
 private:
     friend class Renderer;
+    friend class ResourceFactory;
     friend struct HandleTestAccess;
 
     explicit Shader(std::shared_ptr<const Detail::ShaderInfo> data)

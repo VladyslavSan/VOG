@@ -4,6 +4,8 @@
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 
+#include <memory>
+
 namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Texture);
@@ -11,6 +13,8 @@ VOG_DECLARE_PTR(Texture);
 
 namespace VOG::Engine
 {
+struct UploadTicket;
+
 namespace Detail
 {
 class TextureData
@@ -21,6 +25,9 @@ public:
 
     /** The index of its sampler in the sampler heap, which a Material block holds. */
     Filter filter = Filter::eLinear;
+
+    /** Whether the copy of the image has finished; see UploadTicket. */
+    std::shared_ptr<UploadTicket> ticket;
 };
 } // namespace Detail
 

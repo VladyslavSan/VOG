@@ -234,7 +234,6 @@ Application::run()
     mLastFrameTime.reset();
     // Resizes before the watch exists are not seen by it.
     mRenderer->resize(mWindow->sizeInPixels());
-    mRenderer->start();
 
     try
     {
@@ -270,14 +269,14 @@ Application::run()
     }
     catch (...)
     {
-        if (const std::exception_ptr failure = mRenderer->stop())
+        if (const std::exception_ptr failure = mRenderer->failure())
         {
             logFailure(failure);
         }
         throw;
     }
 
-    if (const std::exception_ptr failure = mRenderer->stop())
+    if (const std::exception_ptr failure = mRenderer->failure())
     {
         std::rethrow_exception(failure);
     }

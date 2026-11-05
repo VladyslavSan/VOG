@@ -116,8 +116,8 @@ generation, the images or the views of the new swapchain can fail after it was c
 `recreate()` throws from there on, `Swapchain` still holds the retired generation and says so
 (`mRetired`): `acquireNextImage()` returns `eOutOfDate` without calling the driver, and the
 next `recreate()` builds without an old swapchain. A throwing `recreate()` ends the render
-thread, so this recovery happens after `stop()` and `start()`: the restarted thread takes its
-ordinary out-of-date path.
+thread of the `Renderer` for good (`Renderer::State::eFailed` is final), so nothing acquires on
+that swapchain afterwards; the recovery is for a caller that uses `Swapchain` directly.
 
 An acquired image that is dropped without being presented is returned with
 `vkReleaseSwapchainImagesEXT` in the `AcquiredSwapchainImage` destructor. Presenting
@@ -131,27 +131,25 @@ out-of-date, suboptimal and surface-lost paths have no automated test (see the k
 `ResourceOwnership.md`).
 
 Known gap: an image released unpresented leaves its slot's acquire semaphore signaled or
-pending. The next acquire on that slot then hands a signaled semaphore to
+pending. A caller that goes on to acquire on that slot hands a signaled semaphore to
 `vkAcquireNextImageKHR` (`VUID-vkAcquireNextImageKHR-semaphore-01286`), and `FrameObjects`
 destroys a semaphore with a signal pending (MoltenVK can crash there). Only an exception between
 acquire and submit reaches it (a Vulkan error, or out of memory in a retain or a fence take).
 An exception between submit and present (out of memory in a fence take, or a present error that
 enqueues nothing) is a separate case: the submit consumed the acquire semaphore, but the slot's
 `renderFinishedSemaphore` stays signaled with no present waiting it, so the slot's next submit
-signals it again (`VUID-vkQueueSubmit2-semaphore-03868`). The submitted command buffer still
-retains the image, so it stays acquired until the slot's next `prepareNextFrame` releases it, and
-`stop()` and `start()` keep the frame slots. With one slot that is the next frame. With more, the
-restarted thread has to acquire other images first. If none comes free, for example with two
-images when the presentation engine keeps the last one presented, every acquire times out,
-`renderFrame` returns without advancing and the slot never comes round: nothing renders while
-`getState()` reports `eRunning`, until a resize to another size or an out-of-date acquire recreates
-the swapchain. This follows from the code and from the spec giving no forward-progress guarantee
-there; it has not been observed. Once the slot comes round, its next submit signals the semaphore
-again.
+would signal it again (`VUID-vkQueueSubmit2-semaphore-03868`). The submitted command buffer still
+retains the image, so it stays acquired until the slot's next `prepareNextFrame` releases it.
 
-`Renderer::submitFrame` runs the renderables on the main thread, and the render thread looks up
-the pipelines of a frame before it acquires, so a renderable that throws and a vertex layout the
-shader cannot read both fail while no image is acquired.
+The `Renderer` does not reach the repeated signals: its render thread ends for good at the first
+exception, so no frame follows a failure (there is no restart). What stays is the destruction:
+after a failure between acquire and submit, `~Renderer` destroys the slot's acquire semaphore with
+a signal pending. This has not been observed.
+
+`Renderer::submitFrame` runs the renderables on the main thread, where `RenderQueue::submit` checks
+that a mesh fits the shader of its material (a `DrawError` otherwise), and the render thread builds
+the pipelines of a frame before it acquires, so a renderable that throws, a vertex layout the
+shader cannot read and a pipeline that fails to build all fail while no image is acquired.
 
 ## Resizing
 
@@ -160,7 +158,7 @@ its window changes size. Wayland and headless surfaces do not report a window re
 application. Both are covered by one path on the render thread. `Application` turns
 `SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED` into `Renderer::resize(extent)`, which stores the size in an
 atomic. For each packet it takes, the render thread reads it; if it differs from the last size applied, or an
-acquire or a present reports out of date, `Renderer::applyExtent` calls
+acquire or a present reports out of date, `FrameLoop::applyExtent` calls
 `Swapchain::recreate(extent)`, the only place that does, and remembers the size. Surfaces that
 report their own size ignore the requested one. A zero size, from either source, makes `recreate`
 return false: the renderer drops the packet, backs off for 16 ms and tries again with the next one.
@@ -170,7 +168,12 @@ simulation.
 ## Threads
 
 The main thread runs `Renderable::onDraw` and queues one packet per frame; the render thread takes
-the packets, acquires, records and presents. The queue has one slot, and `Renderer::submitFrame`
+the packets, acquires, records and presents. In every iteration, before the frame and with or
+without one, it also copies the uploads that are waiting, on the transfer queue and on command
+buffer pools that are not the ones of a frame slot, so a window that never acquires (hidden, or
+occluded) still streams its resources, and the frames keep their slots: a frame slot waits for the
+presentation of its last frame, and an iteration that took a slot to upload would make the frames
+wait for each other. The queue has one slot, and `Renderer::submitFrame`
 waits while it is full, so the render thread paces the main thread. If an occluded window reports
 no free image, the acquire waits up to its timeout (100 ms) per frame and the simulation runs at
 that rate; the main thread still pumps events between frames, so it can quit. On macOS with

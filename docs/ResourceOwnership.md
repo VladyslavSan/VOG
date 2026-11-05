@@ -93,47 +93,61 @@ a handle is the same one:
   and the block and the images die when that frame's slot is reused
   (`textureOutlivesMaterialWhileFrameInFlight`, `parameterBlockOutlivesMaterialWhileFrameInFlight`).
 - `Renderer::createMesh` and `Renderer::createTexture` copy the bytes into a host-visible staging
-  buffer on the calling thread and queue the upload with the destination. Neither destination
-  asks for host access, so VMA places it in device-local memory where it can. The render thread
-  records the copies of every pending upload on a command buffer of the transfer pool of the frame
-  slot, after the acquire and before the draws, and erases them
-  only after the graphics `Queue::submit` of that frame returned. A frame that is dropped
-  (zero-sized window, out-of-date or skipped acquire) or fails before that submit leaves them
-  pending for the next frame, also after `stop()` and `start()`. The staging buffer is released
-  when the frame's slot is reused (`uploadsAreRecordedAndStagingReleased`,
-  `uploadsSurviveDroppedFrame`, `pendingUploadsSurviveRenderThreadFailureAndRestart`).
-  Heap buffers stay host-visible (see "Uploads and the transfer queue").
-- The `PipelineCache` holds its pipelines until `~Renderer`; `bindPipeline` retains them per frame.
+  buffer on the calling thread and queue the upload (an `UploadJob`: the staging buffer, the
+  destination and an `UploadTicket`) in the `UploadQueue`. Neither destination asks for host
+  access, so VMA places it in device-local memory where it can. The render thread records the
+  copies on a command buffer of one of the two transfer pools of the `UploadQueue` ring, in every
+  iteration that has a job to record, with or without a frame, and drops the job after the transfer
+  `Queue::submit` returned. The command buffer holds the staging buffer and the destination until
+  the ring uses the pool again, which is two copies later (`uploadsAreRecordedAndStagingReleased`).
+  A job whose destination has no handle left (`use_count() == 1`: only the job holds it) is
+  dropped without a copy (`uploadsCountDownAndADroppedMeshIsNeverCopied`).
+  A frame that is dropped (zero-sized window, out-of-date or skipped acquire) does not hold the
+  uploads back (`uploadsGoThroughDroppedFrames`). Heap buffers stay host-visible (see "Uploads and
+  the transfer queue").
+- The `PipelineTable` holds its pipelines until `~Renderer`; `bindPipeline` retains them per frame.
 
 ## Uploads and the transfer queue
 
-The frame that uploads submits twice. Both submits come from the render thread, in this order:
+An iteration that records copies submits to the transfer queue, and every frame submits to the
+graphics queue. Both submits come from the render thread:
 
-1. The transfer command buffer (`FrameObjects::getTransferCommandBufferPool()`, a pool of the
-   transfer queue's family) copies every pending upload (`copyBuffer`, `copyBufferToTexture`), and
-   when the transfer and the graphics family differ ends each copy with the release half of a queue
-   family ownership transfer. `Queue::submit` on the transfer queue signals the timeline semaphore
-   `Renderer::mUploadTimeline` with the next value.
-   It also waits for the previous value, because after a frame whose graphics submit threw the same
-   uploads are recorded again while their first copy may still run.
-2. The graphics command buffer records the matching `acquire` of every upload before the rendering
-   pass (nothing, when the families are equal: a texture is ready because its copy recorded the
-   barrier to shader-read-only, and a buffer because the graphics submit waits for the copy), and
-   the graphics submit waits for `mUploadValue` at `ALL_COMMANDS`. The wait is in every graphics
-   submit, not only in one that uploads: a draw of a mesh or texture that an earlier frame uploaded
-   is ordered after that copy by the wait. `ALL_COMMANDS` is the only stage that can wait for a
-   queue family ownership transfer without
+1. An iteration with jobs to record takes the next of the two pools of the `UploadQueue` ring
+   (command buffer pools of the transfer queue's family, never the pool of a frame slot: a frame
+   slot waits for the presentation of its last frame before it can be used, so an iteration that
+   only uploads and used a slot would make the frames wait for each other). It resets the pool,
+   which waits for the submit of two copies ago, and records `copyBuffer` and `copyBufferToTexture`
+   for every job: all the jobs whose resource a draw of the iteration uses (`ticket->referenced`),
+   and the other jobs in the order they came until their bytes reach
+   `Renderer::Config::backgroundUploadBytesPerFrame`. When the transfer and the graphics family
+   differ each copy ends with the release half of a queue family ownership transfer.
+   `Queue::submit` on the transfer queue waits for the previous value of the timeline semaphore and
+   signals it with the next value (`UploadQueue::mTimeline`, `mValue`). After the submit returned,
+   the tickets of the jobs hold that value: `Mesh::isResident()` is true when the semaphore has
+   reached it (`TimelineSemaphore::counterValue()`, from any thread). The wait for the previous
+   value is there because the two pools do not order their copies.
+2. The graphics command buffer of a frame records the matching `acquire` of every copy that was
+   submitted since the last frame (`UploadQueue::acquireCopied()`) before the rendering pass
+   (nothing, when the families are equal: a texture is ready because its copy recorded the barrier
+   to shader-read-only, and a buffer because the graphics submit waits for the copy), and the
+   graphics submit waits for `UploadQueue::value()` at `ALL_COMMANDS`. The wait is in every graphics
+   submit, not only in one that follows a copy: a draw of a mesh or texture that an earlier
+   iteration uploaded is ordered after that copy by the wait. `ALL_COMMANDS` is the only stage that
+   can wait for a queue family ownership transfer without
    `VK_DEPENDENCY_QUEUE_FAMILY_OWNERSHIP_TRANSFER_USE_ALL_STAGES_BIT_KHR`, which VOG does not
    use.
 
-`mUploadValue` is raised after the transfer `Queue::submit` returned, so a submit that throws
-leaves it unchanged; it lives in the `Renderer`, across `stop()` and `start()`, and only grows.
-`TimelineSemaphore` holds no counter for that reason.
+`UploadQueue::mValue` is raised after the transfer `Queue::submit` returned, so a submit that
+throws leaves it unchanged; it lives as long as the renderer and only grows. `TimelineSemaphore`
+holds no counter for that reason. The tickets hold the timeline semaphore, so a handle that
+outlives the `Renderer` answers `isResident()` from the semaphore that the device still holds
+(`handleOutlivingTheRendererStillAnswersIsResident`).
 
 `createMesh` and `createTexture` enqueue before they return. A packet that draws a resource was
-pushed after that, and the render thread pops it before it takes the snapshot of the pending
-uploads, so the snapshot of the frame that draws the resource contains its upload (or an earlier
-frame already recorded it), and that frame's wait covers it.
+pushed after that, and the render thread, in the iteration that takes the packet, marks the tickets
+of the resources of its draws as referenced before it takes the jobs, so the copy of a resource
+that a frame draws is recorded in the iteration of that frame (or an earlier iteration already
+recorded it), and that frame's wait covers it.
 
 **Queue selection.** `PhysicalDevice::selectQueueFamilies` picks the graphics family and, with its
 `dedicatedTransfer` argument, a transfer-only family (a DMA engine) for transfer. The device
@@ -249,22 +263,32 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    `Swapchain::present`, dropping a `Swapchain::Presentation` (it holds a
    `FenceHandle`), `AcquiredSwapchainImage` (its destructor releases an
    unpresented image on the swapchain) and `FrameObjects::retainUntilPresented`.
-   The `Renderer` makes this hold by ownership: it owns the frame slots, the
-   fence pool and the swapchain, only its render thread uses them while it
-   runs, and `~Renderer` joins that thread before it destroys them.
+   The `Renderer` makes this hold by ownership: its implementation owns the frame slots, the
+   fence pool, the swapchain and the pools of the upload ring, only its render thread uses them
+   while it runs, and `~Renderer` joins that thread (`FrameLoop::stop()`) before any member of
+   the implementation is destroyed. The member order of the implementation protects the
+   construction, not this. The members then die in reverse: after the thread the renderables, the
+   draw check and the resource factory, then the `UploadQueue`, the packet queue, the shader
+   library and the `GpuContext`.
 
    **Threads.** Two threads work with a `Renderer`. The main thread (the caller of `submitFrame`)
-   owns the renderables and runs `Renderable::onDraw`. The render thread owns the objects of the
-   list above and runs no user code. Main and render thread share the packet queue (one slot, a
-   mutex), `mRequestedExtent` (an atomic), and `mExit` and `mRenderThread` (under `mStateMutex`).
+   owns the renderables and runs `Renderable::onDraw`, and with it the check of
+   `RenderQueue::submit` (the `DrawCheck`, which takes no lock). The render thread starts in the
+   constructor and ends in the destructor; it owns the objects of the list above and runs no
+   user code. Main and render thread share the packet queue (one slot, a mutex, which also carries
+   the mark that uploads are waiting and the recycled vector of draws), `FrameLoop::mRequestedExtent`
+   (an atomic), and the state of the render thread (an atomic) with its failure (written before the
+   state becomes `eFailed`).
    The pending-renderable list is shared between the callers of `addRenderable` and the submitting
    thread; it has a mutex. The `Scene`, its `GameObject`s and its `Behaviour`s are main-thread
    state: `Application` updates the scene and runs `onDraw` on the main thread, and only the packet
    crosses to the render thread. `createMesh`, `createTexture` and `createMaterial` are safe from any thread: VMA is
    created without `EXTERNALLY_SYNCHRONIZED`, so the allocator locks internally, the
-   `ShaderLibrary` is only read after its constructor, the heap's free list has a mutex, and the pending
-   uploads (`mPendingUploads`) are shared between `createMesh`, `createTexture` and the render thread under
-   `mUploadMutex`. A packet holds meshes, materials and a camera view,
+   `ShaderLibrary` is only read after its constructor, the heap's free list has a mutex, the layouts
+   of the meshes are numbered under a mutex, and the jobs of the uploads are pushed to the
+   `UploadQueue` under its mutex, which the render thread empties by moving the jobs out. The
+   push sets the mark in the packet queue under that queue's mutex before it notifies, so the
+   render thread, which waits for a packet or for uploads, cannot sleep through an upload. A packet holds meshes, materials and a camera view,
    none of the objects above, so it may die on any thread. `onDraw` may run inside an SDL event
    watch on the main thread (`SwapchainSync.md`, "Live resize"): no renderer lock is held, but it
    must not wait for a thread that pushes SDL events.

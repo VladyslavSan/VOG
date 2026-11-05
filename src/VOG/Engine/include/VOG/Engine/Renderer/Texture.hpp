@@ -55,15 +55,25 @@ public:
 
     /** True for a texture that createTexture() made. */
     explicit
-    operator bool() const
+    operator bool() const noexcept
     {
         return static_cast<bool>(mData);
     }
 
     bool operator==(const Texture&) const = default;
 
+    /**
+     * True once the copy of the pixels to the image has finished. Any thread, also after the
+     * Renderer was destroyed. A draw before then is still correct: the frame waits for the copy on
+     * the GPU. False for an empty texture, and for ever for a texture whose copy never ran.
+     * @throws std::runtime_error if the device cannot answer (device loss).
+     */
+    [[nodiscard]] bool isResident() const;
+
 private:
     friend class Renderer;
+    friend class ResourceFactory;
+    friend class FrameLoop;
     friend struct DrawRecording;
     friend struct HandleTestAccess;
 
