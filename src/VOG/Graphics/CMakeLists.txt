@@ -33,8 +33,9 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Frame/FrameObjects.hpp
             include/VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp
             include/VOG/Graphics/Vulkan/Attachment/AcquiredSwapchainImage.hpp
-            include/VOG/Graphics/Vulkan/Attachment/RenderBuffer.hpp
+            include/VOG/Graphics/Vulkan/Attachment/RenderTarget.hpp
             include/VOG/Graphics/Vulkan/Attachment/Swapchain.hpp
+            include/VOG/Graphics/Vulkan/BlockLayout.hpp
             include/VOG/Graphics/Vulkan/Buffer.hpp
             include/VOG/Graphics/Vulkan/CommandBuffer.hpp
             include/VOG/Graphics/Vulkan/CommandBufferPool.hpp
@@ -48,6 +49,7 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Vulkan/Fence.hpp
             include/VOG/Graphics/Vulkan/FencePool.hpp
             include/VOG/Graphics/Vulkan/GraphicsPipeline.hpp
+            include/VOG/Graphics/Vulkan/HeapBuffer.hpp
             include/VOG/Graphics/Vulkan/InDestructor.hpp
             include/VOG/Graphics/Vulkan/Instance.hpp
             include/VOG/Graphics/Vulkan/Limits.hpp
@@ -59,7 +61,6 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Vulkan/ShaderProgram.hpp
             include/VOG/Graphics/Vulkan/Texture.hpp
             include/VOG/Graphics/Vulkan/TimelineSemaphore.hpp
-            include/VOG/Graphics/Vulkan/UniformBlock.hpp
             include/VOG/Graphics/Vulkan/UploadBarriers.hpp
             include/VOG/Graphics/ShaderProgramCache.hpp
             include/VOG/Graphics/Typedefs.hpp
@@ -67,11 +68,10 @@ target_sources(VOG.Graphics
     PRIVATE
         src/VOG/Graphics/Frame/FrameObjectManager.cpp
         src/VOG/Graphics/Frame/FrameObjects.cpp
-        src/VOG/Graphics/Vulkan/Attachment/Converters.hpp
         src/VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.hpp
         src/VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.cpp
         src/VOG/Graphics/Vulkan/Attachment/AcquiredSwapchainImage.cpp
-        src/VOG/Graphics/Vulkan/Attachment/RenderBuffer.cpp
+        src/VOG/Graphics/Vulkan/Attachment/RenderTarget.cpp
         src/VOG/Graphics/Vulkan/Attachment/Swapchain.cpp
         src/VOG/Graphics/Vulkan/Attachment/SwapchainGeneration.cpp
         src/VOG/Graphics/Vulkan/Attachment/SwapchainGeneration.hpp
@@ -86,6 +86,7 @@ target_sources(VOG.Graphics
         src/VOG/Graphics/Vulkan/Fence.cpp
         src/VOG/Graphics/Vulkan/FencePool.cpp
         src/VOG/Graphics/Vulkan/GraphicsPipeline.cpp
+        src/VOG/Graphics/Vulkan/HeapBuffer.cpp
         src/VOG/Graphics/Vulkan/InDestructor.cpp
         src/VOG/Graphics/Vulkan/Instance.cpp
         src/VOG/Graphics/Vulkan/MemoryAllocator.cpp
@@ -97,7 +98,6 @@ target_sources(VOG.Graphics
         src/VOG/Graphics/Vulkan/ShaderProgram.cpp
         src/VOG/Graphics/Vulkan/Texture.cpp
         src/VOG/Graphics/Vulkan/TimelineSemaphore.cpp
-        src/VOG/Graphics/Vulkan/UniformBlock.cpp
         src/VOG/Graphics/Vulkan/UploadBarriers.cpp
         src/VOG/Graphics/Vulkan/VmaConfig.hpp
         src/VOG/Graphics/ShaderProgramCache.cpp

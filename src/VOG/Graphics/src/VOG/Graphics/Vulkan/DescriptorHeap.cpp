@@ -144,7 +144,9 @@ DescriptorHeap::DescriptorHeap(DevicePtr                              device,
     for (std::size_t i = 0u; i < samplers.size(); ++i)
     {
         ranges.push_back(
-            {.address = mapping.data + (i * mLayout.samplerStride), .size = mLayout.samplerStride});
+            {.address =
+                 mapping.bytes().subspan(i * mLayout.samplerStride, mLayout.samplerStride).data(),
+             .size = mLayout.samplerStride});
     }
     mDevice->raii().writeSamplerDescriptorsEXT(samplers, ranges);
 }
@@ -224,7 +226,9 @@ DescriptorHeap::writeResource(const Slot& slot, const vk::ResourceDescriptorInfo
                                               : mLayout.bufferDescriptorSize;
     auto                          mapping = mResourceHeap->mapForWrite();
     const vk::HostAddressRangeEXT range{
-        .address = mapping.data + DescriptorHeapLayout::slotOffset(slot.index()), .size = size};
+        .address =
+            mapping.bytes().subspan(DescriptorHeapLayout::slotOffset(slot.index()), size).data(),
+        .size = size};
     mDevice->raii().writeResourceDescriptorsEXT(descriptor, range);
 }
 } // namespace VOG::Graphics::Vulkan

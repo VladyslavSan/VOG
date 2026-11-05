@@ -28,5 +28,15 @@ public:
 
     TimelineSemaphore(const TimelineSemaphore&) = delete;
     TimelineSemaphore(TimelineSemaphore&&)      = delete;
+
+    /**
+     * The value the semaphore has now (vkGetSemaphoreCounterValue). Any thread, while another
+     * thread submits work that signals the semaphore: the entry point takes no external
+     * synchronization of the semaphore. The value is a snapshot, which a pending submit can
+     * already have made out of date. It reads the device's counter; the semaphore owns none.
+     *
+     * @throws vk::SystemError if the device is lost.
+     */
+    [[nodiscard]] std::uint64_t counterValue() const;
 };
 } // namespace VOG::Graphics::Vulkan

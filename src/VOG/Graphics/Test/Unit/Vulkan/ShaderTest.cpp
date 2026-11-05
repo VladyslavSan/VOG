@@ -9,6 +9,7 @@
 #include <string_view>
 #include <tuple>
 
+#include "HeapShaderSources.hpp"
 #include "VulkanFixture.hpp"
 #include "VulkanValidationFixture.hpp"
 
@@ -199,6 +200,62 @@ void main() {
 }
 )";
 
+// A heap block of each storage class, with every kind of member: matrix, row-major matrix, array,
+// struct, scalars and vectors. Each member of the uniform block is read through an expression of
+// its own, and SPIR-V can make a copy of the block for each one; the buffer block is only read.
+const std::string gHeapBlocksFragmentShaderString = R"(
+#version 450
+#extension GL_EXT_descriptor_heap : require
+#extension GL_EXT_nonuniform_qualifier : require
+
+// `sampler` is a keyword of the language, so the member cannot have that name.
+struct TextureRef { uint index; uint samplerIndex; };
+
+layout(descriptor_heap, descriptor_stride = 128) uniform Material
+{
+    vec4 tint;
+    mat3 basis;
+    vec3 v3;
+    float weights[3];
+    float rough;
+    uvec2 pair;
+    TextureRef albedo;
+    layout(row_major) mat4 rows;
+} gMaterials[];
+layout(descriptor_heap, descriptor_stride = 128) buffer Particles
+{
+    vec4 position;
+    uint count;
+} gParticles[];
+
+layout(push_constant) uniform PushData { uint material; uint particles; } pushData;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    outColor = gMaterials[pushData.material].tint * gMaterials[pushData.material].basis[1].xyzx +
+               vec4(gMaterials[pushData.material].v3, gMaterials[pushData.material].weights[2]) +
+               vec4(gMaterials[pushData.material].rough,
+                    float(gMaterials[pushData.material].pair.y),
+                    float(gMaterials[pushData.material].albedo.index),
+                    float(gParticles[pushData.particles].count)) +
+               gMaterials[pushData.material].rows[0] + gParticles[pushData.particles].position;
+}
+)";
+
+// Declared and never read: the block is not in the SPIR-V.
+const std::string gUnreadHeapBlockFragmentShaderString = R"(
+#version 450
+#extension GL_EXT_descriptor_heap : require
+#extension GL_EXT_nonuniform_qualifier : require
+
+layout(descriptor_heap, descriptor_stride = 128) uniform Material { vec4 tint; } gMaterials[];
+
+layout(location = 0) out vec4 outColor;
+
+void main() { outColor = vec4(1.0); }
+)";
+
 // A UBO and a sampler with a set and a binding, which pipelines without a layout cannot bind.
 const std::string gSetBindingUniformShaderString = R"(
 #version 450
@@ -385,17 +442,17 @@ TEST_F(VulkanFixture, Shader_instantiate_vertex_shader)
         EXPECT_EQ(reflection.inAttributes[2].location, 3u);
         EXPECT_EQ(reflection.inAttributes[2].name, "inSomething");
 
-        EXPECT_EQ(reflection.pushConstants.variables.size(), 3u);
-        EXPECT_EQ(reflection.pushConstants.variables[0].name, "index");
-        EXPECT_EQ(reflection.pushConstants.variables[1].name, "vector");
-        EXPECT_EQ(reflection.pushConstants.variables[2].name, "matrix");
+        EXPECT_EQ(reflection.pushConstants.size(), 3u);
+        EXPECT_EQ(reflection.pushConstants[0].name, "index");
+        EXPECT_EQ(reflection.pushConstants[1].name, "vector");
+        EXPECT_EQ(reflection.pushConstants[2].name, "matrix");
     });
 }
 
 /**
- * The design reads heap resources without reflecting them: SPIRV-Cross must accept the heap SPIR-V
- * and still report the push block, which the renderer checks against what it pushes. A SPIRV-Cross
- * that throws on the heap declarations, or drops the push block, fails here.
+ * SPIRV-Cross must accept the heap SPIR-V, report the push block, which the renderer checks
+ * against what it pushes, and the heap block that the shader reads. A SPIRV-Cross that throws on
+ * the heap declarations, or drops the push block or the heap block, fails here.
  */
 TEST_F(VulkanFixture, Shader_heapShaderReflectsPushConstants)
 {
@@ -403,7 +460,22 @@ TEST_F(VulkanFixture, Shader_heapShaderReflectsPushConstants)
     ASSERT_NO_THROW(shader =
                         createShader(Shader::ShadingStage::eFragment, gHeapFragmentShaderString));
 
-    const auto& variables = shader->reflection.pushConstants.variables;
+    ASSERT_EQ(shader->reflection.heapBlocks.size(), 1u);
+    const auto& block = shader->reflection.heapBlocks[0];
+    EXPECT_EQ(block.name, "Material");
+    EXPECT_EQ(block.storage, Shader::Reflection::HeapBlockStorage::eUniform);
+    EXPECT_EQ(block.strideDecoration, 128u);
+    EXPECT_EQ(block.size, 16u);
+    ASSERT_EQ(block.members.size(), 1u);
+    EXPECT_EQ(block.members[0].name, "tint");
+    EXPECT_EQ(block.members[0].offset, 0u);
+    EXPECT_EQ(block.members[0].size, 16u);
+    EXPECT_EQ(block.members[0].type,
+              (Shader::Reflection::BaseType{.type = Shader::Reflection::BaseType::Type::eFloat,
+                                            .components = 4,
+                                            .columns    = 1}));
+
+    const auto& variables = shader->reflection.pushConstants;
     ASSERT_EQ(variables.size(), 3u);
     EXPECT_EQ(variables[0].name, "mvp");
     EXPECT_EQ(variables[0].offset, 0u);
@@ -414,6 +486,280 @@ TEST_F(VulkanFixture, Shader_heapShaderReflectsPushConstants)
     EXPECT_EQ(variables[2].name, "textures");
     EXPECT_EQ(variables[2].offset, 68u);
     EXPECT_EQ(variables[2].size, 16u);
+}
+
+/**
+ * Every member of a heap block reflects with the layout the shader gave it, whatever the storage
+ * class: std140 offsets, the stride of a matrix and of an array, the name and members of a struct.
+ * The uniform block is read through eight expressions, so SPIR-V can hold a copy of it for each;
+ * they reflect as one block. A buffer block reflects like a uniform one, with another storage
+ * class.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(VulkanFixture, Shader_heapBlocksReflectEveryMemberAndStorageClass)
+{
+    using Type = Shader::Reflection::BaseType::Type;
+    using Base = Shader::Reflection::BaseType;
+
+    const auto shader =
+        createShader(Shader::ShadingStage::eFragment, gHeapBlocksFragmentShaderString);
+
+    // Sorted by name.
+    ASSERT_EQ(shader->reflection.heapBlocks.size(), 2u);
+    const auto& material  = shader->reflection.heapBlocks[0];
+    const auto& particles = shader->reflection.heapBlocks[1];
+
+    EXPECT_EQ(material.name, "Material");
+    EXPECT_EQ(material.storage, Shader::Reflection::HeapBlockStorage::eUniform);
+    EXPECT_EQ(material.strideDecoration, 128u);
+    ASSERT_EQ(material.members.size(), 8u);
+
+    const auto& tint = material.members[0];
+    EXPECT_EQ(tint.name, "tint");
+    EXPECT_EQ(tint.offset, 0u);
+    EXPECT_EQ(tint.type, (Base{.type = Type::eFloat, .components = 4, .columns = 1}));
+
+    const auto& basis = material.members[1];
+    EXPECT_EQ(basis.name, "basis");
+    EXPECT_EQ(basis.offset, 16u);
+    EXPECT_EQ(basis.type, (Base{.type = Type::eFloat, .components = 3, .columns = 3}));
+    EXPECT_EQ(basis.matrixStride, 16u);
+    EXPECT_FALSE(basis.rowMajor);
+
+    EXPECT_EQ(material.members[2].name, "v3");
+    EXPECT_EQ(material.members[2].offset, 64u);
+
+    const auto& weights = material.members[3];
+    EXPECT_EQ(weights.name, "weights");
+    EXPECT_EQ(weights.offset, 80u);
+    EXPECT_EQ(weights.arraySize, 3u);
+    EXPECT_EQ(weights.arrayStride, 16u);
+    EXPECT_EQ(weights.type, (Base{.type = Type::eFloat, .components = 1, .columns = 1}));
+
+    EXPECT_EQ(material.members[4].name, "rough");
+    EXPECT_EQ(material.members[4].offset, 128u);
+    EXPECT_EQ(material.members[5].name, "pair");
+    EXPECT_EQ(material.members[5].offset, 136u);
+    EXPECT_EQ(material.members[5].type, (Base{.type = Type::eUInt, .components = 2, .columns = 1}));
+
+    const auto& albedo = material.members[6];
+    EXPECT_EQ(albedo.name, "albedo");
+    EXPECT_EQ(albedo.offset, 144u);
+    EXPECT_EQ(albedo.structName, "TextureRef");
+    ASSERT_EQ(albedo.members.size(), 2u);
+    EXPECT_EQ(albedo.members[0].name, "index");
+    EXPECT_EQ(albedo.members[0].offset, 0u);
+    EXPECT_EQ(albedo.members[0].type, (Base{.type = Type::eUInt, .components = 1, .columns = 1}));
+    EXPECT_EQ(albedo.members[1].name, "samplerIndex");
+    EXPECT_EQ(albedo.members[1].offset, 4u);
+
+    // A row-major matrix is reflected as such; the struct before it takes 16 bytes in std140.
+    const auto& rows = material.members[7];
+    EXPECT_EQ(rows.name, "rows");
+    EXPECT_EQ(rows.offset, 160u);
+    EXPECT_TRUE(rows.rowMajor);
+    EXPECT_FALSE(basis.rowMajor);
+
+    EXPECT_EQ(particles.name, "Particles");
+    EXPECT_EQ(particles.storage, Shader::Reflection::HeapBlockStorage::eStorageBuffer);
+    EXPECT_EQ(particles.strideDecoration, 128u);
+    EXPECT_EQ(particles.size, 20u);
+    ASSERT_EQ(particles.members.size(), 2u);
+    EXPECT_EQ(particles.members[0].name, "position");
+    EXPECT_EQ(particles.members[0].offset, 0u);
+    EXPECT_EQ(particles.members[1].name, "count");
+    EXPECT_EQ(particles.members[1].offset, 16u);
+}
+
+/**
+ * The `descriptor_stride` of a block is reflected as the shader declares it. 0 means no stride was
+ * declared, which makes the stride the size of a descriptor; the program refuses both.
+ */
+TEST_F(VulkanFixture, Shader_heapBlockReflectsItsStride)
+{
+    const auto strideOf = [this](std::string_view stride)
+    {
+        const auto shader = createShader(Shader::ShadingStage::eFragment,
+                                         heapShader(Shader::ShadingStage::eFragment,
+                                                    materialBlock("uniform", stride, "vec4 tint;"),
+                                                    "gMaterials[pushData.index].tint"));
+        EXPECT_EQ(shader->reflection.heapBlocks.size(), 1u);
+
+        return shader->reflection.heapBlocks.empty()
+                 ? 0xFFFFu
+                 : shader->reflection.heapBlocks[0].strideDecoration;
+    };
+
+    EXPECT_EQ(strideOf("descriptor_stride = 128"), 128u);
+    EXPECT_EQ(strideOf("descriptor_stride = 64"), 64u);
+    EXPECT_EQ(strideOf(""), 0u);
+}
+
+/**
+ * An atomic on a heap block, and the length of an unsized array in one, are accesses that the
+ * reflection cannot follow, so the block would have a stride that nothing checks. Each is a
+ * ShaderError, whatever the stride is, and also when plain reads of the same block sit beside it:
+ * every access has a buffer pointer of its own.
+ */
+TEST_F(VulkanFixture, Shader_heapBlockReflectionFailsClosedForWhatItCannotFollow)
+{
+    const auto atomicOnly = [this](std::string_view stride)
+    {
+        return createShader(
+            Shader::ShadingStage::eFragment,
+            heapShader(
+                Shader::ShadingStage::eFragment,
+                std::format(
+                    "layout(descriptor_heap{}) buffer Counter {{ uint count; }} gCounters[];",
+                    stride.empty() ? std::string{} : std::format(", {}", stride)),
+                "vec4(float(atomicAdd(gCounters[pushData.index].count, 1u)))"));
+    };
+    const auto lengthOnly = [this](std::string_view stride)
+    {
+        return createShader(
+            Shader::ShadingStage::eFragment,
+            heapShader(
+                Shader::ShadingStage::eFragment,
+                std::format("layout(descriptor_heap{}) buffer Data {{ float values[]; }} gData[];",
+                            stride.empty() ? std::string{} : std::format(", {}", stride)),
+                "vec4(float(gData[pushData.index].values.length()))"));
+    };
+
+    // The same accesses beside plain reads of the block: the atomic and the length() have buffer
+    // pointers of their own, which no plain read claims.
+    const auto atomicAndRead = [this](std::string_view stride)
+    {
+        return createShader(Shader::ShadingStage::eFragment,
+                            std::format(R"(#version 450
+#extension GL_EXT_descriptor_heap : require
+#extension GL_EXT_nonuniform_qualifier : require
+layout(descriptor_heap, descriptor_stride = {}) buffer Foo {{ vec4 a; uint n; }} gFoo[];
+layout(push_constant) uniform P {{ uint i; }} p;
+layout(location = 0) out vec4 outColor;
+void main() {{
+    uint c = atomicAdd(gFoo[p.i].n, 1u);
+    outColor = gFoo[p.i].a * float(c);
+}}
+)",
+                                        stride));
+    };
+    const auto lengthLoop = [this](std::string_view stride)
+    {
+        return createShader(Shader::ShadingStage::eFragment,
+                            std::format(R"(#version 450
+#extension GL_EXT_descriptor_heap : require
+#extension GL_EXT_nonuniform_qualifier : require
+layout(descriptor_heap, descriptor_stride = {}) buffer Data {{ float values[]; }} data[];
+layout(push_constant) uniform P {{ uint i; }} p;
+layout(location = 0) out vec4 outColor;
+void main() {{
+    float s = 0.0;
+    for (int j = 0; j < data[p.i].values.length(); ++j)
+    {{
+        s += data[p.i].values[j];
+    }}
+    outColor = vec4(s);
+}}
+)",
+                                        stride));
+    };
+
+    for (const auto* stride : {"64", "128"})
+    {
+        EXPECT_THROW(std::ignore = atomicAndRead(stride), Shader::ShaderError) << stride;
+        EXPECT_THROW(std::ignore = lengthLoop(stride), Shader::ShaderError) << stride;
+    }
+    for (const auto* stride : {"descriptor_stride = 64", "descriptor_stride = 128"})
+    {
+        EXPECT_THROW(std::ignore = atomicOnly(stride), Shader::ShaderError) << stride;
+        EXPECT_THROW(std::ignore = lengthOnly(stride), Shader::ShaderError) << stride;
+    }
+}
+
+/**
+ * A member of a block that the reflection has no name for is a ShaderError that names the block
+ * and the member, in a heap block and in the push block alike: a 64-bit integer, and a pointer
+ * (buffer_reference). A pointer to a struct that points to itself would otherwise be followed for
+ * ever. It is tested in the push block: in a heap block, SPIRV-Cross itself crashes in its
+ * constructor once the shader dereferences such a pointer (measured), before this code runs.
+ */
+TEST_F(VulkanFixture, Shader_blockMemberOfAnUnreflectableTypeIsAShaderError)
+{
+    constexpr std::string_view kInt64 =
+        "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n";
+
+    const auto expectError =
+        [this](const std::string& source, std::string_view block, std::string_view member)
+    {
+        try
+        {
+            std::ignore = createShader(Shader::ShadingStage::eFragment, source);
+            ADD_FAILURE() << "No ShaderError for " << block << "." << member;
+        }
+        catch (const Shader::ShaderError& error)
+        {
+            EXPECT_NE(std::string_view{error.what()}.find(std::format("\"{}\"", block)),
+                      std::string_view::npos)
+                << error.what();
+            EXPECT_NE(std::string_view{error.what()}.find(std::format("\"{}\"", member)),
+                      std::string_view::npos)
+                << error.what();
+        }
+    };
+
+    expectError(
+        heapShader(Shader::ShadingStage::eFragment,
+                   std::format("{}{}",
+                               kInt64,
+                               materialBlock("uniform", "descriptor_stride = 128", "int64_t big;")),
+                   "vec4(float(gMaterials[pushData.index].big))"),
+        "Material",
+        "big");
+
+    constexpr std::string_view kLeaf =
+        "#extension GL_EXT_buffer_reference : require\n"
+        "layout(buffer_reference, std430) buffer Leaf { uint value; };\n";
+    expectError(
+        heapShader(
+            Shader::ShadingStage::eFragment,
+            std::format("{}{}",
+                        kLeaf,
+                        materialBlock("uniform", "descriptor_stride = 128", "Leaf head; vec4 v;")),
+            "gMaterials[pushData.index].v + vec4(gMaterials[pushData.index].head.value)"),
+        "Material",
+        "head");
+
+    // The push block takes the same path. Here the pointer is to a struct that points to itself:
+    // without the refusal the reflection would follow Node.next for ever.
+    expectError(std::format(R"(#version 450
+{}
+layout(push_constant) uniform PC {{ int64_t big; }} pc;
+layout(location = 0) out vec4 outColor;
+void main() {{ outColor = vec4(float(pc.big)); }}
+)",
+                            kInt64),
+                "PC",
+                "big");
+    expectError(R"(#version 450
+#extension GL_EXT_buffer_reference : require
+layout(buffer_reference) buffer Node;
+layout(buffer_reference, std430) buffer Node { Node next; uint value; };
+layout(push_constant) uniform PC { Node head; } pc;
+layout(location = 0) out vec4 outColor;
+void main() { outColor = vec4(pc.head.next.value); }
+)",
+                "PC",
+                "head");
+}
+
+/** A block that no instruction reaches is not in the SPIR-V, so it is not reflected. */
+TEST_F(VulkanFixture, Shader_unreadHeapBlockIsNotReflected)
+{
+    const auto shader =
+        createShader(Shader::ShadingStage::eFragment, gUnreadHeapBlockFragmentShaderString);
+
+    EXPECT_TRUE(shader->reflection.heapBlocks.empty());
 }
 
 /** A resource with a set and a binding is rejected, whatever its kind: pipelines have no layout. */

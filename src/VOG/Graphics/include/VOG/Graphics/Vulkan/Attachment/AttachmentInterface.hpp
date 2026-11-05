@@ -8,28 +8,14 @@
 
 namespace VOG::Graphics::Vulkan
 {
-enum class AttachmentUsage : std::uint8_t
-{
-    eColor,
-    eDepth,
-    eStencil,
-    eDepthStencil,
-    eSampled
-};
-
 using SampleCount = vk::SampleCountFlagBits;
 
 class AttachmentInterface
 {
 public:
-    AttachmentInterface(AttachmentUsage usage,
-                        vk::Format      format,
-                        vk::Extent3D    extent,
-                        SampleCount     sampleCount);
+    AttachmentInterface(vk::Format format, vk::Extent3D extent, SampleCount sampleCount);
 
     virtual ~AttachmentInterface() = default;
-
-    AttachmentUsage getUsage() const;
 
     vk::Format getFormat() const;
 
@@ -43,27 +29,18 @@ public:
     virtual const vk::raii::ImageView& getImageView() const = 0;
 
 protected:
-    AttachmentUsage mUsage  = AttachmentUsage::eColor;
-    vk::Format      mFormat = vk::Format::eUndefined;
-    vk::Extent3D    mExtent;
-    SampleCount     mSampleCount;
+    vk::Format   mFormat = vk::Format::eUndefined;
+    vk::Extent3D mExtent;
+    SampleCount  mSampleCount;
 };
 
-inline AttachmentInterface::AttachmentInterface(AttachmentUsage         usage,
-                                                vk::Format              format,
+inline AttachmentInterface::AttachmentInterface(vk::Format              format,
                                                 vk::Extent3D            extent,
                                                 vk::SampleCountFlagBits sampleCount)
-    : mUsage{usage}
-    , mFormat{format}
+    : mFormat{format}
     , mExtent{extent}
     , mSampleCount(sampleCount)
 {
-}
-
-inline AttachmentUsage
-AttachmentInterface::getUsage() const
-{
-    return mUsage;
 }
 
 inline vk::Format

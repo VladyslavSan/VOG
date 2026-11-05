@@ -15,13 +15,10 @@ Queue::Queue(const Device& device, std::uint32_t _familyIndex)
 }
 
 void
-Queue::submit(FencePool&                         fencePool,
-              std::span<const SemaphoreWait>     waits,
-              std::span<ExecutableCommandBuffer> commandBuffers,
-              std::span<const SemaphorePtr>      signals,
-              std::span<const TimelineWait>      timelineWaits,
-              std::span<const TimelineSignal>    timelineSignals) const
+Queue::submit(FencePool& fencePool, const Submission& submission) const
 {
+    const auto& [waits, commandBuffers, signals, timelineWaits, timelineSignals] = submission;
+
     VOG_ASSERT_MSG(!commandBuffers.empty(),
                    "A submit needs at least one command buffer to retain its semaphores.");
 

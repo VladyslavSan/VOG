@@ -1,17 +1,19 @@
 #pragma once
 
 #include <VOG/Common/JSONContainer.hpp>
+#include <VOG/Graphics/Vulkan/Attachment/RenderTarget.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferRecorder.hpp>
 #include <VOG/Graphics/Vulkan/DescriptorHeap.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/DeviceRequirements.hpp>
+#include <VOG/Graphics/Vulkan/HeapBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
 #include <VOG/Graphics/Vulkan/Texture.hpp>
-#include <VOG/Graphics/Vulkan/UniformBlock.hpp>
 
 #include <gtest/gtest.h>
+#include <vulkan/vulkan_format_traits.hpp>
 
 #include <algorithm>
 #include <cstdlib>
@@ -33,6 +35,62 @@ recordEmpty(const Graphics::Vulkan::CommandBufferPoolPtr& pool)
 {
     auto recorder = pool->record();
     return recorder.finish();
+}
+
+/** A square color target of @p size pixels that can be read back with recordReadback(). */
+inline Graphics::Vulkan::RenderTargetPtr
+createColorTarget(Graphics::Vulkan::Device& device,
+                  std::uint32_t             size,
+                  vk::Format                format = vk::Format::eR8G8B8A8Unorm)
+{
+    return device.createRenderTarget({.width = size, .height = size},
+                                     format,
+                                     vk::ImageUsageFlagBits::eColorAttachment |
+                                         vk::ImageUsageFlagBits::eTransferSrc);
+}
+
+/**
+ * Records the copy of @p target, which a pass has just drawn into, to a new host buffer: the
+ * barrier from color attachment to transfer source, the copy, and the barrier that makes the copy
+ * visible to the host. The target is left in the transfer-source layout. Read the buffer through
+ * mapForWrite() once the submit has finished; that is meant for writing, and legal on lavapipe,
+ * whose host memory is coherent. No production code needs a readback.
+ */
+inline Graphics::Vulkan::BufferPtr
+recordReadback(Graphics::Vulkan::Device&                       device,
+               Graphics::Vulkan::CommandBufferRecorder&        recorder,
+               const Graphics::Vulkan::AttachmentInterfacePtr& target)
+{
+    const vk::DeviceSize size = vk::DeviceSize{target->getExtent().width} *
+                                target->getExtent().height * vk::blockSize(target->getFormat());
+    Graphics::Vulkan::BufferPtr readback =
+        device.createBuffer({.size = size, .usage = vk::BufferUsageFlagBits::eTransferDst},
+                            {.flags = Graphics::Vulkan::AllocationFlag::eHostSequentialWrite});
+
+    recorder.setImageBarrier(target,
+                             {.srcStageMask  = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                              .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+                              .dstStageMask  = vk::PipelineStageFlagBits2::eCopy,
+                              .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+                              .oldLayout     = vk::ImageLayout::eColorAttachmentOptimal,
+                              .newLayout     = vk::ImageLayout::eTransferSrcOptimal,
+                              .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                              .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                              .subresourceRange    = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                                      .levelCount = 1u,
+                                                      .layerCount = 1u}});
+    recorder.copyImageToBuffer(target, readback);
+    recorder.setBufferBarrier(readback,
+                              {.srcStageMask        = vk::PipelineStageFlagBits2::eCopy,
+                               .srcAccessMask       = vk::AccessFlagBits2::eTransferWrite,
+                               .dstStageMask        = vk::PipelineStageFlagBits2::eHost,
+                               .dstAccessMask       = vk::AccessFlagBits2::eHostRead,
+                               .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                               .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                               .offset              = 0u,
+                               .size                = VK_WHOLE_SIZE});
+
+    return readback;
 }
 
 /**
@@ -87,7 +145,7 @@ public:
             {.size = bytes.size(), .usage = vk::BufferUsageFlagBits::eTransferSrc},
             {.flags = Graphics::Vulkan::AllocationFlag::eHostSequentialWrite});
         auto mapping = staging->mapForWrite();
-        std::ranges::copy(bytes, mapping.data);
+        std::ranges::copy(bytes, mapping.bytes().begin());
 
         return staging;
     }

@@ -8,8 +8,8 @@
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/DeviceRequirements.hpp>
+#include <VOG/Graphics/Vulkan/HeapBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Texture.hpp>
-#include <VOG/Graphics/Vulkan/UniformBlock.hpp>
 
 #include <gtest/gtest.h>
 
@@ -1066,9 +1066,9 @@ TEST_F(RendererTest, createMeshStagesIndicesAfterVertices)
     EXPECT_EQ(staging->byteSize(), HandleTestAccess::data(mesh).indexOffset + sizeof(indices));
     EXPECT_EQ(HandleTestAccess::data(mesh).buffer->byteSize(), staging->byteSize());
     const auto mapping = staging->mapForWrite();
-    ASSERT_GE(mapping.size, HandleTestAccess::data(mesh).indexOffset + sizeof(indices));
-    EXPECT_EQ(std::memcmp(mapping.data, vertices.data(), vertices.size()), 0);
-    EXPECT_EQ(std::memcmp(mapping.data + HandleTestAccess::data(mesh).indexOffset,
+    ASSERT_GE(mapping.bytes().size(), HandleTestAccess::data(mesh).indexOffset + sizeof(indices));
+    EXPECT_EQ(std::memcmp(mapping.bytes().data(), vertices.data(), vertices.size()), 0);
+    EXPECT_EQ(std::memcmp(mapping.bytes().data() + HandleTestAccess::data(mesh).indexOffset,
                           indices,
                           sizeof(indices)),
               0);
@@ -1401,7 +1401,7 @@ TEST_F(RendererTest, parameterBlockOutlivesMaterialWhileFrameInFlight)
 {
     auto renderer = makeRenderer();
 
-    std::weak_ptr<Graphics::Vulkan::UniformBlock> weakBlock;
+    std::weak_ptr<Graphics::Vulkan::HeapBuffer> weakBlock;
     {
         Material material = renderer->createMaterial(
             {.shader = "WorldSpace", .parameters = std::vector<std::byte>(gTintSize)});

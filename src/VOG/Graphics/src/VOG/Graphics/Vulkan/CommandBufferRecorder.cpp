@@ -7,8 +7,8 @@
 #include <VOG/Graphics/Vulkan/DescriptorHeap.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
+#include <VOG/Graphics/Vulkan/HeapBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Texture.hpp>
-#include <VOG/Graphics/Vulkan/UniformBlock.hpp>
 #include <VOG/Graphics/Vulkan/UploadBarriers.hpp>
 
 #include <vulkan/vulkan_format_traits.hpp>
@@ -234,9 +234,9 @@ CommandBufferRecorder::RenderingPass::useResource(std::shared_ptr<const Texture>
 }
 
 void
-CommandBufferRecorder::RenderingPass::useResource(std::shared_ptr<const UniformBlock> block)
+CommandBufferRecorder::RenderingPass::useResource(std::shared_ptr<const HeapBuffer> buffer)
 {
-    mRecorder.mCommandBuffer->retain(std::move(block));
+    mRecorder.mCommandBuffer->retain(std::move(buffer));
 }
 
 void
@@ -336,6 +336,32 @@ CommandBufferRecorder::copyBufferToTexture(const BufferPtr&  staging,
 
     barrier = textureUploadBarriers(**texture, mPool->mFamilyIndex, usageFamily).release;
     unsafeSetBarriers({}, {}, {barrier});
+}
+
+void
+CommandBufferRecorder::copyImageToBuffer(const AttachmentInterfacePtr& image,
+                                         const BufferPtr&              destination)
+{
+    VOG_ASSERT_MSG(!mRenderingActive, "copyImageToBuffer needs to be outside a RenderingPass.");
+    VOG_ASSERT_MSG(!isDepthFormat(image->getFormat()) && !isStencilFormat(image->getFormat()),
+                   "copyImageToBuffer copies the color aspect only.");
+
+    const vk::Extent2D extent = image->getExtent2D();
+    VOG_ASSERT_MSG(destination->byteSize() >= std::uint64_t{extent.width} * extent.height *
+                                                  vk::blockSize(image->getFormat()) /
+                                                  vk::texelsPerBlock(image->getFormat()),
+                   "The destination of copyImageToBuffer is smaller than the image.");
+
+    mCommandBuffer->retain(image);
+    mCommandBuffer->retain(destination);
+
+    mCommandBuffer->copyImageToBuffer(
+        image->getImage(),
+        vk::ImageLayout::eTransferSrcOptimal,
+        **destination,
+        vk::BufferImageCopy{
+            .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .layerCount = 1u},
+            .imageExtent      = {.width = extent.width, .height = extent.height, .depth = 1u}});
 }
 
 void

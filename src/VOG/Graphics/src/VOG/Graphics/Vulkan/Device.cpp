@@ -1,18 +1,19 @@
 #include "VOG/Graphics/Vulkan/Device.hpp"
 
 #include <VOG/Common/Assert.hpp>
-#include <VOG/Graphics/Vulkan/Attachment/RenderBuffer.hpp>
+#include <VOG/Graphics/Vulkan/Attachment/RenderTarget.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
+#include <VOG/Graphics/Vulkan/Common.hpp>
 #include <VOG/Graphics/Vulkan/DescriptorHeap.hpp>
 #include <VOG/Graphics/Vulkan/DeviceRequirements.hpp>
+#include <VOG/Graphics/Vulkan/HeapBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
 #include <VOG/Graphics/Vulkan/MemoryAllocator.hpp>
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 #include <VOG/Graphics/Vulkan/Texture.hpp>
-#include <VOG/Graphics/Vulkan/UniformBlock.hpp>
 
 #include <algorithm>
 #include <format>
@@ -257,27 +258,49 @@ Device::createSwapchain(const Swapchain::SwapchainParameters& parameters)
     return std::unique_ptr<Swapchain>(new Swapchain{shared_from_this(), parameters});
 }
 
-std::unique_ptr<RenderBuffer>
-Device::createRenderBuffer(AttachmentUsage         usage,
-                           vk::Format              desiredFormat,
-                           vk::Extent2D            extent,
-                           SampleCount             sampleCount,
-                           std::uint32_t           mipLevels,
-                           std::uint32_t           arrayLevels,
-                           vk::ImageTiling         imageTiling,
-                           vk::ImageLayout         initialLayout,
-                           vk::MemoryPropertyFlags memoryProperties)
+std::unique_ptr<RenderTarget>
+Device::createRenderTarget(vk::Extent2D extent, vk::Format format, vk::ImageUsageFlags usage)
 {
-    return std::unique_ptr<RenderBuffer>(new RenderBuffer{shared_from_this(),
-                                                          usage,
-                                                          desiredFormat,
-                                                          extent,
-                                                          sampleCount,
-                                                          mipLevels,
-                                                          arrayLevels,
-                                                          imageTiling,
-                                                          initialLayout,
-                                                          memoryProperties});
+    if (extent.width == 0u || extent.height == 0u || extent.width > limits.maxImageDimension2D ||
+        extent.height > limits.maxImageDimension2D)
+    {
+        throw std::invalid_argument{std::format("A render target is 1x1 to {0}x{0}; got {1}x{2}.",
+                                                limits.maxImageDimension2D,
+                                                extent.width,
+                                                extent.height)};
+    }
+    if (!(usage & (vk::ImageUsageFlagBits::eColorAttachment |
+                   vk::ImageUsageFlagBits::eDepthStencilAttachment)))
+    {
+        throw std::invalid_argument{
+            "A render target needs the eColorAttachment or the eDepthStencilAttachment usage."};
+    }
+
+    // Nothing renders into a stencil aspect: the recorder takes depth-only depth attachments.
+    if (isStencilFormat(format))
+    {
+        throw std::invalid_argument{
+            std::format("A render target has no stencil aspect; the format {} has one.",
+                        vk::to_string(format))};
+    }
+
+    const vk::ImageAspectFlags aspects =
+        isDepthFormat(format) ? vk::ImageAspectFlagBits::eDepth : vk::ImageAspectFlagBits::eColor;
+
+    return mMemoryAllocator->makeRenderTarget(
+        {
+            .imageType     = vk::ImageType::e2D,
+            .format        = format,
+            .extent        = {.width = extent.width, .height = extent.height, .depth = 1u},
+            .mipLevels     = 1u,
+            .arrayLayers   = 1u,
+            .samples       = vk::SampleCountFlagBits::e1,
+            .tiling        = vk::ImageTiling::eOptimal,
+            .usage         = usage,
+            .sharingMode   = vk::SharingMode::eExclusive,
+            .initialLayout = vk::ImageLayout::eUndefined,
+        },
+        aspects);
 }
 
 std::unique_ptr<Buffer>
@@ -336,43 +359,50 @@ Device::createTexture(const DescriptorHeapPtr& heap, vk::Extent2D extent, vk::Fo
     return texture;
 }
 
-std::unique_ptr<UniformBlock>
-Device::createUniformBlock(const DescriptorHeapPtr& heap, std::span<const std::byte> bytes)
+std::unique_ptr<HeapBuffer>
+Device::createHeapBuffer(const DescriptorHeapPtr& heap, std::size_t size)
 {
-    // A zero-sized buffer is invalid; rounding up to 16 keeps a shader's vec4 reads inside it.
-    constexpr std::size_t kBlockGranularity = 16u;
-    const std::size_t     size =
-        std::max(kBlockGranularity,
-                 (bytes.size() + kBlockGranularity - 1u) / kBlockGranularity * kBlockGranularity);
-
+    // Before the rounding: a size near the top of std::size_t would wrap to a small buffer.
     if (size > limits.maxUniformBufferRange)
     {
         throw std::invalid_argument{std::format(
-            "A uniform block takes at most {} bytes; got {}.", limits.maxUniformBufferRange, size)};
+            "A heap buffer takes at most {} bytes; got {}.", limits.maxUniformBufferRange, size)};
+    }
+
+    // A zero-sized buffer is invalid; rounding up to 16 keeps a shader's vec4 reads inside it.
+    constexpr std::size_t kBlockGranularity = 16u;
+    const std::size_t     rounded           = std::max(
+        kBlockGranularity, (size + kBlockGranularity - 1u) / kBlockGranularity * kBlockGranularity);
+    if (rounded > limits.maxUniformBufferRange)
+    {
+        throw std::invalid_argument{std::format(
+            "A heap buffer takes at most {} bytes; got {}, which is {} rounded up to 16.",
+            limits.maxUniformBufferRange,
+            size,
+            rounded)};
     }
 
     DescriptorHeap::Slot slot = heap->allocate();
 
     const vk::DeviceSize alignment = limits.minUniformBufferOffsetAlignment;
     BufferPtr            buffer =
-        createBuffer({.size  = size,
+        createBuffer({.size  = rounded,
                       .usage = vk::BufferUsageFlagBits::eUniformBuffer |
                                vk::BufferUsageFlagBits::eShaderDeviceAddress},
                      {.flags = AllocationFlag::eHostSequentialWrite, .alignment = alignment});
     {
         auto mapping = buffer->mapForWrite();
-        std::fill_n(mapping.data, size, std::byte{0});
-        std::ranges::copy(bytes, mapping.data);
+        std::ranges::fill(mapping.bytes().first(rounded), std::byte{0});
     }
 
     const vk::DeviceAddress address = buffer->deviceAddress();
     // Untested: a driver that places the buffer below its own offset alignment reaches it.
     if (address % alignment != 0u)
     {
-        throw std::runtime_error{"The uniform block got an address that is not aligned."};
+        throw std::runtime_error{"The heap buffer got an address that is not aligned."};
     }
-    heap->writeUniformBuffer(slot, {.address = address, .size = size});
+    heap->writeUniformBuffer(slot, {.address = address, .size = rounded});
 
-    return std::unique_ptr<UniformBlock>(new UniformBlock{std::move(slot), std::move(buffer)});
+    return std::unique_ptr<HeapBuffer>(new HeapBuffer{std::move(slot), std::move(buffer)});
 }
 } // namespace VOG::Graphics::Vulkan

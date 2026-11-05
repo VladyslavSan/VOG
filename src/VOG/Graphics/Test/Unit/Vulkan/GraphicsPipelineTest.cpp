@@ -6,6 +6,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "VulkanFixture.hpp"
@@ -132,13 +133,13 @@ TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
     }
     {
         SCOPED_TRACE("a location the shader reads has no attribute");
-        EXPECT_THROW(
-            mDevice->createGraphicsPipeline(makeCreateInfo(gVertexShaderString, {kFloat4})),
-            std::invalid_argument);
+        EXPECT_THROW(std::ignore = mDevice->createGraphicsPipeline(
+                         makeCreateInfo(gVertexShaderString, {kFloat4})),
+                     std::invalid_argument);
     }
     {
         SCOPED_TRACE("a float format cannot feed an integer input");
-        EXPECT_THROW(mDevice->createGraphicsPipeline(
+        EXPECT_THROW(std::ignore = mDevice->createGraphicsPipeline(
                          makeCreateInfo(gIntegerColorVertexShaderString, {kFloat4, kFloat4})),
                      std::invalid_argument);
         EXPECT_NO_THROW(
@@ -157,9 +158,9 @@ TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
     }
     {
         SCOPED_TRACE("every location of an array input needs an attribute");
-        EXPECT_THROW(
-            mDevice->createGraphicsPipeline(makeCreateInfo(gArrayVertexShaderString, {kFloat4})),
-            std::invalid_argument);
+        EXPECT_THROW(std::ignore = mDevice->createGraphicsPipeline(
+                         makeCreateInfo(gArrayVertexShaderString, {kFloat4})),
+                     std::invalid_argument);
         EXPECT_NO_THROW(auto pipeline = mDevice->createGraphicsPipeline(
                             makeCreateInfo(gArrayVertexShaderString, {kFloat4, kFloat4})););
     }

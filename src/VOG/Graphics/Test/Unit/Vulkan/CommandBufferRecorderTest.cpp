@@ -1,4 +1,4 @@
-#include <VOG/Graphics/Vulkan/Attachment/RenderBuffer.hpp>
+#include <VOG/Graphics/Vulkan/Attachment/RenderTarget.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferRecorder.hpp>
@@ -8,9 +8,13 @@
 #include <spdlog/sinks/stdout_sinks.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <span>
+#include <stdexcept>
+#include <thread>
+#include <tuple>
 #include <type_traits>
 #include <vector>
 
@@ -38,12 +42,12 @@ constexpr std::array<std::byte, 16> gBlockBytes{};
 void
 submitAlone(const DevicePtr& device, FencePool& fencePool, ExecutableCommandBuffer& executable)
 {
-    device->getGraphicsQueue()->submit(fencePool, {}, std::span{&executable, 1u}, {});
+    device->getGraphicsQueue()->submit(fencePool, {.commandBuffers = std::span{&executable, 1u}});
 }
 
 /** Records and submits a command buffer that clears @p target; heavy enough to still run later. */
 ExecutableCommandBuffer
-recordClear(const CommandBufferPoolPtr& pool, const std::shared_ptr<RenderBuffer>& target)
+recordClear(const CommandBufferPoolPtr& pool, const RenderTargetPtr& target)
 {
     auto recorder = pool->record();
     recorder.setImageBarrier(target, VulkanFixture::toColorAttachmentBarrier());
@@ -57,18 +61,30 @@ recordClear(const CommandBufferPoolPtr& pool, const std::shared_ptr<RenderBuffer
     return recorder.finish();
 }
 
-std::shared_ptr<RenderBuffer>
+RenderTargetPtr
 makeTarget(Device& device, std::uint32_t size)
 {
-    return device.createRenderBuffer(AttachmentUsage::eColor,
-                                     vk::Format::eR8G8B8A8Unorm,
-                                     {.width = size, .height = size},
-                                     SampleCount::e1,
-                                     1u,
-                                     1u,
-                                     vk::ImageTiling::eOptimal,
-                                     vk::ImageLayout::eUndefined,
-                                     vk::MemoryPropertyFlagBits::eDeviceLocal);
+    return createColorTarget(device, size);
+}
+
+/**
+ * A format that the device can use as a depth attachment: the spec makes at least one of
+ * D32_SFLOAT and X8_D24_UNORM_PACK32 available, so this is vk::Format::eUndefined only on a device
+ * that breaks it.
+ */
+vk::Format
+mandatoryDepthFormat(const Device& device)
+{
+    for (const vk::Format candidate : {vk::Format::eD32Sfloat, vk::Format::eX8D24UnormPack32})
+    {
+        const auto properties = device.raiiPhysicalDevice().getFormatProperties(candidate);
+        if (properties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment)
+        {
+            return candidate;
+        }
+    }
+
+    return vk::Format::eUndefined;
 }
 
 vk::BufferMemoryBarrier2
@@ -157,9 +173,9 @@ TEST_F(VulkanValidationFixture, CommandBufferRecorder_useResourceRetainsUntilPoo
     auto                     heap = createHeap();
     std::shared_ptr<Texture> texture =
         mDevice->createTexture(heap, {.width = 2u, .height = 2u}, vk::Format::eR8G8B8A8Srgb);
-    std::shared_ptr<UniformBlock>     block       = mDevice->createUniformBlock(heap, gBlockBytes);
-    const std::weak_ptr<Texture>      weakTexture = texture;
-    const std::weak_ptr<UniformBlock> weakBlock   = block;
+    std::shared_ptr<HeapBuffer>     block = mDevice->createHeapBuffer(heap, gBlockBytes.size());
+    const std::weak_ptr<Texture>    weakTexture = texture;
+    const std::weak_ptr<HeapBuffer> weakBlock   = block;
 
     auto target    = makeTarget(*mDevice, 64u);
     auto fencePool = FencePool::create(mDevice);
@@ -218,7 +234,9 @@ TEST_F(VulkanValidationFixture, CommandBufferRecorder_bindDescriptorHeapRetainsH
 /**
  * The upload commands retain what they reference: the staging buffers and the destinations of the
  * copies, and the resources that acquire() takes over (which it retains even where the families
- * are equal and it records no barrier). Under the validation layer, so that the barriers and the
+ * are equal and it records no barrier). copyImageToBuffer retains its image and its destination
+ * too: the barrier that readies the image is in a command buffer of another pool, which is reset
+ * first, so only the copy keeps them. Under the validation layer, so that the barriers and the
  * copies are checked too.
  */
 TEST_F(VulkanValidationFixture, CommandBufferRecorder_uploadCommandsRetainTheirResources)
@@ -236,11 +254,41 @@ TEST_F(VulkanValidationFixture, CommandBufferRecorder_uploadCommandsRetainTheirR
         mDevice->createTexture(heap, {.width = 2u, .height = 2u}, vk::Format::eR8G8B8A8Srgb);
     std::shared_ptr<Buffer> acquiredBuffer = mDevice->createBuffer(
         {.size = gBlockBytes.size(), .usage = vk::BufferUsageFlagBits::eVertexBuffer}, {});
-    const std::array<std::weak_ptr<const void>, 6> weakResources{
-        imageStaging, bufferStaging, texture, buffer, acquiredTexture, acquiredBuffer};
+    RenderTargetPtr         target = createColorTarget(*mDevice, 2u);
+    std::shared_ptr<Buffer> readback =
+        mDevice->createBuffer({.size  = 2u * 2u * vk::blockSize(vk::Format::eR8G8B8A8Unorm),
+                               .usage = vk::BufferUsageFlagBits::eTransferDst},
+                              {});
+    const std::array<std::weak_ptr<const void>, 8> weakResources{imageStaging,
+                                                                 bufferStaging,
+                                                                 texture,
+                                                                 buffer,
+                                                                 acquiredTexture,
+                                                                 acquiredBuffer,
+                                                                 target,
+                                                                 readback};
 
-    auto fencePool = FencePool::create(mDevice);
-    auto pool      = mDevice->createCommandBufferPool();
+    auto fencePool   = FencePool::create(mDevice);
+    auto pool        = mDevice->createCommandBufferPool();
+    auto barrierPool = mDevice->createCommandBufferPool();
+
+    auto preparer = barrierPool->record();
+    preparer.setImageBarrier(target,
+                             {.srcStageMask        = vk::PipelineStageFlagBits2::eTopOfPipe,
+                              .dstStageMask        = vk::PipelineStageFlagBits2::eCopy,
+                              .dstAccessMask       = vk::AccessFlagBits2::eTransferRead,
+                              .oldLayout           = vk::ImageLayout::eUndefined,
+                              .newLayout           = vk::ImageLayout::eTransferSrcOptimal,
+                              .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                              .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                              .subresourceRange    = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                                      .levelCount = 1u,
+                                                      .layerCount = 1u}});
+    auto preparing = preparer.finish();
+
+    auto reader = pool->record();
+    reader.copyImageToBuffer(target, readback);
+    auto reading = reader.finish();
 
     auto copier = pool->record();
     copier.copyBufferToTexture(imageStaging, texture, family);
@@ -258,19 +306,27 @@ TEST_F(VulkanValidationFixture, CommandBufferRecorder_uploadCommandsRetainTheirR
     buffer.reset();
     acquiredTexture.reset();
     acquiredBuffer.reset();
+    target.reset();
+    readback.reset();
     const auto expectAlive = [&](bool alive)
     {
         for (std::size_t i = 0u; i < weakResources.size(); ++i)
         {
             EXPECT_EQ(!weakResources[i].expired(), alive)
                 << "resource " << i << " (in the order imageStaging, bufferStaging, texture, "
-                << "buffer, acquiredTexture, acquiredBuffer)";
+                << "buffer, acquiredTexture, acquiredBuffer, target, readback)";
         }
     };
     expectAlive(true);
 
     submitAlone(mDevice, *fencePool, copying);
     submitAlone(mDevice, *fencePool, acquiring);
+    submitAlone(mDevice, *fencePool, preparing);
+    submitAlone(mDevice, *fencePool, reading);
+    expectAlive(true);
+
+    // The barrier's command buffer lets go of the image; the copy still holds image and buffer.
+    barrierPool->reset();
     expectAlive(true);
 
     pool->reset();
@@ -303,23 +359,21 @@ TEST_F(VulkanFixture, Queue_submitRetainsSemaphoresUntilPoolReset)
 
     auto first = recordEmpty(signaller);
     queue->submit(*fencePool,
-                  {},
-                  std::span{&first, 1u},
-                  std::array<SemaphorePtr, 2>{chained, signalOnly},
-                  {},
-                  std::array{Queue::TimelineSignal{.semaphore = timeline, .value = 1u},
-                             Queue::TimelineSignal{.semaphore = timelineOnly, .value = 1u}});
+                  {.commandBuffers = std::span{&first, 1u},
+                   .signals        = std::array<SemaphorePtr, 2>{chained, signalOnly},
+                   .timelineSignals =
+                       std::array{Queue::TimelineSignal{.semaphore = timeline, .value = 1u},
+                                  Queue::TimelineSignal{.semaphore = timelineOnly, .value = 1u}}});
 
     auto second = recordEmpty(waiter);
-    queue->submit(
-        *fencePool,
-        std::array{Queue::SemaphoreWait{.semaphore = chained,
-                                        .stage     = vk::PipelineStageFlagBits2::eAllCommands}},
-        std::span{&second, 1u},
-        {},
-        std::array{Queue::TimelineWait{.semaphore = timeline,
-                                       .value     = 1u,
-                                       .stage     = vk::PipelineStageFlagBits2::eAllCommands}});
+    queue->submit(*fencePool,
+                  {.waits          = std::array{Queue::SemaphoreWait{
+                       .semaphore = chained, .stage = vk::PipelineStageFlagBits2::eAllCommands}},
+                   .commandBuffers = std::span{&second, 1u},
+                   .timelineWaits  = std::array{
+                       Queue::TimelineWait{.semaphore = timeline,
+                                           .value     = 1u,
+                                           .stage = vk::PipelineStageFlagBits2::eAllCommands}}});
 
     chained.reset();
     signalOnly.reset();
@@ -339,6 +393,45 @@ TEST_F(VulkanFixture, Queue_submitRetainsSemaphoresUntilPoolReset)
     waiter->reset();
     EXPECT_TRUE(weakChained.expired());
     EXPECT_TRUE(weakTimeline.expired());
+}
+
+/**
+ * counterValue() reads the value a submit signalled, from a thread other than the one that
+ * submitted. It is 0 before any signal, and rises with each signal: the value is the one the
+ * device holds, not one the semaphore remembers.
+ */
+TEST_F(VulkanFixture, TimelineSemaphore_counterValueIsReadOnAnotherThread)
+{
+    auto fencePool = FencePool::create(mDevice);
+    auto pool      = mDevice->createCommandBufferPool();
+    auto timeline  = mDevice->createTimelineSemaphore();
+
+    const auto readOnAnotherThread = [&timeline]
+    {
+        std::uint64_t value = 0u;
+        std::thread{[&]
+                    {
+                        value = timeline->counterValue();
+                    }}
+            .join();
+
+        return value;
+    };
+    EXPECT_EQ(readOnAnotherThread(), 0u);
+
+    for (const std::uint64_t signalled : {3u, 7u})
+    {
+        auto executable = recordEmpty(pool);
+        mDevice->getGraphicsQueue()->submit(*fencePool,
+                                            {.commandBuffers  = std::span{&executable, 1u},
+                                             .timelineSignals = std::array{Queue::TimelineSignal{
+                                                 .semaphore = timeline, .value = signalled}}});
+
+        // Waits the fence of the submit, which is signalled after the semaphores of the submit.
+        pool->reset();
+        EXPECT_EQ(readOnAnotherThread(), signalled);
+        EXPECT_EQ(timeline->counterValue(), signalled);
+    }
 }
 
 namespace
@@ -376,11 +469,8 @@ uploadAndReadBack(const DevicePtr& device, const BufferPtr& staging, bool waitFo
     auto transferCommands = transferRecorder.finish();
     device->getTransferQueue()->submit(
         *fencePool,
-        {},
-        std::span{&transferCommands, 1u},
-        {},
-        {},
-        std::array{Queue::TimelineSignal{.semaphore = timeline, .value = 1u}});
+        {.commandBuffers  = std::span{&transferCommands, 1u},
+         .timelineSignals = std::array{Queue::TimelineSignal{.semaphore = timeline, .value = 1u}}});
 
     auto graphicsRecorder = graphicsPool->record();
     graphicsRecorder.acquire(deviceLocal, transferFamily);
@@ -397,19 +487,19 @@ uploadAndReadBack(const DevicePtr& device, const BufferPtr& staging, bool waitFo
     auto             graphicsCommands = graphicsRecorder.finish();
     const std::array waits{Queue::TimelineWait{
         .semaphore = timeline, .value = 1u, .stage = vk::PipelineStageFlagBits2::eAllCommands}};
-    device->getGraphicsQueue()->submit(*fencePool,
-                                       {},
-                                       std::span{&graphicsCommands, 1u},
-                                       {},
-                                       waitForUpload ? std::span{waits}
-                                                     : std::span<const Queue::TimelineWait>{});
+    device->getGraphicsQueue()->submit(
+        *fencePool,
+        {.commandBuffers = std::span{&graphicsCommands, 1u},
+         .timelineWaits =
+             waitForUpload ? std::span{waits} : std::span<const Queue::TimelineWait>{}});
 
     // Resetting the pools waits for their fences.
     transferPool->reset();
     graphicsPool->reset();
 
     const auto mapping = readBack->mapForWrite();
-    return {mapping.data, mapping.data + size};
+    const auto bytes   = mapping.bytes().first(size);
+    return {bytes.begin(), bytes.end()};
 }
 
 std::vector<std::byte>
@@ -494,7 +584,7 @@ TEST_F(VulkanValidationFixture, CommandBufferPool_dropWaitsForFenceSharedWithAno
     auto light     = mDevice->createCommandBufferPool();
 
     std::array executables{recordClear(heavy, target), recordEmpty(light)};
-    mDevice->getGraphicsQueue()->submit(*fencePool, {}, executables, {});
+    mDevice->getGraphicsQueue()->submit(*fencePool, {.commandBuffers = executables});
 
     // `light` still holds the fence, so dropping `heavy` is not the last reference to it.
     heavy.reset();
@@ -563,7 +653,7 @@ TEST_F(VulkanValidationFixture, CommandBufferPool_droppedExecutableIsNotReused)
  * silently, so only the layer can fail this test. The barrier is passed without an image: the
  * recorder fills it from the attachment, and a null image is a validation error.
  */
-TEST_F(VulkanValidationFixture, CommandBufferRecorder_clearRenderBufferAndSubmit)
+TEST_F(VulkanValidationFixture, CommandBufferRecorder_clearRenderTargetAndSubmit)
 {
     auto target    = makeTarget(*mDevice, 64u);
     auto fencePool = FencePool::create(mDevice);
@@ -576,6 +666,128 @@ TEST_F(VulkanValidationFixture, CommandBufferRecorder_clearRenderBufferAndSubmit
 
     EXPECT_TRUE(mValidationErrors.empty())
         << (mValidationErrors.empty() ? "" : mValidationErrors.front());
+}
+
+/**
+ * A render target is cleared and read back: copyImageToBuffer puts the pixels the pass wrote into a
+ * host buffer. Every channel has its own value, so a swapped channel, a copy that never ran or one
+ * of the wrong size shows. Under the validation layer, which checks the layouts of the barriers
+ * around the copy.
+ */
+TEST_F(VulkanValidationFixture, CommandBufferRecorder_clearedRenderTargetReadsBack)
+{
+    constexpr std::uint32_t kSize = 8u;
+
+    auto target    = createColorTarget(*mDevice, kSize);
+    auto fencePool = FencePool::create(mDevice);
+    auto pool      = mDevice->createCommandBufferPool();
+
+    auto recorder = pool->record();
+    recorder.setImageBarrier(target, VulkanFixture::toColorAttachmentBarrier());
+    {
+        auto pass = recorder.beginRendering(
+            {{.attachment = target,
+              .loadOp     = vk::AttachmentLoadOp::eClear,
+              .storeOp    = vk::AttachmentStoreOp::eStore,
+              .clearValue = vk::ClearColorValue{std::array{0.2f, 0.4f, 0.6f, 0.8f}}}});
+    }
+    const BufferPtr readback   = recordReadback(*mDevice, recorder, target);
+    auto            executable = recorder.finish();
+    submitAlone(mDevice, *fencePool, executable);
+    pool->reset();
+
+    // 0.2, 0.4, 0.6 and 0.8 of 255, which are whole numbers.
+    constexpr std::array<std::byte, 4> kPixel{
+        std::byte{51}, std::byte{102}, std::byte{153}, std::byte{204}};
+    const auto mapping = readback->mapForWrite();
+    const auto bytes   = mapping.bytes().first(kSize * kSize * kPixel.size());
+    for (std::size_t pixel = 0u; pixel < kSize * kSize; ++pixel)
+    {
+        EXPECT_TRUE(std::ranges::equal(bytes.subspan(pixel * kPixel.size(), kPixel.size()), kPixel))
+            << "pixel " << pixel;
+    }
+    EXPECT_TRUE(mValidationErrors.empty())
+        << (mValidationErrors.empty() ? "" : mValidationErrors.front());
+}
+
+/**
+ * A depth render target is rendered into: its view has the depth aspect, and a pass with only a
+ * depth attachment clears it. The spec makes at least one of X8_D24_UNORM_PACK32 and D32_SFLOAT
+ * available as a depth attachment, so the test takes the first the device offers. Under the
+ * validation layer, which checks the aspect of the view and the layouts of the barrier and the
+ * pass.
+ */
+TEST_F(VulkanValidationFixture, CommandBufferRecorder_depthRenderTargetIsRenderedInto)
+{
+    const vk::Format format = mandatoryDepthFormat(*mDevice);
+    ASSERT_NE(format, vk::Format::eUndefined);
+
+    RenderTargetPtr depth = mDevice->createRenderTarget(
+        {.width = 16u, .height = 16u}, format, vk::ImageUsageFlagBits::eDepthStencilAttachment);
+    auto fencePool = FencePool::create(mDevice);
+    auto pool      = mDevice->createCommandBufferPool();
+
+    auto recorder = pool->record();
+    recorder.setImageBarrier(depth,
+                             {.srcStageMask  = vk::PipelineStageFlagBits2::eTopOfPipe,
+                              .dstStageMask  = vk::PipelineStageFlagBits2::eEarlyFragmentTests |
+                                               vk::PipelineStageFlagBits2::eLateFragmentTests,
+                              .dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+                              .oldLayout     = vk::ImageLayout::eUndefined,
+                              .newLayout     = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                              .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                              .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                              .subresourceRange    = {.aspectMask = vk::ImageAspectFlagBits::eDepth,
+                                                      .levelCount = 1u,
+                                                      .layerCount = 1u}});
+    {
+        auto pass = recorder.beginRendering(
+            {}, CommandBufferRecorder::DepthAttachment{.attachment = depth});
+    }
+    auto executable = recorder.finish();
+    submitAlone(mDevice, *fencePool, executable);
+    pool->reset();
+
+    EXPECT_EQ(depth->getFormat(), format);
+    EXPECT_TRUE(mValidationErrors.empty())
+        << (mValidationErrors.empty() ? "" : mValidationErrors.front());
+}
+
+/**
+ * A render target needs an extent the device can make, an attachment usage, and a format without a
+ * stencil aspect (nothing renders into one); each is refused before an image exists, as
+ * std::invalid_argument.
+ */
+TEST_F(VulkanFixture, Device_createRenderTargetRefusesWhatIsNoAttachment)
+{
+    constexpr auto kFormat = vk::Format::eR8G8B8A8Unorm;
+    constexpr auto kColor  = vk::ImageUsageFlagBits::eColorAttachment;
+
+    EXPECT_NO_THROW(std::ignore =
+                        mDevice->createRenderTarget({.width = 1u, .height = 1u}, kFormat, kColor));
+    EXPECT_THROW(std::ignore =
+                     mDevice->createRenderTarget({.width = 0u, .height = 4u}, kFormat, kColor),
+                 std::invalid_argument);
+    EXPECT_THROW(std::ignore =
+                     mDevice->createRenderTarget({.width = 4u, .height = 0u}, kFormat, kColor),
+                 std::invalid_argument);
+    const std::uint32_t tooWide = mDevice->limits.maxImageDimension2D + 1u;
+    EXPECT_THROW(std::ignore =
+                     mDevice->createRenderTarget({.width = tooWide, .height = 4u}, kFormat, kColor),
+                 std::invalid_argument);
+    EXPECT_THROW(std::ignore = mDevice->createRenderTarget(
+                     {.width = 4u, .height = 4u}, kFormat, vk::ImageUsageFlagBits::eSampled),
+                 std::invalid_argument);
+    for (const vk::Format stencil :
+         {vk::Format::eD24UnormS8Uint, vk::Format::eD32SfloatS8Uint, vk::Format::eS8Uint})
+    {
+        EXPECT_THROW(std::ignore = mDevice->createRenderTarget(
+                         {.width = 4u, .height = 4u},
+                         stencil,
+                         vk::ImageUsageFlagBits::eDepthStencilAttachment),
+                     std::invalid_argument)
+            << vk::to_string(stencil);
+    }
 }
 
 #ifndef NDEBUG
@@ -626,6 +838,40 @@ TEST_F(VulkanFixture, CommandBufferRecorderDeathTest_misusedUploadAndPushDataAss
     EXPECT_DEATH(pushData(0u, 6u), "multiples of 4");
     EXPECT_DEATH(pushData(0u, mDevice->descriptorHeapProperties.maxPushDataSize + 4u),
                  "past maxPushDataSize");
+
+    // copyImageToBuffer: inside a rendering pass, an image with a depth aspect, and a destination
+    // smaller than the image.
+    const BufferPtr       roomy = createStaging(std::vector<std::byte>(4096u));
+    const RenderTargetPtr color = makeTarget(*mDevice, 16u);
+    EXPECT_DEATH(
+        {
+            useStderr();
+            auto recorder = pool->record();
+            recorder.setImageBarrier(color, toColorAttachmentBarrier());
+            auto pass = recorder.beginRendering({{.attachment = color}});
+            recorder.copyImageToBuffer(color, roomy);
+        },
+        "outside a RenderingPass");
+
+    const RenderTargetPtr depth = mDevice->createRenderTarget(
+        {.width = 16u, .height = 16u},
+        mandatoryDepthFormat(*mDevice),
+        vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eTransferSrc);
+    EXPECT_DEATH(
+        {
+            useStderr();
+            auto recorder = pool->record();
+            recorder.copyImageToBuffer(depth, roomy);
+        },
+        "color aspect only");
+
+    EXPECT_DEATH(
+        {
+            useStderr();
+            auto recorder = pool->record();
+            recorder.copyImageToBuffer(color, staging);
+        },
+        "destination of copyImageToBuffer is smaller");
 }
 #endif
 } // namespace VOG::Tests

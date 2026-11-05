@@ -16,4 +16,10 @@ TimelineSemaphore::TimelineSemaphore(DevicePtr device)
     , vk::raii::Semaphore{DeviceChild::device()->raii(), gCreateInfo}
 {
 }
+
+std::uint64_t
+TimelineSemaphore::counterValue() const
+{
+    return getCounterValue();
+}
 } // namespace VOG::Graphics::Vulkan

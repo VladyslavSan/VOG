@@ -1,5 +1,5 @@
 #include <VOG/Graphics/ShaderProgramCache.hpp>
-#include <VOG/Graphics/Vulkan/Attachment/RenderBuffer.hpp>
+#include <VOG/Graphics/Vulkan/Attachment/RenderTarget.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferRecorder.hpp>
@@ -10,11 +10,14 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
-#include <cstring>
+#include <limits>
 #include <memory>
 #include <span>
 #include <stdexcept>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "VulkanFixture.hpp"
@@ -138,20 +141,20 @@ TEST_F(VulkanFixture, DescriptorHeap_fullHeapThrows)
 {
     auto heap = createHeap(2u);
 
-    auto first  = mDevice->createUniformBlock(heap, gTint);
-    auto second = mDevice->createUniformBlock(heap, gTint);
+    auto first  = mDevice->createHeapBuffer(heap, gTint.size());
+    auto second = mDevice->createHeapBuffer(heap, gTint.size());
     EXPECT_NE(first->heapIndex(), second->heapIndex());
     EXPECT_LT(first->heapIndex(), 2u);
     EXPECT_LT(second->heapIndex(), 2u);
 
-    EXPECT_THROW(mDevice->createUniformBlock(heap, gTint), std::runtime_error);
-    EXPECT_THROW(
-        mDevice->createTexture(heap, {.width = 2u, .height = 2u}, vk::Format::eR8G8B8A8Srgb),
-        std::runtime_error);
+    EXPECT_THROW(std::ignore = mDevice->createHeapBuffer(heap, gTint.size()), std::runtime_error);
+    EXPECT_THROW(std::ignore = mDevice->createTexture(
+                     heap, {.width = 2u, .height = 2u}, vk::Format::eR8G8B8A8Srgb),
+                 std::runtime_error);
 
     EXPECT_NE(first->heapIndex(), second->heapIndex());
     first.reset();
-    EXPECT_NO_THROW(mDevice->createUniformBlock(heap, gTint));
+    EXPECT_NO_THROW(std::ignore = mDevice->createHeapBuffer(heap, gTint.size()));
 }
 
 /** A texture over maxImageDimension2D breaks VUID-VkImageCreateInfo-extent-02252. */
@@ -160,34 +163,37 @@ TEST_F(VulkanFixture, DescriptorHeap_textureOverDeviceExtentThrows)
     auto heap = createHeap(1u);
 
     const std::uint32_t tooWide = mDevice->limits.maxImageDimension2D + 1u;
-    EXPECT_THROW(
-        mDevice->createTexture(heap, {.width = tooWide, .height = 1u}, vk::Format::eR8G8B8A8Srgb),
-        std::invalid_argument);
-    EXPECT_THROW(
-        mDevice->createTexture(heap, {.width = 1u, .height = tooWide}, vk::Format::eR8G8B8A8Srgb),
-        std::invalid_argument);
+    EXPECT_THROW(std::ignore = mDevice->createTexture(
+                     heap, {.width = tooWide, .height = 1u}, vk::Format::eR8G8B8A8Srgb),
+                 std::invalid_argument);
+    EXPECT_THROW(std::ignore = mDevice->createTexture(
+                     heap, {.width = 1u, .height = tooWide}, vk::Format::eR8G8B8A8Srgb),
+                 std::invalid_argument);
 
     // The throw came before the slot was taken.
-    EXPECT_NO_THROW(
-        mDevice->createTexture(heap, {.width = 2u, .height = 2u}, vk::Format::eR8G8B8A8Srgb));
+    EXPECT_NO_THROW(std::ignore = mDevice->createTexture(
+                        heap, {.width = 2u, .height = 2u}, vk::Format::eR8G8B8A8Srgb));
 }
 
-/** A block over maxUniformBufferRange breaks VUID-VkResourceDescriptorInfoEXT-type-12496. */
-TEST_F(VulkanFixture, DescriptorHeap_uniformBlockOverDeviceRangeThrows)
+/** A buffer over maxUniformBufferRange breaks VUID-VkResourceDescriptorInfoEXT-type-12496. */
+TEST_F(VulkanFixture, DescriptorHeap_heapBufferOverDeviceRangeThrows)
 {
     auto heap = createHeap(1u);
 
-    // The block must be built to be refused. A driver with a huge limit would need gigabytes.
-    constexpr std::uint32_t kLargestTestable = 1u << 28u;
-    if (mDevice->limits.maxUniformBufferRange >= kLargestTestable)
+    const std::size_t tooBig = std::size_t{mDevice->limits.maxUniformBufferRange} + 1u;
+    EXPECT_THROW(std::ignore = mDevice->createHeapBuffer(heap, tooBig), std::invalid_argument);
+
+    // These sizes plus 15 wrap around std::size_t: checked after the rounding, they would pass the
+    // limit and get a buffer of 16 bytes.
+    constexpr std::size_t kMax = std::numeric_limits<std::size_t>::max();
+    for (const std::size_t huge : {kMax, kMax - 1u, kMax - 14u})
     {
-        GTEST_SKIP() << "maxUniformBufferRange is too large to build a block over it";
+        EXPECT_THROW(std::ignore = mDevice->createHeapBuffer(heap, huge), std::invalid_argument)
+            << huge;
     }
-    const std::vector<std::byte> tooBig(std::size_t{mDevice->limits.maxUniformBufferRange} + 1u);
-    EXPECT_THROW(mDevice->createUniformBlock(heap, tooBig), std::invalid_argument);
 
     // The throw came before the slot was taken.
-    EXPECT_NO_THROW(mDevice->createUniformBlock(heap, gTint));
+    EXPECT_NO_THROW(std::ignore = mDevice->createHeapBuffer(heap, gTint.size()));
 }
 
 /**
@@ -196,18 +202,9 @@ TEST_F(VulkanFixture, DescriptorHeap_uniformBlockOverDeviceRangeThrows)
  */
 TEST_F(VulkanValidationFixture, DescriptorHeap_slotReusedOnlyAfterRetainingPoolReset)
 {
-    auto                          heap = createHeap(1u);
-    std::shared_ptr<RenderBuffer> target =
-        mDevice->createRenderBuffer(AttachmentUsage::eColor,
-                                    vk::Format::eR8G8B8A8Unorm,
-                                    {.width = 16u, .height = 16u},
-                                    SampleCount::e1,
-                                    1u,
-                                    1u,
-                                    vk::ImageTiling::eOptimal,
-                                    vk::ImageLayout::eUndefined,
-                                    vk::MemoryPropertyFlagBits::eDeviceLocal);
-    std::shared_ptr<UniformBlock> block = mDevice->createUniformBlock(heap, gTint);
+    auto                        heap   = createHeap(1u);
+    RenderTargetPtr             target = createColorTarget(*mDevice, 16u);
+    std::shared_ptr<HeapBuffer> block  = mDevice->createHeapBuffer(heap, gTint.size());
 
     auto fencePool = FencePool::create(mDevice);
     auto pool      = mDevice->createCommandBufferPool();
@@ -220,38 +217,47 @@ TEST_F(VulkanValidationFixture, DescriptorHeap_slotReusedOnlyAfterRetainingPoolR
     auto executable = recorder.finish();
 
     block.reset();
-    EXPECT_THROW(mDevice->createUniformBlock(heap, gTint), std::runtime_error);
+    EXPECT_THROW(std::ignore = mDevice->createHeapBuffer(heap, gTint.size()), std::runtime_error);
 
-    mDevice->getGraphicsQueue()->submit(*fencePool, {}, std::span{&executable, 1u}, {});
-    EXPECT_THROW(mDevice->createUniformBlock(heap, gTint), std::runtime_error);
+    mDevice->getGraphicsQueue()->submit(*fencePool, {.commandBuffers = std::span{&executable, 1u}});
+    EXPECT_THROW(std::ignore = mDevice->createHeapBuffer(heap, gTint.size()), std::runtime_error);
 
     pool->reset();
-    EXPECT_NO_THROW(mDevice->createUniformBlock(heap, gTint));
+    EXPECT_NO_THROW(std::ignore = mDevice->createHeapBuffer(heap, gTint.size()));
     EXPECT_TRUE(mValidationErrors.empty())
         << (mValidationErrors.empty() ? "" : mValidationErrors.front());
 }
 
 /**
  * The first proof that the validation layer understands descriptor heaps: a draw that samples a
- * texture and reads a uniform block by heap index, with the texture uploaded in the same command
+ * texture and reads a heap buffer by heap index, with the texture uploaded in the same command
  * buffer. Any error about the heap buffers (usage, alignment, device address), the descriptor
  * writes (size), the push data, the pipeline without a layout or the upload fails it.
+ *
+ * The heap buffer is written twice before the draw, red and then green, and the draw reads it the
+ * second way: the tint multiplies the white texture, so every pixel comes out green. A buffer whose
+ * contents were fixed when it was made would draw red, or refuse the second write.
  */
 TEST_F(VulkanValidationFixture, DescriptorHeap_texturedDrawIsValidationClean)
 {
     Graphics::ShaderProgramCache cache{mDevice, VOG_TEST_SHADER_PATH};
     auto                         heap = createHeap();
 
-    // Four texels of 4 bytes, and a tint of 4 floats.
-    const std::array<std::uint8_t, 16> pixels{
-        255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255};
-    const std::array<float, 4> tint{1.0f, 1.0f, 1.0f, 1.0f};
+    // Four white texels of 4 bytes, and a tint of 4 floats.
+    std::array<std::uint8_t, 16> pixels{};
+    pixels.fill(255u);
+    const std::array<float, 4> red{1.0f, 0.0f, 0.0f, 1.0f};
+    const std::array<float, 4> green{0.0f, 1.0f, 0.0f, 1.0f};
 
     BufferPtr                staging = createStaging(std::as_bytes(std::span{pixels}));
     std::shared_ptr<Texture> texture =
         mDevice->createTexture(heap, {.width = 2u, .height = 2u}, vk::Format::eR8G8B8A8Srgb);
-    std::shared_ptr<UniformBlock> block =
-        mDevice->createUniformBlock(heap, std::as_bytes(std::span{tint}));
+    std::shared_ptr<HeapBuffer> block = mDevice->createHeapBuffer(heap, sizeof(red));
+    for (const std::array<float, 4>& tint : {red, green})
+    {
+        auto mapping = block->mapForWrite();
+        std::ranges::copy(std::as_bytes(std::span{tint}), mapping.bytes().begin());
+    }
 
     // Position, then uv.
     const std::array<float, 12> vertices{
@@ -261,7 +267,7 @@ TEST_F(VulkanValidationFixture, DescriptorHeap_texturedDrawIsValidationClean)
         {.flags = AllocationFlag::eHostSequentialWrite});
     {
         auto mapping = vertexBuffer->mapForWrite();
-        std::memcpy(mapping.data, vertices.data(), sizeof(vertices));
+        std::ranges::copy(std::as_bytes(std::span{vertices}), mapping.bytes().begin());
     }
 
     constexpr auto colorWriteMask =
@@ -287,16 +293,8 @@ TEST_F(VulkanValidationFixture, DescriptorHeap_texturedDrawIsValidationClean)
         .dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
         .renderingDescription = {.colorAttachmentFormats = {vk::Format::eR8G8B8A8Unorm}}});
 
-    std::shared_ptr<RenderBuffer> target =
-        mDevice->createRenderBuffer(AttachmentUsage::eColor,
-                                    vk::Format::eR8G8B8A8Unorm,
-                                    {.width = 64u, .height = 64u},
-                                    SampleCount::e1,
-                                    1u,
-                                    1u,
-                                    vk::ImageTiling::eOptimal,
-                                    vk::ImageLayout::eUndefined,
-                                    vk::MemoryPropertyFlagBits::eDeviceLocal);
+    constexpr std::uint32_t kSize  = 64u;
+    RenderTargetPtr         target = createColorTarget(*mDevice, kSize);
 
     // The push block of the shader: mat4 mvp, uint material, uint textures[4].
     struct PushData
@@ -342,13 +340,27 @@ TEST_F(VulkanValidationFixture, DescriptorHeap_texturedDrawIsValidationClean)
         pass.pushData(0u, std::as_bytes(std::span{&pushData, 1u}));
         pass.draw(3u, 1u, 0u, 0u);
     }
-    auto executable = recorder.finish();
-    mDevice->getGraphicsQueue()->submit(*fencePool, {}, std::span{&executable, 1u}, {});
+    const BufferPtr readback   = recordReadback(*mDevice, recorder, target);
+    auto            executable = recorder.finish();
+    mDevice->getGraphicsQueue()->submit(*fencePool, {.commandBuffers = std::span{&executable, 1u}});
 
     // Waits the fence of the submit.
     pool->reset();
 
     EXPECT_TRUE(mValidationErrors.empty())
         << (mValidationErrors.empty() ? "" : mValidationErrors.front());
+
+    // The triangle covers the target; look at the corners and the middle.
+    constexpr std::array<std::byte, 4> kGreen{
+        std::byte{0}, std::byte{255}, std::byte{0}, std::byte{255}};
+    const auto mapping = readback->mapForWrite();
+    using Position     = std::pair<std::uint32_t, std::uint32_t>;
+    for (const auto [x, y] :
+         {Position{0u, 0u}, Position{kSize - 1u, kSize - 1u}, Position{kSize / 2u, kSize / 2u}})
+    {
+        const auto pixel =
+            mapping.bytes().subspan(((y * kSize) + x) * kGreen.size(), kGreen.size());
+        EXPECT_TRUE(std::ranges::equal(pixel, kGreen)) << "pixel " << x << ", " << y;
+    }
 }
 } // namespace VOG::Tests

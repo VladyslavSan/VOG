@@ -1,7 +1,7 @@
 #include "VOG/Graphics/Frame/FrameObjectManager.hpp"
 #include "VOG/Graphics/Frame/FrameObjects.hpp"
 #include "VOG/Graphics/ShaderProgramCache.hpp"
-#include "VOG/Graphics/Vulkan/Attachment/RenderBuffer.hpp"
+#include "VOG/Graphics/Vulkan/Attachment/RenderTarget.hpp"
 #include "VOG/Graphics/Vulkan/Buffer.hpp"
 #include "VOG/Graphics/Vulkan/CommandBufferPool.hpp"
 #include "VOG/Graphics/Vulkan/CommandBufferRecorder.hpp"
@@ -133,7 +133,7 @@ TEST_F(DeviceLifetime, releasingLastReferenceDestroysDevice)
 {
     auto fencePool = Graphics::Vulkan::FencePool::create(mDevice);
     // Drop the handle so the pool is idle; then drop the pool itself.
-    fencePool->take();
+    std::ignore = fencePool->take();
     fencePool.reset();
 
     auto buffer = makeBuffer(*mDevice);
@@ -172,8 +172,8 @@ TEST_F(DeviceLifetime, bufferKeepsDeviceAlive)
                                buffer,
                                [](Graphics::Vulkan::Buffer& buffer)
                                {
-                                   auto mapping    = buffer.mapForWrite();
-                                   mapping.data[0] = std::byte{1};
+                                   auto mapping       = buffer.mapForWrite();
+                                   mapping.bytes()[0] = std::byte{1};
                                });
 }
 
@@ -208,11 +208,11 @@ TEST_F(DeviceLifetime, textureKeepsDeviceAndHeapAlive)
     EXPECT_TRUE(weakHeap.expired());
 }
 
-/** As for the texture, for the uniform block: it also keeps its buffer alive. */
-TEST_F(DeviceLifetime, uniformBlockKeepsDeviceAndHeapAlive)
+/** As for the texture, for the heap buffer: it also keeps its buffer alive. */
+TEST_F(DeviceLifetime, heapBufferKeepsDeviceAndHeapAlive)
 {
     auto                                          heap     = createHeap();
-    auto                                          block    = mDevice->createUniformBlock(heap, {});
+    auto                                          block    = mDevice->createHeapBuffer(heap, 0u);
     const Graphics::Vulkan::DescriptorHeapWeakPtr weakHeap = heap;
     heap.reset();
     EXPECT_FALSE(weakHeap.expired());
@@ -236,7 +236,8 @@ TEST_F(DeviceLifetime, submittedCommandBufferKeepsDeviceAlive)
     auto pool      = mDevice->createCommandBufferPool();
     {
         auto executable = recordEmpty(pool);
-        mDevice->getGraphicsQueue()->submit(*fencePool, {}, std::span{&executable, 1u}, {});
+        mDevice->getGraphicsQueue()->submit(*fencePool,
+                                            {.commandBuffers = std::span{&executable, 1u}});
     }
     fencePool.reset();
     const auto released = releaseDevice();
@@ -258,7 +259,7 @@ TEST_F(DeviceLifetime, fencePoolKeepsDeviceAlive)
                                fencePool,
                                [](Graphics::Vulkan::FencePool& fencePool)
                                {
-                                   fencePool.take();
+                                   std::ignore = fencePool.take();
                                });
 }
 
@@ -347,23 +348,15 @@ TEST_F(DeviceLifetime, queueKeepsDeviceAlive)
 }
 
 /**
- * No Vulkan entry point is reachable through a bare render buffer, so the call under test is its
- * destruction (vkDestroyImageView / vkDestroyImage / vkFreeMemory on a live device).
+ * No Vulkan entry point is reachable through a bare render target, so the call under test is its
+ * destruction (vkDestroyImageView / vkDestroyImage / vmaFreeMemory on a live device).
  */
-TEST_F(DeviceLifetime, renderBufferKeepsDeviceAlive)
+TEST_F(DeviceLifetime, renderTargetKeepsDeviceAlive)
 {
-    auto       renderBuffer = mDevice->createRenderBuffer(Graphics::Vulkan::AttachmentUsage::eColor,
-                                                          vk::Format::eR8G8B8A8Unorm,
-                                                          {.width = 16u, .height = 16u},
-                                                          Graphics::Vulkan::SampleCount::e1,
-                                                          1u,
-                                                          1u,
-                                                          vk::ImageTiling::eOptimal,
-                                                          vk::ImageLayout::eUndefined,
-                                                          vk::MemoryPropertyFlagBits::eDeviceLocal);
+    auto       renderTarget = createColorTarget(*mDevice, 16u);
     const auto released     = releaseDevice();
 
-    expectDependentHoldsDevice(released, renderBuffer);
+    expectDependentHoldsDevice(released, renderTarget);
 }
 
 TEST_F(DeviceLifetime, frameObjectsKeepDeviceAlive)

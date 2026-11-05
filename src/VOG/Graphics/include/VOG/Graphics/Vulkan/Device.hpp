@@ -22,10 +22,10 @@ namespace VOG::Graphics::Vulkan
 VOG_DECLARE_PTR(Buffer);
 VOG_DECLARE_PTR(CommandBufferPool);
 VOG_DECLARE_PTR(DescriptorHeap);
-VOG_DECLARE_PTR(RenderBuffer);
+VOG_DECLARE_PTR(HeapBuffer);
 VOG_DECLARE_PTR(Instance);
+VOG_DECLARE_PTR(RenderTarget);
 VOG_DECLARE_PTR(Texture);
-VOG_DECLARE_PTR(UniformBlock);
 
 class PhysicalDevice : private vk::raii::PhysicalDevice
 {
@@ -80,7 +80,6 @@ public:
     static std::uint32_t selectPresentFamily(const QueueInfos&           infos,
                                              std::span<const vk::Bool32> presents);
 
-    using vk::raii::PhysicalDevice::getMemoryProperties;
     using vk::raii::PhysicalDevice::getQueueFamilyProperties;
     using vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR;
     using vk::raii::PhysicalDevice::getSurfaceFormatsKHR;
@@ -139,8 +138,8 @@ public:
      *
      * @return Compiled shader object.
      */
-    std::unique_ptr<Shader> createShader(Shader::ShadingStage           stage,
-                                         std::span<const std::uint32_t> binary);
+    [[nodiscard]] std::unique_ptr<Shader> createShader(Shader::ShadingStage           stage,
+                                                       std::span<const std::uint32_t> binary);
 
     /**
      * Creates a graphics pipeline for dynamic rendering into the attachments that
@@ -150,7 +149,7 @@ public:
      *
      * @return Compiled graphics pipeline.
      */
-    std::unique_ptr<GraphicsPipeline>
+    [[nodiscard]] std::unique_ptr<GraphicsPipeline>
     createGraphicsPipeline(GraphicsPipeline::Parameters createInfo);
 
     /**
@@ -160,14 +159,15 @@ public:
      *
      * @return Command buffer pool.
      */
-    std::shared_ptr<CommandBufferPool> createCommandBufferPool();
+    [[nodiscard]] std::shared_ptr<CommandBufferPool> createCommandBufferPool();
 
     /**
      * Like createCommandBufferPool(), for the queue family @p queueFamilyIndex, which must be the
      * family of the graphics or of the transfer queue. Queue::submit takes only command buffers
      * of its own family.
      */
-    std::shared_ptr<CommandBufferPool> createCommandBufferPool(std::uint32_t queueFamilyIndex);
+    [[nodiscard]] std::shared_ptr<CommandBufferPool>
+    createCommandBufferPool(std::uint32_t queueFamilyIndex);
 
     /**
      * Creates a swapchain for presenting rendered frames to a window surface.
@@ -176,32 +176,30 @@ public:
      *
      * @return Swapchain object.
      */
-    std::unique_ptr<Swapchain> createSwapchain(const Swapchain::SwapchainParameters& parameters);
+    [[nodiscard]] std::unique_ptr<Swapchain>
+    createSwapchain(const Swapchain::SwapchainParameters& parameters);
 
     /**
-     * Creates an image-backed render attachment (color or depth/stencil).
+     * Creates a 2D, single-mip, single-sample image that command buffers render into, in memory
+     * that is preferably device-local. The image is undefined until a barrier moves it to the
+     * layout of its first use.
      *
-     * @param usage             Intended attachment usage.
-     * @param desiredFormat     Requested image format.
-     * @param extent            Width and height in pixels.
-     * @param sampleCount       MSAA sample count.
-     * @param mipLevels         Number of mip levels.
-     * @param arrayLevels       Number of array layers.
-     * @param imageTiling       Tiling mode (optimal or linear).
-     * @param initialLayout     Initial image layout.
-     * @param memoryProperties  Required memory property flags.
+     * @param extent  Width and height in pixels.
+     * @param format  Image format. A depth format gets a depth view, any other a color view. A
+     *                format with a stencil aspect is refused: the recorder renders depth-only
+     *                depth attachments. Whether the device renders into the format with this
+     *                @p usage is not checked.
+     * @param usage   How the image is used. Needs eColorAttachment or eDepthStencilAttachment;
+     *                add eTransferSrc to copy a color target out with
+     *                CommandBufferRecorder::copyImageToBuffer(). The target has no heap slot, so
+     *                no shader samples it.
      *
-     * @return Render buffer object.
+     * @throws std::invalid_argument if a side of @p extent is zero or exceeds maxImageDimension2D
+     *         of the device, @p usage names no attachment, or @p format has a stencil aspect.
+     * @throws std::runtime_error if the image cannot be created.
      */
-    std::unique_ptr<RenderBuffer> createRenderBuffer(AttachmentUsage         usage,
-                                                     vk::Format              desiredFormat,
-                                                     vk::Extent2D            extent,
-                                                     SampleCount             sampleCount,
-                                                     std::uint32_t           mipLevels,
-                                                     std::uint32_t           arrayLevels,
-                                                     vk::ImageTiling         imageTiling,
-                                                     vk::ImageLayout         initialLayout,
-                                                     vk::MemoryPropertyFlags memoryProperties);
+    [[nodiscard]] std::unique_ptr<RenderTarget>
+    createRenderTarget(vk::Extent2D extent, vk::Format format, vk::ImageUsageFlags usage);
 
     /**
      * Allocates a GPU buffer. The allocator picks the memory type for the buffer's usage.
@@ -212,22 +210,23 @@ public:
      *
      * @return Allocated buffer.
      */
-    std::unique_ptr<Buffer>
+    [[nodiscard]] std::unique_ptr<Buffer>
     createBuffer(const vk::BufferCreateInfo&                  createInfo,
                  const MemoryAllocator::AllocationParameters& allocationInfo);
 
     /**
-     * Creates the descriptor heaps that textures and uniform blocks take their slots from.
+     * Creates the descriptor heaps that textures and heap buffers take their slots from.
      *
-     * @param resourceSlots  Number of images and uniform blocks the heap holds at once.
+     * @param resourceSlots  Number of images and heap buffers the heap holds at once.
      * @param samplers       Samplers to write into the sampler heap; shaders read them by their
      *                       position in the span.
      *
      * @throws std::invalid_argument if @p resourceSlots is zero or @p samplers is empty.
      * @throws std::runtime_error if the device limits do not allow the heap.
      */
-    DescriptorHeapPtr createDescriptorHeap(std::uint32_t                          resourceSlots,
-                                           std::span<const vk::SamplerCreateInfo> samplers);
+    [[nodiscard]] DescriptorHeapPtr
+    createDescriptorHeap(std::uint32_t                          resourceSlots,
+                         std::span<const vk::SamplerCreateInfo> samplers);
 
     /**
      * Creates a 2D, single-mip texture and writes its descriptor into a slot of @p heap. The
@@ -238,21 +237,21 @@ public:
      *         device samples and copies into, which nothing here checks.
      * @throws std::runtime_error if @p heap is full or the image cannot be created.
      */
-    std::unique_ptr<Texture>
+    [[nodiscard]] std::unique_ptr<Texture>
     createTexture(const DescriptorHeapPtr& heap, vk::Extent2D extent, vk::Format format);
 
     /**
-     * Creates an immutable block that holds a copy of @p bytes and writes its descriptor into a
-     * slot of @p heap. The block is at least 16 bytes; a shader reading past @p bytes reads
-     * zeros up to that size.
+     * Creates a host-written buffer of @p size bytes and writes its uniform-buffer descriptor into
+     * a slot of @p heap. The buffer is at least 16 bytes and zero until written, through
+     * HeapBuffer::mapForWrite(); the descriptor is written once, here.
      *
-     * @throws std::invalid_argument if the block, rounded up to 16 bytes, exceeds
+     * @throws std::invalid_argument if @p size, or @p size rounded up to 16 bytes, exceeds
      *         maxUniformBufferRange of the device.
      * @throws std::runtime_error if @p heap is full, or the allocator places the buffer at an
      *         address off the device's uniform buffer offset alignment.
      */
-    std::unique_ptr<UniformBlock> createUniformBlock(const DescriptorHeapPtr&   heap,
-                                                     std::span<const std::byte> bytes);
+    [[nodiscard]] std::unique_ptr<HeapBuffer> createHeapBuffer(const DescriptorHeapPtr& heap,
+                                                               std::size_t              size);
 
     /**
      * Creates a binary semaphore. Pass it to Queue::submit and Swapchain::present: the command
@@ -260,7 +259,7 @@ public:
      *
      * @return Binary semaphore.
      */
-    SemaphorePtr createSemaphore();
+    [[nodiscard]] SemaphorePtr createSemaphore();
 
     /**
      * Creates a timeline semaphore at value zero. Pass it to Queue::submit as a Queue::TimelineWait
@@ -268,7 +267,7 @@ public:
      *
      * @return Timeline semaphore.
      */
-    TimelineSemaphorePtr createTimelineSemaphore();
+    [[nodiscard]] TimelineSemaphorePtr createTimelineSemaphore();
 
     /**
      * Hands out the graphics queue. The returned pointer shares ownership of this Device, so the
@@ -276,7 +275,7 @@ public:
      *
      * @return Graphics queue.
      */
-    std::shared_ptr<const Queue> getGraphicsQueue();
+    [[nodiscard]] std::shared_ptr<const Queue> getGraphicsQueue();
 
     /**
      * Hands out the transfer queue. The returned pointer shares ownership of this Device, like
@@ -284,7 +283,7 @@ public:
      *
      * @return Transfer queue.
      */
-    std::shared_ptr<const Queue> getTransferQueue();
+    [[nodiscard]] std::shared_ptr<const Queue> getTransferQueue();
 
 private:
     /** Handed out through getGraphicsQueue() / getTransferQueue(). */

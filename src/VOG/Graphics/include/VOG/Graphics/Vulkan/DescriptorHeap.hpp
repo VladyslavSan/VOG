@@ -22,8 +22,16 @@ VOG_DECLARE_PTR(DescriptorHeap);
 struct DescriptorHeapLayout
 {
     /**
-     * Bytes between two resource slots. Coupled to `descriptor_stride = 128` in every heap shader:
-     * a shader reaches slot i at byte i * kSlotSize, and nothing here would notice a mismatch.
+     * Bytes between two resource slots. 128 is the largest descriptor the spec allows: the table
+     * of required values of VkPhysicalDeviceDescriptorHeapPropertiesEXT (VK_EXT_descriptor_heap,
+     * "Device Properties") gives imageDescriptorSize at most 64 and bufferDescriptorSize at most
+     * 128, and each alignment is a power of two no larger than its size. So an image or a buffer
+     * descriptor of any conforming device fits a slot, and every slot start keeps either
+     * alignment; make() still checks both against the device it is given.
+     *
+     * Coupled to `descriptor_stride = 128` in every heap shader: a shader reaches slot i at byte
+     * i * kSlotSize. ShaderProgram::create() rejects a heap block that declares another stride;
+     * the stride of the other heap arrays (images) is not checked.
      */
     static constexpr vk::DeviceSize kSlotSize = 128u;
 
@@ -64,7 +72,7 @@ struct DescriptorHeapLayout
 
 /**
  * The resource heap and the sampler heap of VK_EXT_descriptor_heap: two buffers that hold the
- * descriptors shaders read by index. Textures and uniform blocks take a Slot, which writes their
+ * descriptors shaders read by index. Textures and heap buffers take a Slot, which writes their
  * descriptor and gives the index back when the resource dies. The heap has a fixed number of
  * slots. Bind it with CommandBufferRecorder::bindDescriptorHeap(), which retains it.
  *

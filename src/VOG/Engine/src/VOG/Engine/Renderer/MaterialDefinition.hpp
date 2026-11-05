@@ -11,7 +11,7 @@
 namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(ShaderProgram);
-VOG_DECLARE_PTR(UniformBlock);
+VOG_DECLARE_PTR(HeapBuffer);
 } // namespace VOG::Graphics::Vulkan
 
 namespace VOG::Engine
@@ -38,8 +38,8 @@ class MaterialData
 public:
     Graphics::Vulkan::ShaderProgramPtr program;
     /** The parameters; its heap index is pushed as `material`. */
-    Graphics::Vulkan::UniformBlockPtr block;
-    std::vector<Texture>              textures;
+    Graphics::Vulkan::HeapBufferPtr block;
+    std::vector<Texture>            textures;
 };
 } // namespace Detail
 } // namespace VOG::Engine

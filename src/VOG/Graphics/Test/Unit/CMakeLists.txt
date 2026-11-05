@@ -22,12 +22,14 @@ target_sources(VOG.Graphics.Unit
         Vulkan/DescriptorHeapTest.cpp
         Vulkan/DeviceLifetimeTest.cpp
         Vulkan/DeviceRequirementsTest.cpp
+        Vulkan/GLSLCompilerTest.cpp
         Vulkan/InDestructorTest.cpp
         Vulkan/QueueFamiliesTest.cpp
         Vulkan/SwapchainTest.cpp
         Vulkan/UploadBarriersTest.cpp
         VulkanFixture.hpp
         VulkanValidationFixture.hpp
+        HeapShaderSources.hpp
         TestShaderCompiler.hpp
 )
 

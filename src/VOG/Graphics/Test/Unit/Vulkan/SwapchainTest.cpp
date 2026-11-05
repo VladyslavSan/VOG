@@ -60,10 +60,9 @@ consumeAcquireSignal(const DevicePtr& device, const SemaphorePtr& imageAvailable
 
     device->getGraphicsQueue()->submit(
         *fencePool,
-        std::array{Queue::SemaphoreWait{.semaphore = imageAvailable,
-                                        .stage     = vk::PipelineStageFlagBits2::eTopOfPipe}},
-        std::span{&executable, 1u},
-        {});
+        {.waits = std::array{Queue::SemaphoreWait{.semaphore = imageAvailable,
+                                                  .stage = vk::PipelineStageFlagBits2::eTopOfPipe}},
+         .commandBuffers = std::span{&executable, 1u}});
     pool->reset();
 }
 
@@ -103,11 +102,11 @@ struct Rig
         auto executable = recorder.finish();
 
         queue->submit(*fencePool,
-                      std::array{Queue::SemaphoreWait{
-                          .semaphore = acquired->imageAvailableSemaphore(),
-                          .stage     = vk::PipelineStageFlagBits2::eColorAttachmentOutput}},
-                      std::span{&executable, 1u},
-                      std::array{frame->getRenderFinishedSemaphore()});
+                      {.waits          = std::array{Queue::SemaphoreWait{
+                           .semaphore = acquired->imageAvailableSemaphore(),
+                           .stage     = vk::PipelineStageFlagBits2::eColorAttachmentOutput}},
+                       .commandBuffers = std::span{&executable, 1u},
+                       .signals        = std::array{frame->getRenderFinishedSemaphore()}});
 
         auto presented =
             swapchain->present(acquired, frame->getRenderFinishedSemaphore(), *fencePool);
@@ -301,11 +300,11 @@ TEST_F(SwapchainTest, recreateWithOutstandingPresentationRaisesNoValidationError
 
         mDevice->getGraphicsQueue()->submit(
             *fencePool,
-            std::array{
-                Queue::SemaphoreWait{.semaphore = imageAvailable,
-                                     .stage = vk::PipelineStageFlagBits2::eColorAttachmentOutput}},
-            std::span{&executable, 1u},
-            std::array{renderFinished});
+            {.waits          = std::array{Queue::SemaphoreWait{
+                 .semaphore = imageAvailable,
+                 .stage     = vk::PipelineStageFlagBits2::eColorAttachmentOutput}},
+             .commandBuffers = std::span{&executable, 1u},
+             .signals        = std::array{renderFinished}});
 
         presentation.emplace(std::move(
             swapchain->present(acquire.acquired, renderFinished, *fencePool).presentation));

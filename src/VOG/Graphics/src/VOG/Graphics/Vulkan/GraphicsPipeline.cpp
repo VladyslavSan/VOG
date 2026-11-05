@@ -13,47 +13,6 @@ namespace VOG::Graphics::Vulkan
 {
 namespace
 {
-/** "vec3", "ivec4", "mat4", "float": how the shader declares the input. */
-std::string
-describe(Shader::Reflection::BaseType type)
-{
-    using Type = Shader::Reflection::BaseType::Type;
-
-    const char* prefix = "";
-    const char* scalar = "float";
-    switch (type.type)
-    {
-    case Type::eInt:
-        prefix = "i";
-        scalar = "int";
-        break;
-    case Type::eUInt:
-        prefix = "u";
-        scalar = "uint";
-        break;
-    case Type::eDouble:
-        prefix = "d";
-        scalar = "double";
-        break;
-    default:
-        break;
-    }
-
-    if (type.columns > 1u)
-    {
-        // GLSL names a matrix by columns, then rows: mat2x3 has 2 columns of 3 components.
-        return type.columns == type.components
-                 ? std::format("{}mat{}", prefix, std::uint32_t{type.columns})
-                 : std::format("{}mat{}x{}",
-                               prefix,
-                               std::uint32_t{type.columns},
-                               std::uint32_t{type.components});
-    }
-
-    return type.components > 1u ? std::format("{}vec{}", prefix, std::uint32_t{type.components})
-                                : scalar;
-}
-
 /**
  * Every location the vertex shader reads needs an attribute of a compatible numeric type, or the
  * pipeline is invalid (VUID-VkGraphicsPipelineCreateInfo-Input-07904, -08733). Extra attributes
@@ -77,7 +36,7 @@ validateVertexInputs(const ShaderProgram& program, const VertexLayout& vertexLay
                     std::format("The vertex shader reads \"{}\" ({}) at location {}, but the "
                                 "vertex layout has no attribute there.",
                                 input.name,
-                                describe(input.format),
+                                Shader::describe(input.format),
                                 location)};
             }
             if (!Shader::vertexFormatCompatible(input.format, found->format))
@@ -86,7 +45,7 @@ validateVertexInputs(const ShaderProgram& program, const VertexLayout& vertexLay
                     std::format("The vertex shader reads \"{}\" ({}) at location {}, which the "
                                 "vertex attribute format {} cannot feed.",
                                 input.name,
-                                describe(input.format),
+                                Shader::describe(input.format),
                                 location,
                                 vk::to_string(found->format))};
             }

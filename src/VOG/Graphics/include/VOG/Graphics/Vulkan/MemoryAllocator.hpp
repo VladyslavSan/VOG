@@ -15,6 +15,7 @@ namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Buffer);
 VOG_DECLARE_PTR(Device);
+VOG_DECLARE_PTR(RenderTarget);
 VOG_DECLARE_PTR(Texture);
 
 enum class AllocationFlag : std::uint8_t
@@ -69,6 +70,10 @@ private:
      * the image. */
     std::unique_ptr<Texture> makeTexture(const vk::ImageCreateInfo& createInfo,
                                          DescriptorHeap::Slot       slot);
+
+    /** Image in memory that is preferably device-local, with a view of @p aspects of it. */
+    std::unique_ptr<RenderTarget> makeRenderTarget(const vk::ImageCreateInfo& createInfo,
+                                                   vk::ImageAspectFlags       aspects);
 
     Device&         mDevice;
     VmaAllocator_T* mAllocator;

@@ -68,7 +68,7 @@ public:
      * @throws std::runtime_error if @p parameters has a messageSink and the instance does not offer
      *         VK_EXT_debug_utils.
      */
-    static std::shared_ptr<Instance>
+    [[nodiscard]] static std::shared_ptr<Instance>
     create(const InstanceParameters& parameters)
     {
         return std::shared_ptr<Instance>(new Instance{parameters});
@@ -80,7 +80,7 @@ public:
     /** For the raii objects that take an instance; the base itself stays private. */
     const vk::raii::Instance& raii() const noexcept;
 
-    DevicePtr makeDevice();
+    [[nodiscard]] DevicePtr makeDevice();
 
 private:
     /** Only with a message sink: reports from the end of vkCreateInstance on. */

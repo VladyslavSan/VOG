@@ -28,9 +28,9 @@ anything that flows through the tracked APIs.
    - `setImageBarrier` / `setBufferBarrier` retain the passed attachment or
      buffer. `setImageBarrier` fills `barrier.image` from the attachment.
    - `CommandBufferRecorder::bindDescriptorHeap` retains the `DescriptorHeap`.
-     `RenderingPass::useResource` retains a `Texture` or a `UniformBlock` that a draw
-     reads by heap index. `copyBuffer` and `copyBufferToTexture` retain the staging buffer and the
-     destination, and `acquire` retains the buffer or texture it takes over.
+     `RenderingPass::useResource` retains a `Texture` or a `HeapBuffer` that a draw
+     reads by heap index. `copyBuffer`, `copyBufferToTexture` and `copyImageToBuffer` retain the staging buffer (or image)
+     and the destination, and `acquire` retains the buffer or texture it takes over.
 
 2. **Submission retains the command buffer.** `Queue::submit` consumes
    `ExecutableCommandBuffer`s (what `CommandBufferRecorder::finish()` returns).
@@ -84,7 +84,7 @@ a handle is the same one:
   pipeline or buffer bind that repeats the previous bind of its kind in the frame; the first
   bind's retain covers the rest, because all draws of a frame are in one command buffer and its
   retained set lives until the fence signals.
-- A `Material` shares a `MaterialData`, which owns a `ShaderProgramPtr`, a `UniformBlock` that
+- A `Material` shares a `MaterialData`, which owns a `ShaderProgramPtr`, a `HeapBuffer` that
   holds its parameters, and the `Texture` handles it samples. A draw pushes the heap indices of
   the block and the textures, and records them with `RenderingPass::useResource`, which retains
   them: dropping the last `Material` handle while a frame is in flight frees the CPU object, and
@@ -100,7 +100,7 @@ a handle is the same one:
   pending for the next frame, also after `stop()` and `start()`. The staging buffer is released
   when the frame's slot is reused (`uploadsAreRecordedAndStagingReleased`,
   `uploadsSurviveDroppedFrame`, `pendingUploadsSurviveRenderThreadFailureAndRestart`).
-  Uniform blocks stay host-visible (see "Uploads and the transfer queue").
+  Heap buffers stay host-visible (see "Uploads and the transfer queue").
 - The `PipelineCache` holds its pipelines until `~Renderer`; `bindPipeline` retains them per frame.
 
 ## Uploads and the transfer queue
@@ -144,7 +144,7 @@ GPU. With one family, the two `Queue` objects wrap the same `VkQueue`, and so do
 swapchain's present queue; that is safe only because every submit and present is on the render
 thread.
 
-**Why meshes are staged and uniform blocks are not.** A mesh is as large as its vertices. For a
+**Why meshes are staged and heap buffers are not.** A mesh is as large as its vertices. For a
 buffer that the CPU writes sequentially and the GPU reads, VMA requires host-visible memory and
 prefers device-local, which on a discrete GPU without resizable BAR is the 256 MiB BAR heap, and
 VMA falls back to system RAM when it is full. A block is at most 16 KiB, and that heap holds many of
@@ -193,7 +193,7 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    non-copyable and stores no back-reference.
 3. **Leaves are `unique_ptr`, parents are `shared_ptr`.** Factories return
    `std::unique_ptr` by default (`Shader`, `ShaderProgram`, `GraphicsPipeline`,
-   `Swapchain`, `RenderBuffer`, `Buffer`, `Texture`, `UniformBlock`) — callers convert to `shared_ptr`
+   `Swapchain`, `RenderTarget`, `Buffer`, `Texture`, `HeapBuffer`) — callers convert to `shared_ptr`
    when they need to share or record the object. A type that hands out
    dependents (calls `shared_from_this()`: `Instance`, `Device`,
    `CommandBufferPool`, `FencePool`, `DescriptorHeap`) must be created as `shared_ptr`, since
@@ -219,7 +219,7 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    A `GraphicsPipeline` retains its `ShaderProgram`. Pipelines have no layout and a program
    owns no Vulkan object: its shaders hold the device.
    The `vk::raii` base is `private` in `Semaphore`, `TimelineSemaphore`,
-   `GraphicsPipeline`, `Buffer`, `Texture`, `PhysicalDevice`, `Device`, `Instance`, `Fence`,
+   `GraphicsPipeline`, `Buffer`, `Texture`, `RenderTarget`, `PhysicalDevice`, `Device`, `Instance`, `Fence`,
    `Queue` and `CommandBuffer`, with a `using` for the calls that have callers,
    so a caller cannot slice the wrapper into the bare handle and drop the
    object that keeps its dependencies alive. `Device::raii()`,
@@ -281,15 +281,15 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    Covered: `Device` (its `Instance`), `Buffer`, `FencePool`, `CommandBufferPool`,
    `CommandBufferRecorder`, `ExecutableCommandBuffer`, `Semaphore`,
    `TimelineSemaphore`, `Queue`,
-   `RenderBuffer`, `Shader`, `GraphicsPipeline`, `DescriptorHeap`, `Texture`, `UniformBlock`,
+   `RenderTarget`, `Shader`, `GraphicsPipeline`, `DescriptorHeap`, `Texture`, `HeapBuffer`,
    `FrameObjects`, `FrameObjectManager`, `ShaderProgramCache`, `Swapchain`,
    `SwapchainGeneration` (private to the library, reached through the
    `AcquiredSwapchainImage` and `Presentation` that hold it) and
    `AcquiredSwapchainImage` (`SwapchainTest.cpp`, on a headless surface via
    `VK_EXT_headless_surface`; the generation is covered by
-   `acquiredImageKeepsSwapchainAlive`, which holds nothing else). `Shader`, `RenderBuffer`, `Semaphore`, `ExecutableCommandBuffer`,
-   `DescriptorHeap`, `Texture` and `UniformBlock` expose no Vulkan call, so their
-   destruction is the call under test (the texture and the block also expire their heap);
+   `acquiredImageKeepsSwapchainAlive`, which holds nothing else). `Shader`, `RenderTarget`, `Semaphore`, `ExecutableCommandBuffer`,
+   `DescriptorHeap`, `Texture` and `HeapBuffer` expose no Vulkan call, so their
+   destruction is the call under test (the texture and the heap buffer also expire their heap);
    for `ShaderProgramCache` it is the lookup. A `ShaderProgram` owns no Vulkan object, so it
    has no test of its own: its shaders hold the device (`Shader_keepsDeviceAlive`).
    `Device` (its `Instance`) and `Queue` are ownership-only: the `Queue` test holds the transfer
@@ -326,7 +326,7 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
 - **The pipeline cache never evicts.** A pipeline stays until `~Renderer`, even if no mesh or
   material uses its vertex layout, shader program and color format any more.
 
-- **Heap-referenced resources** (textures and uniform blocks on the descriptor heap): a draw that
+- **Heap-referenced resources** (textures and heap buffers on the descriptor heap): a draw that
   references one by heap index must retain it through `RenderingPass::useResource`, which
   nothing enforces. The `Renderer` calls it for the block and the textures of every draw.
 

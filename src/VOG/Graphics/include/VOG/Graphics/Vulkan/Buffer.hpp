@@ -3,6 +3,7 @@
 #include <VOG/Graphics/Vulkan/MemoryAllocator.hpp>
 
 #include <cstddef>
+#include <span>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -16,33 +17,42 @@ public:
     using vk::raii::Buffer::operator*;
 
     /** Scope guard for a mapped buffer: the destructor flushes (if needed) and unmaps. */
-    struct MemoryMapping
+    class MemoryMapping
     {
-        /** Pointer for writing. */
-        std::byte* data;
+        friend class Buffer;
 
-        /** Size that defines max number bytes that can be accessed by the @var data pointer. */
-        const std::size_t size;
-
-        /** Buffer pointer used to unmap and flush the allocation. */
-        const Buffer* buffer;
-
-        /** If true, the destructor flushes to commit the writes and make them visible to the GPU.
-         */
-        const bool shouldFlush;
-
-        MemoryMapping(std::byte* _data, std::size_t _size, const Buffer* _buffer, bool _shouldFlush)
-            : data{_data}
-            , size{_size}
-            , buffer{_buffer}
-            , shouldFlush{_shouldFlush}
+        MemoryMapping(std::span<std::byte> bytes, const Buffer& buffer, bool shouldFlush) noexcept
+            : mBytes{bytes}
+            , mBuffer{buffer}
+            , mShouldFlush{shouldFlush}
         {
         }
 
+    public:
         ~MemoryMapping();
 
-        MemoryMapping(const MemoryMapping&) = delete;
-        MemoryMapping(MemoryMapping&&)      = delete;
+        MemoryMapping(const MemoryMapping&)            = delete;
+        MemoryMapping(MemoryMapping&&)                 = delete;
+        MemoryMapping& operator=(const MemoryMapping&) = delete;
+        MemoryMapping& operator=(MemoryMapping&&)      = delete;
+
+        /**
+         * The mapped memory, for writing: all the memory behind the buffer, which may be larger
+         * than Buffer::byteSize(). Use it only while the mapping is alive.
+         */
+        [[nodiscard]] std::span<std::byte>
+        bytes() const noexcept
+        {
+            return mBytes;
+        }
+
+    private:
+        std::span<std::byte> mBytes;
+        const Buffer&        mBuffer;
+
+        /** If true, the destructor flushes to commit the writes and make them visible to the GPU.
+         */
+        bool mShouldFlush;
     };
 
     /**

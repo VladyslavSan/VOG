@@ -19,12 +19,12 @@ Buffer::Buffer(MemoryAllocator::Allocation allocation,
 
 Buffer::MemoryMapping::~MemoryMapping()
 {
-    if (shouldFlush)
+    if (mShouldFlush)
     {
-        vmaFlushAllocation(buffer->allocator, buffer->allocation, 0, VK_WHOLE_SIZE);
+        vmaFlushAllocation(mBuffer.allocator, mBuffer.allocation, 0, VK_WHOLE_SIZE);
     }
 
-    vmaUnmapMemory(buffer->allocator, buffer->allocation);
+    vmaUnmapMemory(mBuffer.allocator, mBuffer.allocation);
 }
 
 Buffer::MemoryMapping
@@ -44,7 +44,7 @@ Buffer::mapForWrite()
     const bool isHostCoherent =
         static_cast<bool>(memoryFlags & vk::MemoryPropertyFlagBits::eHostCoherent);
 
-    return {static_cast<std::byte*>(data), size, this, !isHostCoherent};
+    return MemoryMapping{{static_cast<std::byte*>(data), size}, *this, !isHostCoherent};
 }
 
 vk::DeviceAddress

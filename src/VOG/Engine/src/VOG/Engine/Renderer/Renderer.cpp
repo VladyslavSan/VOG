@@ -19,11 +19,11 @@
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/FencePool.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
+#include <VOG/Graphics/Vulkan/HeapBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
 #include <VOG/Graphics/Vulkan/Limits.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 #include <VOG/Graphics/Vulkan/Texture.hpp>
-#include <VOG/Graphics/Vulkan/UniformBlock.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -63,7 +63,7 @@ toVk(Extent extent)
 }
 
 /**
- * Images and uniform blocks the descriptor heap holds at once.
+ * Images and heap buffers the descriptor heap holds at once.
  * Fixed, because growing means binding another heap; make it grow when a scene runs out.
  */
 constexpr std::uint32_t gDescriptorHeapSlots = 4096u;
@@ -303,13 +303,9 @@ Renderer::createMesh(const MeshDescription& description)
         {.flags = Graphics::Vulkan::AllocationFlag::eHostSequentialWrite});
     {
         auto mapping = staging->mapForWrite();
-        std::memcpy(mapping.data, description.vertices.data(), description.vertices.size_bytes());
-        if (!description.indices.empty())
-        {
-            std::memcpy(mapping.data + indexOffset,
-                        description.indices.data(),
-                        description.indices.size_bytes());
-        }
+        std::ranges::copy(description.vertices, mapping.bytes().begin());
+        std::ranges::copy(std::as_bytes(description.indices),
+                          mapping.bytes().subspan(indexOffset).begin());
     }
 
     Graphics::Vulkan::BufferPtr buffer = mVulkanDevice->createBuffer(
@@ -364,7 +360,7 @@ Renderer::createTexture(const TextureDescription& description)
         {.flags = Graphics::Vulkan::AllocationFlag::eHostSequentialWrite});
     {
         auto mapping = staging->mapForWrite();
-        std::ranges::copy(description.pixels, mapping.data);
+        std::ranges::copy(description.pixels, mapping.bytes().begin());
     }
 
     // After the texture exists, so that a frame which draws it finds its upload.
@@ -404,25 +400,32 @@ Renderer::createMaterial(MaterialDescription description)
 
     Graphics::Vulkan::ShaderProgramPtr program = mShaderProgramCache->get(description.shader);
 
-    for (const Graphics::Vulkan::ShaderProgram::PushConstants::Range& range :
-         program->pushConstants.ranges)
+    for (const Graphics::Vulkan::Shader::Reflection::BlockMember& member : program->pushConstants)
     {
-        if (std::size_t{range.offset} + range.size > gPushDataSize)
+        if (std::size_t{member.offset} + member.size > gPushDataSize)
         {
             throw std::invalid_argument{std::format(
                 "Shader \"{}\" has a push-constant range [{}, {}) past the {} bytes of push data "
                 "that the renderer pushes.",
                 description.shader,
-                range.offset,
-                range.offset + range.size,
+                member.offset,
+                member.offset + member.size,
                 gPushDataSize)};
         }
     }
 
-    return Material{std::make_shared<const Detail::MaterialData>(Detail::MaterialData{
-        .program  = std::move(program),
-        .block    = mVulkanDevice->createUniformBlock(mHeap, description.parameters),
-        .textures = std::move(description.textures)})};
+    // The parameters are written once, here: nothing writes the block after the material exists.
+    Graphics::Vulkan::HeapBufferPtr block =
+        mVulkanDevice->createHeapBuffer(mHeap, description.parameters.size());
+    {
+        auto mapping = block->mapForWrite();
+        std::ranges::copy(description.parameters, mapping.bytes().begin());
+    }
+
+    return Material{std::make_shared<const Detail::MaterialData>(
+        Detail::MaterialData{.program  = std::move(program),
+                             .block    = std::move(block),
+                             .textures = std::move(description.textures)})};
 }
 
 void
@@ -684,28 +687,28 @@ Renderer::renderFrame(FramePacket packet)
         const std::uint64_t next = mUploadValue + 1u;
         mTransferQueue->submit(
             *mFencePool,
-            {},
-            std::span{&*transferCommands, 1u},
-            {},
-            std::array{Queue::TimelineWait{.semaphore = mUploadTimeline,
-                                           .value     = mUploadValue,
-                                           .stage     = vk::PipelineStageFlagBits2::eAllCommands}},
-            std::array{Queue::TimelineSignal{.semaphore = mUploadTimeline, .value = next}});
+            {.commandBuffers = std::span{&*transferCommands, 1u},
+             .timelineWaits =
+                 std::array{Queue::TimelineWait{.semaphore = mUploadTimeline,
+                                                .value     = mUploadValue,
+                                                .stage = vk::PipelineStageFlagBits2::eAllCommands}},
+             .timelineSignals =
+                 std::array{Queue::TimelineSignal{.semaphore = mUploadTimeline, .value = next}}});
         mUploadValue = next;
     }
 
     // Every graphics submit waits for the last upload, not only one that uploads: a draw of a
     // resource that an earlier frame uploaded is ordered after that copy by this wait.
-    mGraphicsQueue->submit(
-        *mFencePool,
-        std::array{
-            Queue::SemaphoreWait{.semaphore = acquired->imageAvailableSemaphore(),
-                                 .stage     = vk::PipelineStageFlagBits2::eColorAttachmentOutput}},
-        std::span{&executable, 1u},
-        std::array{frame->getRenderFinishedSemaphore()},
-        std::array{Queue::TimelineWait{.semaphore = mUploadTimeline,
-                                       .value     = mUploadValue,
-                                       .stage     = vk::PipelineStageFlagBits2::eAllCommands}});
+    mGraphicsQueue->submit(*mFencePool,
+                           {.waits          = std::array{Queue::SemaphoreWait{
+                                .semaphore = acquired->imageAvailableSemaphore(),
+                                .stage     = vk::PipelineStageFlagBits2::eColorAttachmentOutput}},
+                            .commandBuffers = std::span{&executable, 1u},
+                            .signals        = std::array{frame->getRenderFinishedSemaphore()},
+                            .timelineWaits  = std::array{Queue::TimelineWait{
+                                .semaphore = mUploadTimeline,
+                                .value     = mUploadValue,
+                                .stage     = vk::PipelineStageFlagBits2::eAllCommands}}});
 
     // Only now: the transfer command buffer retains the uploads. Until the graphics submit returns
     // they stay pending, so a frame that fails before it records them again.

@@ -17,8 +17,8 @@ namespace VOG::Graphics::Vulkan
 VOG_DECLARE_PTR(GraphicsPipeline);
 VOG_DECLARE_PTR(Buffer);
 VOG_DECLARE_PTR(DescriptorHeap);
+VOG_DECLARE_PTR(HeapBuffer);
 VOG_DECLARE_PTR(Texture);
-VOG_DECLARE_PTR(UniformBlock);
 
 /**
  * Only supported recording surface, and the only way to retain a resource in a command buffer:
@@ -101,8 +101,8 @@ public:
          */
         void useResource(std::shared_ptr<const Texture> texture);
 
-        /** As for a texture, for a uniform block. */
-        void useResource(std::shared_ptr<const UniformBlock> block);
+        /** As for a texture, for a heap buffer. */
+        void useResource(std::shared_ptr<const HeapBuffer> buffer);
 
         void draw(std::uint32_t vertexCount,
                   std::uint32_t instanceCount,
@@ -183,6 +183,16 @@ public:
     void copyBufferToTexture(const BufferPtr&  staging,
                              const TexturePtr& texture,
                              std::uint32_t     usageFamily);
+
+    /**
+     * Copies mip 0 of the color image @p image, tightly packed rows of its format, to offset 0 of
+     * @p destination, and retains both. @p image must be in the layout
+     * vk::ImageLayout::eTransferSrcOptimal with its earlier writes visible to the copy, which a
+     * setImageBarrier() before this call arranges. @p destination needs the transfer-dst usage
+     * and room for the image. Nothing makes the copy visible to the host or to later commands:
+     * add a setBufferBarrier() for that. Outside a rendering pass.
+     */
+    void copyImageToBuffer(const AttachmentInterfacePtr& image, const BufferPtr& destination);
 
     /**
      * The acquire half of the ownership transfer that copyBuffer() or copyBufferToTexture()

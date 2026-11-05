@@ -9,8 +9,7 @@ namespace VOG::Graphics::Vulkan
 AcquiredSwapchainImage::AcquiredSwapchainImage(SwapchainGenerationPtr generation,
                                                std::uint32_t          imageIndex,
                                                SemaphorePtr           imageAvailable)
-    : AttachmentInterface{AttachmentUsage::eColor,
-                          generation->format,
+    : AttachmentInterface{generation->format,
                           vk::Extent3D{.width  = generation->extent.width,
                                        .height = generation->extent.height,
                                        .depth  = 1u},

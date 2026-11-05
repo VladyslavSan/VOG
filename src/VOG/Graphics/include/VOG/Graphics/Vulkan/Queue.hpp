@@ -48,30 +48,48 @@ public:
     };
 
     /**
-     * Submits @p commandBuffers, which the submit consumes, using a fence from @p fencePool. The
-     * pool is not owned by Queue or Device; every FenceHandle it hands out retains its pool.
+     * What one submit waits for, runs and signals. The spans only need to live until submit()
+     * returns.
+     */
+    struct Submission
+    {
+        /** Binary semaphores to wait for. */
+        std::span<const SemaphoreWait> waits;
+
+        /**
+         * At least one: the semaphores are retained by the command buffers. Each was recorded
+         * from a pool of this queue's family.
+         */
+        std::span<ExecutableCommandBuffer> commandBuffers;
+
+        /** Binary semaphores to signal. */
+        std::span<const SemaphorePtr> signals;
+
+        /** Waits on timeline semaphores, beside the binary #waits. */
+        std::span<const TimelineWait> timelineWaits;
+
+        /**
+         * Signals of timeline semaphores, beside the binary #signals. The caller owns the values;
+         * they must rise with every signal.
+         */
+        std::span<const TimelineSignal> timelineSignals;
+    };
+
+    /**
+     * Submits @p submission.commandBuffers, which the submit consumes, using a fence from
+     * @p fencePool. The pool is not owned by Queue or Device; every FenceHandle it hands out
+     * retains its pool.
      *
      * The command buffers retain the wait and signal semaphores until their fence signals, so the
      * caller can drop its own references, and they wait in their pools. If the submit throws,
      * nothing was submitted and the caller's command buffers are still theirs to submit or drop.
-     *
-     * @param commandBuffers  At least one: the semaphores are retained by the command buffers.
-     *                        Each was recorded from a pool of this queue's family.
-     * @param timelineWaits   Waits on timeline semaphores, beside the binary @p waits.
-     * @param timelineSignals Signals of timeline semaphores, beside the binary @p signals. The
-     *                        caller owns the values; they must rise with every signal.
      *
      * @note Render thread only. The queue is externally synchronized and the submit parks the
      * command buffers in their pools, which take no lock. The graphics and the transfer queue wrap
      * the same VkQueue when they share a family, so their submits (and the swapchain's present)
      * must not run at the same time either.
      */
-    void submit(FencePool&                         fencePool,
-                std::span<const SemaphoreWait>     waits,
-                std::span<ExecutableCommandBuffer> commandBuffers,
-                std::span<const SemaphorePtr>      signals,
-                std::span<const TimelineWait>      timelineWaits   = {},
-                std::span<const TimelineSignal>    timelineSignals = {}) const;
+    void submit(FencePool& fencePool, const Submission& submission) const;
 
     const std::uint32_t familyIndex;
 };
