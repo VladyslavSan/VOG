@@ -2,6 +2,7 @@
 
 #include "VOG/Engine/Renderer/MaterialDefinition.hpp"
 #include "VOG/Engine/Renderer/MeshDefinition.hpp"
+#include "VOG/Engine/Renderer/ShaderDefinition.hpp"
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
@@ -37,9 +38,9 @@ makePipeline(Device&                     device,
         ColorComponent::eR | ColorComponent::eG | ColorComponent::eB | ColorComponent::eA;
 
     return device.createGraphicsPipeline(GraphicsPipeline::Parameters{
-        .shading       = material.program,
+        .shading       = material.shader->program,
         .vertexLayout  = std::move(vertexLayout),
-        .rasterizer    = {.cullMode = CullMode::eNone},
+        .rasterizer    = {.cullMode = Graphics::Vulkan::CullMode::eNone},
         .viewportState = {.viewportCount = 1u, .scissorCount = 1u},
         .depthStencil  = {.depthTestEnable = 0u},
         .blending      = {.attachments = {{.blendEnable = 0u, .colorWriteMask = colorWriteMask}}},
@@ -59,13 +60,15 @@ PipelineCache::get(const Detail::MeshData&     mesh,
                    const Detail::MaterialData& material,
                    vk::Format                  colorFormat)
 {
-    const auto found = std::ranges::find_if(
-        mEntries,
-        [&](const Entry& entry)
-        {
-            return entry.pipeline->program == material.program && entry.stride == mesh.stride &&
-                   entry.colorFormat == colorFormat && entry.attributes == mesh.attributes;
-        });
+    const auto found =
+        std::ranges::find_if(mEntries,
+                             [&](const Entry& entry)
+                             {
+                                 return entry.pipeline->program == material.shader->program &&
+                                        entry.stride == mesh.stride &&
+                                        entry.colorFormat == colorFormat &&
+                                        entry.attributes == mesh.attributes;
+                             });
     if (found != mEntries.end())
     {
         return found->pipeline;

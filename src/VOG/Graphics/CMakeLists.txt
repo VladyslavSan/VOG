@@ -4,7 +4,6 @@ find_package(spirv-cross REQUIRED)
 find_package(glslang REQUIRED)
 
 find_package(Boost COMPONENTS container REQUIRED)
-find_package(nlohmann_json REQUIRED)
 find_package(spdlog REQUIRED)
 
 add_library(VOG.Graphics)
@@ -62,7 +61,6 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Vulkan/Texture.hpp
             include/VOG/Graphics/Vulkan/TimelineSemaphore.hpp
             include/VOG/Graphics/Vulkan/UploadBarriers.hpp
-            include/VOG/Graphics/ShaderProgramCache.hpp
             include/VOG/Graphics/Typedefs.hpp
 
     PRIVATE
@@ -100,7 +98,6 @@ target_sources(VOG.Graphics
         src/VOG/Graphics/Vulkan/TimelineSemaphore.cpp
         src/VOG/Graphics/Vulkan/UploadBarriers.cpp
         src/VOG/Graphics/Vulkan/VmaConfig.hpp
-        src/VOG/Graphics/ShaderProgramCache.cpp
 )
 
 # Every header under include/ must be in the public header set: PublicHeadersTest is generated from
@@ -123,7 +120,6 @@ target_link_libraries(VOG.Graphics
         Boost::container
     PRIVATE
         GPUOpen::VulkanMemoryAllocator
-        nlohmann_json::nlohmann_json                                                                                
         spirv-cross::spirv-cross
         spdlog::spdlog
         glslang::glslang

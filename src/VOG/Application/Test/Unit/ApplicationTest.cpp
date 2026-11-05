@@ -2,14 +2,17 @@
 #include <VOG/Engine/Renderer/Renderable.hpp>
 #include <VOG/Engine/Renderer/Renderer.hpp>
 #include <VOG/Engine/Scene/Scene.hpp>
+#include <VOG/Math/Math.hpp>
 
 #include <SDL3/SDL.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -421,8 +424,14 @@ TEST_F(ApplicationRunTest, applicationTeardownRunsOnDestroyWhileRendererLives)
             rendererGoneSeen = true;
             return;
         }
-        materialCreated =
-            static_cast<bool>(raw->getRenderer().createMaterial({.shader = "WorldSpace"}));
+        const std::array<std::byte, 4> pixel{};
+        Engine::Renderer&              renderer = raw->getRenderer();
+        materialCreated                         = static_cast<bool>(renderer.createMaterial(
+            {.shader     = renderer.getShader("Textured"),
+             .parameters = {
+                 {"tint", Math::Vector4f{1.0f}},
+                 {"albedo",
+                  renderer.createTexture({.pixels = pixel, .width = 1u, .height = 1u})}}}));
     };
     const Watchdog watchdog;
 

@@ -30,18 +30,28 @@ target_sources(Engine
             include/VOG/Engine/Renderer/Mesh.hpp
             include/VOG/Engine/Renderer/Renderable.hpp
             include/VOG/Engine/Renderer/Renderer.hpp
+            include/VOG/Engine/Renderer/Shader.hpp
             include/VOG/Engine/Renderer/Texture.hpp
             include/VOG/Engine/Scene/Components.hpp
             include/VOG/Engine/Scene/Registry.hpp
             include/VOG/Engine/Scene/Scene.hpp
     PRIVATE
         src/VOG/Engine/Renderer/CameraView.cpp
+        src/VOG/Engine/Renderer/DrawPushData.hpp
+        src/VOG/Engine/Renderer/DrawRecording.cpp
+        src/VOG/Engine/Renderer/DrawRecording.hpp
+        src/VOG/Engine/Renderer/FrameBlocks.cpp
+        src/VOG/Engine/Renderer/FrameBlocks.hpp
         src/VOG/Engine/Renderer/FramePacketQueue.hpp
+        src/VOG/Engine/Renderer/MaterialDefinition.cpp
         src/VOG/Engine/Renderer/MaterialDefinition.hpp
         src/VOG/Engine/Renderer/MeshDefinition.hpp
         src/VOG/Engine/Renderer/PipelineCache.cpp
         src/VOG/Engine/Renderer/PipelineCache.hpp
         src/VOG/Engine/Renderer/Renderer.cpp
+        src/VOG/Engine/Renderer/ShaderDefinition.hpp
+        src/VOG/Engine/Renderer/ShaderLibrary.cpp
+        src/VOG/Engine/Renderer/ShaderLibrary.hpp
         src/VOG/Engine/Renderer/TextureDefinition.hpp
         src/VOG/Engine/Scene/Registry.cpp
         src/VOG/Engine/Scene/Scene.cpp

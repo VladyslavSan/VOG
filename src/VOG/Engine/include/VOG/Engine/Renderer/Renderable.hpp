@@ -43,6 +43,7 @@ public:
 
 private:
     friend class Renderer;
+    friend struct DrawRecording;
     friend struct RenderQueueTestAccess;
 
     struct Draw

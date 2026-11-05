@@ -1,4 +1,3 @@
-#include <VOG/Graphics/ShaderProgramCache.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/RenderTarget.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
@@ -240,8 +239,8 @@ TEST_F(VulkanValidationFixture, DescriptorHeap_slotReusedOnlyAfterRetainingPoolR
  */
 TEST_F(VulkanValidationFixture, DescriptorHeap_texturedDrawIsValidationClean)
 {
-    Graphics::ShaderProgramCache cache{mDevice, VOG_TEST_SHADER_PATH};
-    auto                         heap = createHeap();
+    const ShaderProgramPtr program = createProgramFromFiles("TestDescriptorHeap");
+    auto                   heap    = createHeap();
 
     // Four white texels of 4 bytes, and a tint of 4 floats.
     std::array<std::uint8_t, 16> pixels{};
@@ -273,7 +272,7 @@ TEST_F(VulkanValidationFixture, DescriptorHeap_texturedDrawIsValidationClean)
     constexpr auto colorWriteMask =
         ColorComponent::eR | ColorComponent::eG | ColorComponent::eB | ColorComponent::eA;
     GraphicsPipelinePtr pipeline = mDevice->createGraphicsPipeline(GraphicsPipeline::Parameters{
-        .shading       = cache.get("TestDescriptorHeap"),
+        .shading       = program,
         .vertexLayout  = {.bindingDescription   = {{.binding   = 0u,
                                                     .stride    = 16u,
                                                     .inputRate = vk::VertexInputRate::eVertex}},

@@ -10,6 +10,7 @@
 #include <VOG/Graphics/Vulkan/DeviceRequirements.hpp>
 #include <VOG/Graphics/Vulkan/HeapBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
+#include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 #include <VOG/Graphics/Vulkan/Texture.hpp>
 
 #include <gtest/gtest.h>
@@ -17,6 +18,9 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -126,6 +130,29 @@ public:
     createShader(Graphics::Vulkan::Shader::ShadingStage stage, const std::string& glslCode)
     {
         return mDevice->createShader(stage, compileGLSL(stage, glslCode));
+    }
+
+    /**
+     * The program of `src/<name>.vert.glsl` and `src/<name>.frag.glsl` of the test shader
+     * directory, which the test target names in VOG_TEST_SHADER_PATH.
+     */
+    Graphics::Vulkan::ShaderProgramPtr
+    createProgramFromFiles(const std::string& name)
+    {
+        const auto read = [&name](std::string_view suffix)
+        {
+            std::ifstream file{std::filesystem::path{VOG_TEST_SHADER_PATH} / "src" /
+                                   (name + std::string{suffix}),
+                               std::ios::binary};
+
+            return std::string{std::istreambuf_iterator<char>{file}, {}};
+        };
+
+        return Graphics::Vulkan::ShaderProgram::create(
+            {.vertex   = {.shader = createShader(Graphics::Vulkan::Shader::ShadingStage::eVertex,
+                                                 read(".vert.glsl"))},
+             .fragment = {.shader = createShader(Graphics::Vulkan::Shader::ShadingStage::eFragment,
+                                                 read(".frag.glsl"))}});
     }
 
     /** A descriptor heap of @p slots resource slots and one linear sampler. */

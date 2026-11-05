@@ -5,11 +5,16 @@
 namespace VOG::Engine
 {
 Math::Matrix4x4f
-CameraView::viewProjection(Extent extent) const
+CameraView::view() const
 {
-    const Math::Matrix4x4f view = glm::inverse(
+    return glm::inverse(
         Math::calculateCameraMatrix({.position = position, .direction = direction, .up = up}));
-    const Math::Matrix4x4f projection = Math::orthographicProjection(
+}
+
+Math::Matrix4x4f
+CameraView::projection(Extent extent) const
+{
+    const Math::Matrix4x4f orthographic = Math::orthographicProjection(
         {0.0f, 0.0f},
         {static_cast<float>(extent.width), static_cast<float>(extent.height)},
         nearPlane,
@@ -21,6 +26,12 @@ CameraView::viewProjection(Extent extent) const
     const Math::Matrix4x4f flipY =
         glm::scale(Math::Matrix4x4f{1.0f}, Math::Vector3f{1.0f, -1.0f, 1.0f});
 
-    return flipY * projection * view;
+    return flipY * orthographic;
+}
+
+Math::Matrix4x4f
+CameraView::viewProjection(Extent extent) const
+{
+    return projection(extent) * view();
 }
 } // namespace VOG::Engine

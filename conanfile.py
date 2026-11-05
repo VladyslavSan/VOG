@@ -28,7 +28,6 @@ class VOGConan(ConanFile):
         self.requires("spdlog/1.15.3")
 
         # Private dependencies
-        self.requires("nlohmann_json/3.10.5", transitive_headers=False, transitive_libs=False)
         self.requires(f"vulkan-headers/{self.vulkan_version}", transitive_headers=False, transitive_libs=False)
         self.requires("vulkan-memory-allocator/3.3.0", transitive_headers=False, transitive_libs=False)
         self.requires(f"spirv-cross/{self.vulkan_version}", transitive_headers=False, transitive_libs=False)

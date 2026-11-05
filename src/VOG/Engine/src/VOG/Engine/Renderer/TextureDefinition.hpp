@@ -18,6 +18,9 @@ class TextureData
 public:
     /** Its descriptor sits in the renderer's heap; a draw pushes its heap index. */
     Graphics::Vulkan::TexturePtr texture;
+
+    /** The index of its sampler in the sampler heap, which a Material block holds. */
+    Filter filter = Filter::eLinear;
 };
 } // namespace Detail
 

@@ -16,6 +16,14 @@ enum class TextureFormat : std::uint8_t
     eRGBA8Unorm
 };
 
+/** How a shader samples a texture: between the texels of the image, or the nearest one. The image
+ *  repeats at its edges. */
+enum class Filter : std::uint8_t
+{
+    eLinear,
+    eNearest
+};
+
 /** A 2D image with one mip level, rows tightly packed from the top. */
 struct TextureDescription
 {
@@ -25,6 +33,7 @@ struct TextureDescription
     std::uint32_t              width  = 0u;
     std::uint32_t              height = 0u;
     TextureFormat              format = TextureFormat::eRGBA8Srgb;
+    Filter                     filter = Filter::eLinear;
 };
 
 namespace Detail
@@ -55,6 +64,7 @@ public:
 
 private:
     friend class Renderer;
+    friend struct DrawRecording;
     friend struct HandleTestAccess;
 
     explicit Texture(std::shared_ptr<const Detail::TextureData> data)

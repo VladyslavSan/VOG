@@ -2,44 +2,43 @@
 
 #include <VOG/Engine/Renderer/Material.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
-#include <VOG/Math/Math.hpp>
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace VOG::Graphics::Vulkan
 {
-VOG_DECLARE_PTR(ShaderProgram);
 VOG_DECLARE_PTR(HeapBuffer);
 } // namespace VOG::Graphics::Vulkan
 
 namespace VOG::Engine
 {
-/** Spec minimum of maxUniformBufferRange. */
-constexpr std::size_t gMaxParametersSize = 16384u;
-constexpr std::size_t gMaxTextures       = 4u;
-
-/**
- * The push data of every draw, at std430 offsets: `mat4 mvp` at 0, `uint material` (the heap index
- * of the parameter block) after it, then `uint textures[4]`.
- */
-constexpr std::size_t gMaterialIndexOffset = sizeof(Math::Matrix4x4f);
-constexpr std::size_t gTexturesOffset      = gMaterialIndexOffset + sizeof(std::uint32_t);
-constexpr std::size_t gPushDataSize = gTexturesOffset + (gMaxTextures * sizeof(std::uint32_t));
-/** Size of the push block in the shaders (`mat4 mvp; uint material; uint textures[4]`). */
-constexpr std::size_t gShaderPushBlockSize = 84u;
-static_assert(gPushDataSize == gShaderPushBlockSize);
+/** The most a Material block can take: the spec minimum of maxUniformBufferRange. */
+constexpr std::size_t gMaxMaterialBlockSize = 16384u;
 
 namespace Detail
 {
+class ShaderInfo;
+
 class MaterialData
 {
 public:
-    Graphics::Vulkan::ShaderProgramPtr program;
-    /** The parameters; its heap index is pushed as `material`. */
+    std::shared_ptr<const ShaderInfo> shader;
+
+    /** The parameters, written once when the material was made; its heap index is pushed as
+     *  `material`. */
     Graphics::Vulkan::HeapBufferPtr block;
-    std::vector<Texture>            textures;
+
+    /** What the parameters hold: the textures that the block refers to by heap index. */
+    std::vector<Texture> textures;
+
+    /** As given to Renderer::createMaterial(). */
+    std::vector<MaterialParameter> parameters;
+
+    /** Stored; the renderer does not apply it yet. */
+    RenderState state;
 };
 } // namespace Detail
 } // namespace VOG::Engine

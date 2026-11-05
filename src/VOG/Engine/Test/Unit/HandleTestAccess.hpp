@@ -2,6 +2,7 @@
 
 #include "VOG/Engine/Renderer/MaterialDefinition.hpp"
 #include "VOG/Engine/Renderer/MeshDefinition.hpp"
+#include "VOG/Engine/Renderer/ShaderDefinition.hpp"
 #include "VOG/Engine/Renderer/TextureDefinition.hpp"
 
 #include <memory>
@@ -46,6 +47,12 @@ struct HandleTestAccess
     data(const Texture& texture)
     {
         return *texture.mData;
+    }
+
+    static const Detail::ShaderInfo&
+    data(const Shader& shader)
+    {
+        return *shader.mData;
     }
 
     static std::weak_ptr<const Detail::MeshData>

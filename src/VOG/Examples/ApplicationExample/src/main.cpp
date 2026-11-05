@@ -22,32 +22,6 @@ namespace po = boost::program_options;
 
 namespace
 {
-struct VertexData
-{
-    VOG::Math::Vector2f position;
-    VOG::Math::Vector4f color;
-};
-
-// clang-format off
-constexpr VertexData gVertexData[] = {
-  // Red bottom left square
-  {{-1.0, -1.0}, {1.0, 0.0, 0.0, 1.0}},
-  {{-1.0,  0.0}, {1.0, 0.0, 0.0, 1.0}},
-  {{ 0.0,  0.0}, {1.0, 0.0, 0.0, 1.0}},
-  {{ 0.0, -1.0}, {1.0, 0.0, 0.0, 1.0}},
-  // Green top right square
-  {{ 0.0,  0.0}, {0.0, 1.0, 0.0, 1.0}},
-  {{ 0.0,  1.0}, {0.0, 1.0, 0.0, 1.0}},
-  {{ 1.0,  1.0}, {0.0, 1.0, 0.0, 1.0}},
-  {{ 1.0,  0.0}, {0.0, 1.0, 0.0, 1.0}},
-};
-
-constexpr std::uint32_t gIndexData[] = {
-  0, 1, 2, 2, 3, 0, // Red
-  4, 5, 6, 4, 6, 7, // Green
-};
-// clang-format on
-
 struct TexturedVertex
 {
     VOG::Math::Vector2f position;
@@ -158,9 +132,10 @@ main(int argc, const char** argv) // NOLINT(bugprone-exception-escape)
     try
     {
         po::options_description description = {};
-        description.add_options()("shader-storage-path",
-                                  po::value<std::string>()->required(),
-                                  "Path to the shader directory containing config.json.");
+        description.add_options()(
+            "shader-storage-path",
+            po::value<std::string>()->required(),
+            "Path to the shader directory (Name.vert.glsl, Name.frag.glsl and include/).");
 
         constexpr int kWindowWidth  = 1280;
         constexpr int kWindowHeight = 720;
@@ -197,35 +172,40 @@ main(int argc, const char** argv) // NOLINT(bugprone-exception-escape)
         VOG::Engine::Renderer& renderer = app.getRenderer();
         VOG::Engine::Scene&    scene    = app.getScene();
 
-        const auto quads    = renderer.createMesh({
-            .vertices   = std::as_bytes(std::span{gVertexData}),
-            .indices    = gIndexData,
-            .stride     = sizeof(VertexData),
-            .attributes = {{VOG::Engine::VertexFormat::eFloat2, 0u},
-                           {VOG::Engine::VertexFormat::eFloat4, offsetof(VertexData, color)}},
-        });
-        const auto material = renderer.createMaterial({.shader = "WorldSpace"});
-
         const auto checkerboardPixels = makeCheckerboard();
-        const auto checkerboard       = renderer.createTexture({
-            .pixels = checkerboardPixels,
-            .width  = gCheckerboardSize,
-            .height = gCheckerboardSize,
-        });
-        // The shader multiplies the texture by this tint, four floats.
-        constexpr std::array<float, 4> kWhite{1.0f, 1.0f, 1.0f, 1.0f};
-        const auto                     texturedQuad     = renderer.createMesh({
+        const auto texturedQuad       = renderer.createMesh({
             .vertices   = std::as_bytes(std::span{gTexturedVertexData}),
             .indices    = gTexturedIndexData,
             .stride     = sizeof(TexturedVertex),
             .attributes = {{VOG::Engine::VertexFormat::eFloat2, 0u},
                            {VOG::Engine::VertexFormat::eFloat2, offsetof(TexturedVertex, uv)}},
         });
-        const auto                     texturedMaterial = renderer.createMaterial({
-            .shader     = "Textured",
-            .parameters = std::vector<std::byte>{std::as_bytes(std::span{kWhite}).begin(),
-                                                 std::as_bytes(std::span{kWhite}).end()},
-            .textures   = {checkerboard},
+
+        // The same checkerboard, as two textures: one that the shader smooths when it magnifies
+        // it, and one that it does not.
+        const auto smooth = renderer.createTexture({
+            .pixels = checkerboardPixels,
+            .width  = gCheckerboardSize,
+            .height = gCheckerboardSize,
+            .filter = VOG::Engine::Filter::eLinear,
+        });
+        const auto crisp  = renderer.createTexture({
+            .pixels = checkerboardPixels,
+            .width  = gCheckerboardSize,
+            .height = gCheckerboardSize,
+            .filter = VOG::Engine::Filter::eNearest,
+        });
+
+        // The shader multiplies the texture by the tint.
+        const VOG::Engine::Shader textured = renderer.getShader("Textured");
+        const auto                reddish  = renderer.createMaterial({
+            .shader     = textured,
+            .parameters = {{"tint", VOG::Math::Vector4f{1.0f, 0.5f, 0.5f, 1.0f}},
+                           {"albedo", smooth}},
+        });
+        const auto                white    = renderer.createMaterial({
+            .shader     = textured,
+            .parameters = {{"tint", VOG::Math::Vector4f{1.0f}}, {"albedo", crisp}},
         });
 
         scene.createGameObject().addComponent<VOG::Engine::Camera>(
@@ -235,14 +215,14 @@ main(int argc, const char** argv) // NOLINT(bugprone-exception-escape)
         quadObject.getTransform().position = {0.0f, 0.0f, gQuadDistance};
         quadObject.getTransform().scale    = {gQuadHalfSizePixels, gQuadHalfSizePixels, 1.0f};
         quadObject.addComponent<VOG::Engine::MeshRenderer>(
-            VOG::Engine::MeshRenderer{.mesh = quads, .material = material});
+            VOG::Engine::MeshRenderer{.mesh = texturedQuad, .material = reddish});
         quadObject.addBehaviour<SwingBehaviour>(gRotationRate, gMaxRotationDegrees);
 
         VOG::Engine::GameObject texturedObject = scene.createGameObject();
         texturedObject.getTransform().position = {gTexturedOffsetX, 0.0f, gQuadDistance};
         texturedObject.getTransform().scale    = {gTexturedHalfSize, gTexturedHalfSize, 1.0f};
         texturedObject.addComponent<VOG::Engine::MeshRenderer>(
-            VOG::Engine::MeshRenderer{.mesh = texturedQuad, .material = texturedMaterial});
+            VOG::Engine::MeshRenderer{.mesh = texturedQuad, .material = white});
 
         app.run();
     }

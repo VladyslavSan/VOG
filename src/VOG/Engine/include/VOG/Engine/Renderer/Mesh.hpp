@@ -67,6 +67,7 @@ public:
 
 private:
     friend class Renderer;
+    friend struct DrawRecording;
     friend struct HandleTestAccess;
 
     explicit Mesh(std::shared_ptr<const Detail::MeshData> data)

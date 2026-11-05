@@ -84,11 +84,13 @@ a handle is the same one:
   pipeline or buffer bind that repeats the previous bind of its kind in the frame; the first
   bind's retain covers the rest, because all draws of a frame are in one command buffer and its
   retained set lives until the fence signals.
-- A `Material` shares a `MaterialData`, which owns a `ShaderProgramPtr`, a `HeapBuffer` that
-  holds its parameters, and the `Texture` handles it samples. A draw pushes the heap indices of
-  the block and the textures, and records them with `RenderingPass::useResource`, which retains
-  them: dropping the last `Material` handle while a frame is in flight frees the CPU object, and
-  the block and the images die when that frame's slot is reused
+- A `Material` shares a `MaterialData`, which holds its `ShaderInfo` (and through it the
+  `ShaderProgram`), a `HeapBuffer` that holds its parameters, the `Texture` handles that the
+  parameters name, and the parameters as given. A draw pushes the heap indices of the material block
+  and of the frame's Frame block (`DrawPushData`); the textures are in the material block, as heap
+  indices. The draw records the blocks and the textures with `RenderingPass::useResource`, which
+  retains them: dropping the last `Material` handle while a frame is in flight frees the CPU object,
+  and the block and the images die when that frame's slot is reused
   (`textureOutlivesMaterialWhileFrameInFlight`, `parameterBlockOutlivesMaterialWhileFrameInFlight`).
 - `Renderer::createMesh` and `Renderer::createTexture` copy the bytes into a host-visible staging
   buffer on the calling thread and queue the upload with the destination. Neither destination
@@ -259,8 +261,8 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    thread; it has a mutex. The `Scene`, its `GameObject`s and its `Behaviour`s are main-thread
    state: `Application` updates the scene and runs `onDraw` on the main thread, and only the packet
    crosses to the render thread. `createMesh`, `createTexture` and `createMaterial` are safe from any thread: VMA is
-   created without `EXTERNALLY_SYNCHRONIZED`, so the allocator locks internally, the shader
-   cache is only read after its constructor, the heap's free list has a mutex, and the pending
+   created without `EXTERNALLY_SYNCHRONIZED`, so the allocator locks internally, the
+   `ShaderLibrary` is only read after its constructor, the heap's free list has a mutex, and the pending
    uploads (`mPendingUploads`) are shared between `createMesh`, `createTexture` and the render thread under
    `mUploadMutex`. A packet holds meshes, materials and a camera view,
    none of the objects above, so it may die on any thread. `onDraw` may run inside an SDL event
@@ -282,15 +284,15 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    `CommandBufferRecorder`, `ExecutableCommandBuffer`, `Semaphore`,
    `TimelineSemaphore`, `Queue`,
    `RenderTarget`, `Shader`, `GraphicsPipeline`, `DescriptorHeap`, `Texture`, `HeapBuffer`,
-   `FrameObjects`, `FrameObjectManager`, `ShaderProgramCache`, `Swapchain`,
+   `FrameObjects`, `FrameObjectManager`, `Swapchain`,
    `SwapchainGeneration` (private to the library, reached through the
    `AcquiredSwapchainImage` and `Presentation` that hold it) and
    `AcquiredSwapchainImage` (`SwapchainTest.cpp`, on a headless surface via
    `VK_EXT_headless_surface`; the generation is covered by
    `acquiredImageKeepsSwapchainAlive`, which holds nothing else). `Shader`, `RenderTarget`, `Semaphore`, `ExecutableCommandBuffer`,
    `DescriptorHeap`, `Texture` and `HeapBuffer` expose no Vulkan call, so their
-   destruction is the call under test (the texture and the heap buffer also expire their heap);
-   for `ShaderProgramCache` it is the lookup. A `ShaderProgram` owns no Vulkan object, so it
+   destruction is the call under test (the texture and the heap buffer also expire their heap).
+   A `ShaderProgram` owns no Vulkan object, so it
    has no test of its own: its shaders hold the device (`Shader_keepsDeviceAlive`).
    `Device` (its `Instance`) and `Queue` are ownership-only: the `Queue` test holds the transfer
    handle and calls nothing through it (a submit through the queue is
@@ -328,7 +330,8 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
 
 - **Heap-referenced resources** (textures and heap buffers on the descriptor heap): a draw that
   references one by heap index must retain it through `RenderingPass::useResource`, which
-  nothing enforces. The `Renderer` calls it for the block and the textures of every draw.
+  nothing enforces. The `Renderer` calls it for the Frame block of the frame and for the material
+  block and the textures of every draw (`DrawRecording::recordDraws`).
 
 - **Out-of-date and suboptimal paths are untested.** A headless surface never
   reports them, so no automated test reaches the acquire/present

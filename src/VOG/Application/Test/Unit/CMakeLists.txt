@@ -11,7 +11,7 @@ target_sources(VOG.Application.Unit
 # The tests that call run() build a real Application, which compiles the shaders of this directory.
 target_compile_definitions(VOG.Application.Unit
     PRIVATE
-        VOG_TEST_SHADER_PATH="${PROJECT_SOURCE_DIR}/src/VOG/Graphics/resources/shaders"
+        VOG_TEST_SHADER_PATH="${PROJECT_SOURCE_DIR}/src/VOG/Engine/resources/shaders"
 )
 
 target_link_libraries(VOG.Application.Unit

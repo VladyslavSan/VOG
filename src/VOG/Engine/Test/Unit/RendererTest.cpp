@@ -1,13 +1,23 @@
+#include "VOG/Engine/Renderer/DrawPushData.hpp"
+#include "VOG/Engine/Renderer/DrawRecording.hpp"
+#include "VOG/Engine/Renderer/FrameBlocks.hpp"
 #include "VOG/Engine/Renderer/FramePacketQueue.hpp"
 #include "VOG/Engine/Renderer/MaterialDefinition.hpp"
 #include "VOG/Engine/Renderer/MeshDefinition.hpp"
 #include "VOG/Engine/Renderer/PipelineCache.hpp"
+#include "VOG/Engine/Renderer/ShaderLibrary.hpp"
 #include "VOG/Engine/Renderer/TextureDefinition.hpp"
 #include <VOG/Engine/Renderer/Renderer.hpp>
+#include <VOG/Graphics/Vulkan/Attachment/RenderTarget.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
+#include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
+#include <VOG/Graphics/Vulkan/CommandBufferRecorder.hpp>
+#include <VOG/Graphics/Vulkan/DescriptorHeap.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/DeviceRequirements.hpp>
+#include <VOG/Graphics/Vulkan/FencePool.hpp>
+#include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/HeapBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Texture.hpp>
 
@@ -15,6 +25,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -36,7 +47,9 @@
 #include <vector>
 
 #include "HandleTestAccess.hpp"
+#include "RenderQueueTestAccess.hpp"
 #include "SyncValidationSetting.hpp"
+#include "TestShaders.hpp"
 
 #ifndef _WIN32
     #include <sys/mman.h>
@@ -96,10 +109,68 @@ struct RendererTestAccess
         return renderer.mVulkanDevice;
     }
 
+    static std::shared_ptr<Graphics::Vulkan::DescriptorHeap>
+    heap(const Renderer& renderer)
+    {
+        return renderer.mHeap;
+    }
+
+    /** While no render thread runs: the pipeline of each draw of @p packet for a color target of
+     *  @p format. */
+    static std::vector<Graphics::Vulkan::GraphicsPipelinePtr>
+    pipelines(Renderer& renderer, const FramePacket& packet, vk::Format format)
+    {
+        std::vector<Graphics::Vulkan::GraphicsPipelinePtr> pipelines;
+        for (const auto& draw : RenderQueueTestAccess::draws(packet.draws))
+        {
+            pipelines.push_back(renderer.mPipelineCache->get(
+                HandleTestAccess::data(draw.mesh), HandleTestAccess::data(draw.material), format));
+        }
+
+        return pipelines;
+    }
+
+    /** While no render thread runs: records the copies of the pending uploads into @p recorder,
+     *  for the queue family @p family of the pool, which also draws. */
+    static void
+    recordPendingUploads(Renderer&                                renderer,
+                         Graphics::Vulkan::CommandBufferRecorder& recorder,
+                         std::uint32_t                            family)
+    {
+        for (const Renderer::PendingUpload& upload : renderer.mPendingUploads)
+        {
+            if (const auto* buffer = std::get_if<Graphics::Vulkan::BufferPtr>(&upload.destination))
+            {
+                recorder.copyBuffer(upload.staging, *buffer, family);
+            }
+            else
+            {
+                recorder.copyBufferToTexture(
+                    upload.staging,
+                    std::get<Graphics::Vulkan::TexturePtr>(upload.destination),
+                    family);
+            }
+        }
+    }
+
     static const vk::PhysicalDeviceLimits&
     limits(const Renderer& renderer)
     {
         return renderer.mVulkanDevice->limits;
+    }
+
+    /** While no render thread runs: the buffers of the Frame block that the frames wrote, one per
+     *  frame slot that was rendered into. */
+    static std::vector<Graphics::Vulkan::HeapBufferPtr>
+    frameBlocks(const Renderer& renderer)
+    {
+        std::vector<Graphics::Vulkan::HeapBufferPtr> buffers;
+        for (const auto& [slot, buffer] : renderer.mFrameBlocks->mBlocks)
+        {
+            buffers.push_back(buffer);
+        }
+
+        return buffers;
     }
 
     /** The function table that every command buffer of the renderer's device records through. */
@@ -167,7 +238,7 @@ protected:
     }
 
     Renderer::Config
-    makeConfig(const std::filesystem::path& shaderPath = VOG_TEST_SHADER_PATH)
+    makeConfig(const std::filesystem::path& shaderPath = sharedTestShaderPath())
     {
         Renderer::Config config{
             .appName          = "VOG Renderer Test",
@@ -198,7 +269,7 @@ protected:
     }
 
     std::unique_ptr<Renderer>
-    makeRenderer(const std::filesystem::path& shaderPath = VOG_TEST_SHADER_PATH)
+    makeRenderer(const std::filesystem::path& shaderPath = sharedTestShaderPath())
     {
         return makeRenderer(makeConfig(shaderPath));
     }
@@ -426,9 +497,7 @@ incompatibleLayout()
 }
 
 constexpr std::size_t gTexturedStride = 16u;
-/** Bytes of a tint, the parameters of the Textured shader (four floats). */
-constexpr std::size_t gTintSize  = 16u;
-constexpr std::size_t gPixelSize = 4u;
+constexpr std::size_t gPixelSize      = 4u;
 
 /** As the Textured shader reads them: a position and a uv, two floats each. */
 std::vector<VertexAttribute>
@@ -454,13 +523,20 @@ makeTexture(Renderer& renderer)
     return renderer.createTexture({.pixels = pixels, .width = 2u, .height = 2u});
 }
 
-/** The Textured shader with a 16-byte tint and @p texture. */
+/** The Textured shader with a white tint and @p texture. */
 Material
 makeTexturedMaterial(Renderer& renderer, Texture texture)
 {
-    return renderer.createMaterial({.shader     = "Textured",
-                                    .parameters = std::vector<std::byte>(gTintSize),
-                                    .textures   = {std::move(texture)}});
+    return renderer.createMaterial(
+        {.shader     = renderer.getShader("Textured"),
+         .parameters = {{"tint", Math::Vector4f{1.0f}}, {"albedo", std::move(texture)}}});
+}
+
+/** A material of the shader @p shader, which has no Material block. */
+Material
+makeMaterial(Renderer& renderer, std::string_view shader)
+{
+    return renderer.createMaterial({.shader = renderer.getShader(shader)});
 }
 
 Mesh
@@ -482,45 +558,6 @@ drawing(Mesh mesh, Material material)
             queue.submit(mesh, material, Math::Matrix4x4f{1.0f});
         });
 }
-
-/**
- * A shader directory with one shader whose push-constant block is two matrices, 128 bytes: more
- * than the 84 bytes of push data that the renderer pushes.
- */
-class WideShaderDirectory
-{
-public:
-    WideShaderDirectory()
-        : mPath{std::filesystem::path{testing::TempDir()} / "VogWideShader"}
-    {
-        std::filesystem::create_directories(mPath);
-        std::ofstream{mPath / "Wide.vert.glsl"} << R"(#version 450
-layout(push_constant) uniform constants { mat4 first; mat4 second; } pc;
-void main() { gl_Position = pc.first * pc.second * vec4(0.0, 0.0, 0.0, 1.0); }
-)";
-        // The fragment shader of the WorldSpace shader; an absolute path is not made relative.
-        std::ofstream{mPath / "config.json"}
-            << R"({"shaders": {"Wide": {"vertex": "Wide.vert.glsl", "fragment": ")"
-            << (std::filesystem::path{VOG_TEST_SHADER_PATH} /
-                "src/ScreenSpacePositionColor.frag.glsl")
-                   .generic_string()
-            << R"("}}})";
-    }
-
-    ~WideShaderDirectory() { std::filesystem::remove_all(mPath); }
-
-    WideShaderDirectory(const WideShaderDirectory&)            = delete;
-    WideShaderDirectory& operator=(const WideShaderDirectory&) = delete;
-
-    const std::filesystem::path&
-    path() const
-    {
-        return mPath;
-    }
-
-private:
-    std::filesystem::path mPath;
-};
 
 std::atomic<int> gPipelineBinds;
 std::atomic<int> gVertexBufferBinds;
@@ -665,7 +702,7 @@ TEST_F(RendererTest, throwingOnDrawPropagatesFromSubmitFrame)
 TEST_F(RendererTest, renderThreadFailureIsReportedAndRestartable)
 {
     auto renderer = makeRenderer();
-    auto material = renderer->createMaterial({.shader = "WorldSpace"});
+    auto material = makeMaterial(*renderer, "WorldSpace");
     auto bad      = makeMesh(*renderer, incompatibleLayout());
     auto good     = makeMesh(*renderer, compatibleLayout());
 
@@ -758,8 +795,8 @@ TEST_F(RendererTest, addRenderableFromOnDrawIsDrawnNextFrame)
 TEST_F(RendererTest, incompatibleMeshFailsRenderThread)
 {
     auto renderer = makeRenderer();
-    renderer->addRenderable(drawing(makeMesh(*renderer, incompatibleLayout()),
-                                    renderer->createMaterial({.shader = "WorldSpace"})));
+    renderer->addRenderable(
+        drawing(makeMesh(*renderer, incompatibleLayout()), makeMaterial(*renderer, "WorldSpace")));
     renderer->start();
     renderer->submitFrame({});
 
@@ -784,7 +821,7 @@ TEST_F(RendererTest, incompatibleMeshFailsRenderThread)
 TEST_F(RendererTest, drawWithoutMeshOrMaterialIsSkipped)
 {
     auto renderer = makeRenderer();
-    auto material = renderer->createMaterial({.shader = "WorldSpace"});
+    auto material = makeMaterial(*renderer, "WorldSpace");
     auto mesh     = makeMesh(*renderer, compatibleLayout());
 
     EXPECT_FALSE(Mesh{});
@@ -1084,7 +1121,7 @@ TEST_F(RendererTest, indexedMeshIsDrawn)
                                           .indices    = indices,
                                           .stride     = gQuadStride,
                                           .attributes = compatibleLayout()});
-    renderer->addRenderable(drawing(mesh, renderer->createMaterial({.shader = "WorldSpace"})));
+    renderer->addRenderable(drawing(mesh, makeMaterial(*renderer, "WorldSpace")));
     renderer->start();
     for (int frame = 0; frame < 3; ++frame)
     {
@@ -1124,8 +1161,8 @@ TEST_F(RendererTest, repeatedBindsAreSkipped)
     const Mesh     meshA = indexed();
     const Mesh     meshB = makeMesh(*renderer, compatibleLayout());
     const Mesh     meshC = indexed();
-    const Material first = renderer->createMaterial({.shader = "WorldSpace"});
-    const Material other = renderer->createMaterial({.shader = "ScreenSpacePositionColor"});
+    const Material first = makeMaterial(*renderer, "WorldSpace");
+    const Material other = makeMaterial(*renderer, "ScreenSpacePositionColor");
 
     // Only the first frame draws, so the counts are those of one frame.
     bool drawn = false;
@@ -1158,53 +1195,20 @@ TEST_F(RendererTest, repeatedBindsAreSkipped)
     }
 }
 
-// The score comes from the gtest assertion macros.
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
-TEST_F(RendererTest, createMaterialChecksShaderTexturesAndParameterSize)
+/**
+ * A texture is a handle: empty by default, equal to its copies, and to no other texture. Material
+ * parameters compare by it, so a texture that compared equal to another would make two materials
+ * of different textures equal.
+ */
+TEST_F(RendererTest, textureIsAHandleThatComparesByIdentity)
 {
     auto renderer = makeRenderer();
 
-    EXPECT_THROW(std::ignore = renderer->createMaterial({.shader = "NoSuchShader"}),
-                 std::invalid_argument);
-
-    // The parameters are a uniform block, not push constants: size 0 to 16384 bytes are fine.
-    for (const std::size_t size :
-         {std::size_t{0u}, std::size_t{4u}, std::size_t{65u}, gMaxParametersSize})
-    {
-        EXPECT_TRUE(renderer->createMaterial(
-            {.shader = "WorldSpace", .parameters = std::vector<std::byte>(size)}))
-            << size << " bytes";
-    }
-    EXPECT_THROW(std::ignore = renderer->createMaterial(
-                     {.shader     = "WorldSpace",
-                      .parameters = std::vector<std::byte>(gMaxParametersSize + 1u)}),
-                 std::invalid_argument);
-
-    // At most four textures, none empty.
     const Texture texture = makeTexture(*renderer);
     EXPECT_FALSE(Texture{});
     EXPECT_TRUE(texture);
     EXPECT_EQ(Texture{texture}, texture);
     EXPECT_NE(makeTexture(*renderer), texture);
-    EXPECT_TRUE(renderer->createMaterial(
-        {.shader = "Textured", .textures = std::vector<Texture>(gMaxTextures, texture)}));
-    EXPECT_THROW(
-        std::ignore = renderer->createMaterial(
-            {.shader = "Textured", .textures = std::vector<Texture>(gMaxTextures + 1u, texture)}),
-        std::invalid_argument);
-    EXPECT_THROW(std::ignore =
-                     renderer->createMaterial({.shader = "Textured", .textures = {texture, {}}}),
-                 std::invalid_argument);
-
-    // The shader reads 128 bytes of push constants, more than the 84 the renderer pushes, however
-    // many parameters the material has.
-    const WideShaderDirectory wide;
-    auto                      wideRenderer = makeRenderer(wide.path());
-    EXPECT_THROW(std::ignore = wideRenderer->createMaterial({.shader = "Wide"}),
-                 std::invalid_argument);
-    EXPECT_THROW(std::ignore = wideRenderer->createMaterial(
-                     {.shader = "Wide", .parameters = std::vector<std::byte>(64u)}),
-                 std::invalid_argument);
 }
 
 // The score comes from the gtest assertion macros.
@@ -1308,7 +1312,7 @@ TEST_F(RendererTest, meshBufferOutlivesMeshWhileFrameInFlight)
         }));
 
     renderer->addRenderable(std::make_shared<LambdaRenderable>(
-        [mesh = std::move(mesh), material = renderer->createMaterial({.shader = "WorldSpace"})](
+        [mesh = std::move(mesh), material = makeMaterial(*renderer, "WorldSpace")](
             const FrameContext& /*context*/, RenderQueue& queue) mutable
         {
             // The first frame draws the mesh and lets go of it; later frames draw nothing.
@@ -1403,9 +1407,8 @@ TEST_F(RendererTest, parameterBlockOutlivesMaterialWhileFrameInFlight)
 
     std::weak_ptr<Graphics::Vulkan::HeapBuffer> weakBlock;
     {
-        Material material = renderer->createMaterial(
-            {.shader = "WorldSpace", .parameters = std::vector<std::byte>(gTintSize)});
-        weakBlock = HandleTestAccess::data(material).block;
+        Material material = makeMaterial(*renderer, "WorldSpace");
+        weakBlock         = HandleTestAccess::data(material).block;
         renderer->addRenderable(std::make_shared<LambdaRenderable>(
             [mesh = makeMesh(*renderer, compatibleLayout()), material = std::move(material)](
                 const FrameContext& /*context*/, RenderQueue& queue) mutable
@@ -1513,7 +1516,7 @@ TEST_F(RendererTest, pendingUploadsSurviveRenderThreadFailureAndRestart)
 {
     auto renderer = makeRenderer();
     auto texture  = makeTexture(*renderer);
-    auto material = renderer->createMaterial({.shader = "WorldSpace"});
+    auto material = makeMaterial(*renderer, "WorldSpace");
     auto bad      = makeMesh(*renderer, incompatibleLayout());
     auto good     = makeMesh(*renderer, compatibleLayout());
 
@@ -1643,6 +1646,371 @@ TEST_F(RendererTest, resizeRecreatesAtRequestedExtent)
         // stop() joined the render thread.
         EXPECT_EQ(RendererTestAccess::swapchainExtent(*renderer),
                   (Extent{.width = size, .height = size}));
+    }
+}
+
+namespace
+{
+/** RGBA, one byte each: what DrawRecording draws into a target of this format. */
+constexpr vk::Format gReadbackFormat = vk::Format::eR8G8B8A8Unorm;
+
+/**
+ * Draws @p packet the way the render thread does (the Frame block, the push data, the pipelines,
+ * the resources), but into a color target of @p size by @p size pixels instead of a swapchain
+ * image, which no test can read, and returns its pixels, rows from the top. The uploads that the
+ * renderer holds are recorded first, on the same queue. The renderer must not be running.
+ */
+std::vector<std::byte>
+drawToPixels(Renderer& renderer, const FramePacket& packet, std::uint32_t size)
+{
+    using namespace Graphics::Vulkan;
+
+    const DevicePtr                        device    = RendererTestAccess::device(renderer);
+    const auto                             queue     = device->getGraphicsQueue();
+    const auto                             heap      = RendererTestAccess::heap(renderer);
+    const auto                             fencePool = FencePool::create(device);
+    const auto                             pool      = device->createCommandBufferPool();
+    const vk::Extent2D                     extent{.width = size, .height = size};
+    const std::vector<GraphicsPipelinePtr> pipelines =
+        RendererTestAccess::pipelines(renderer, packet, gReadbackFormat);
+
+    {
+        auto recorder = pool->record();
+        RendererTestAccess::recordPendingUploads(renderer, recorder, queue->familyIndex);
+        auto executable = recorder.finish();
+        queue->submit(*fencePool, {.commandBuffers = std::span{&executable, 1u}});
+        pool->reset();
+    }
+
+    const RenderTargetPtr target = device->createRenderTarget(
+        extent,
+        gReadbackFormat,
+        vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc);
+    const HeapBufferPtr frameBlock = device->createHeapBuffer(heap, sizeof(FrameBlock));
+    DrawRecording::writeFrameBlock(*frameBlock, packet, extent);
+
+    const vk::DeviceSize bytes = vk::DeviceSize{size} * size * 4u;
+    const BufferPtr      readback =
+        device->createBuffer({.size = bytes, .usage = vk::BufferUsageFlagBits::eTransferDst},
+                             {.flags = AllocationFlag::eHostSequentialWrite});
+
+    constexpr vk::ImageSubresourceRange kColor{
+        .aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = 1u, .layerCount = 1u};
+
+    auto recorder = pool->record();
+    recorder.bindDescriptorHeap(heap);
+    recorder.setImageBarrier(target,
+                             {.srcStageMask  = vk::PipelineStageFlagBits2::eTopOfPipe,
+                              .dstStageMask  = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                              .dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+                              .oldLayout     = vk::ImageLayout::eUndefined,
+                              .newLayout     = vk::ImageLayout::eColorAttachmentOptimal,
+                              .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                              .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                              .subresourceRange    = kColor});
+    {
+        auto pass = recorder.beginRendering(
+            {{.attachment = target,
+              .loadOp     = vk::AttachmentLoadOp::eClear,
+              .storeOp    = vk::AttachmentStoreOp::eStore,
+              .clearValue = vk::ClearColorValue{std::array{0.0f, 0.0f, 0.0f, 1.0f}}}});
+        DrawRecording::recordDraws(pass, packet, pipelines, frameBlock, extent);
+    }
+    recorder.setImageBarrier(target,
+                             {.srcStageMask  = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                              .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+                              .dstStageMask  = vk::PipelineStageFlagBits2::eCopy,
+                              .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+                              .oldLayout     = vk::ImageLayout::eColorAttachmentOptimal,
+                              .newLayout     = vk::ImageLayout::eTransferSrcOptimal,
+                              .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                              .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                              .subresourceRange    = kColor});
+    recorder.copyImageToBuffer(target, readback);
+    recorder.setBufferBarrier(readback,
+                              {.srcStageMask        = vk::PipelineStageFlagBits2::eCopy,
+                               .srcAccessMask       = vk::AccessFlagBits2::eTransferWrite,
+                               .dstStageMask        = vk::PipelineStageFlagBits2::eHost,
+                               .dstAccessMask       = vk::AccessFlagBits2::eHostRead,
+                               .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                               .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                               .offset              = 0u,
+                               .size                = VK_WHOLE_SIZE});
+    auto executable = recorder.finish();
+    queue->submit(*fencePool, {.commandBuffers = std::span{&executable, 1u}});
+    // Waits the fence of the submit.
+    pool->reset();
+
+    // Read through mapForWrite(), which is meant for writing: legal on lavapipe, whose host
+    // memory is coherent.
+    const auto mapping = readback->mapForWrite();
+    const auto pixels  = mapping.bytes().first(bytes);
+
+    return {pixels.begin(), pixels.end()};
+}
+
+/** A quad of side 2 * @p half around the origin in the plane z = 0, two floats of position and
+ *  two of uv per vertex, drawn through indices. */
+Mesh
+makeQuad(Renderer& renderer, float half)
+{
+    const std::array<float, 16>        vertices{-half,
+                                                -half,
+                                                0.0f,
+                                                0.0f,
+                                                -half,
+                                                half,
+                                                0.0f,
+                                                1.0f,
+                                                half,
+                                                half,
+                                                1.0f,
+                                                1.0f,
+                                                half,
+                                                -half,
+                                                1.0f,
+                                                0.0f};
+    const std::array<std::uint32_t, 6> indices{0u, 1u, 2u, 2u, 3u, 0u};
+
+    return renderer.createMesh({.vertices   = std::as_bytes(std::span{vertices}),
+                                .indices    = indices,
+                                .stride     = gTexturedStride,
+                                .attributes = texturedLayout()});
+}
+
+/** The camera that looks at the plane z = 0 from the distance of 20, where the near plane is not
+ *  in the way. */
+CameraView
+cameraBeforeThePlane()
+{
+    constexpr float kDistance = 20.0f;
+
+    return CameraView{.position = {0.0f, 0.0f, -kDistance}};
+}
+
+/** The brightest value of a color channel. */
+constexpr std::uint8_t gFull = 255u;
+
+/** Whether the pixel @p index of @p pixels has these colors. */
+bool
+pixelIs(const std::vector<std::byte>& pixels,
+        std::size_t                   index,
+        std::uint8_t                  red,
+        std::uint8_t                  green,
+        std::uint8_t                  blue)
+{
+    return pixels[(index * 4u) + 0u] == std::byte{red} &&
+           pixels[(index * 4u) + 1u] == std::byte{green} &&
+           pixels[(index * 4u) + 2u] == std::byte{blue};
+}
+} // namespace
+
+/**
+ * A texture is drawn with the sampler its filter names: the material packs the filter as the
+ * sampler index of its TextureRef and the shader reads the sampler by it. A 2x2 checkerboard,
+ * magnified, has only its two colors with the nearest filter, and the blend between them with the
+ * linear one. Without the sampler index in the TextureRef both would be the same picture.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, textureFilterSelectsTheSamplerOfTheDraw)
+{
+    constexpr std::uint32_t kSize = 32u;
+    constexpr float         kHalf = static_cast<float>(kSize) / 2.0f;
+
+    auto renderer = makeRenderer();
+
+    const std::array<std::uint8_t, 16> checkerboard{
+        255, 255, 255, 255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 255};
+    const auto draw = [&](Filter filter)
+    {
+        const Texture texture =
+            renderer->createTexture({.pixels = std::as_bytes(std::span{checkerboard}),
+                                     .width  = 2u,
+                                     .height = 2u,
+                                     .filter = filter});
+        FramePacket packet;
+        packet.draws.setCamera(cameraBeforeThePlane());
+        packet.draws.submit(makeQuad(*renderer, kHalf),
+                            makeTexturedMaterial(*renderer, texture),
+                            Math::Matrix4x4f{1.0f});
+
+        return drawToPixels(*renderer, packet, kSize);
+    };
+
+    const std::vector<std::byte> nearest = draw(Filter::eNearest);
+    const std::vector<std::byte> linear  = draw(Filter::eLinear);
+
+    std::size_t nearestBlend = 0u;
+    std::size_t linearBlend  = 0u;
+    std::size_t light        = 0u;
+    for (std::size_t pixel = 0u; pixel < std::size_t{kSize} * kSize; ++pixel)
+    {
+        const bool white = pixelIs(nearest, pixel, gFull, gFull, gFull);
+        const bool black = pixelIs(nearest, pixel, 0u, 0u, 0u);
+        nearestBlend += (white || black) ? 0u : 1u;
+        light += white ? 1u : 0u;
+        linearBlend +=
+            (pixelIs(linear, pixel, gFull, gFull, gFull) || pixelIs(linear, pixel, 0u, 0u, 0u))
+                ? 0u
+                : 1u;
+    }
+
+    // The quad covers the target, and half of it is light.
+    EXPECT_EQ(nearestBlend, 0u);
+    EXPECT_EQ(light, std::size_t{kSize} * kSize / 2u);
+    EXPECT_GT(linearBlend, 0u);
+    EXPECT_NE(nearest, linear);
+}
+
+/**
+ * The render thread writes the Frame block of every frame into the buffer of the frame's slot: with
+ * two frames in flight there are two buffers, with two heap indices, and each holds what its last
+ * frame saw: the time and the time between frames of the packet, the size of the swapchain image,
+ * and the matrices and the position of the camera. The camera is one for which a block that swaps
+ * the view and the projection differs from the right one.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, renderedFramesWriteTheFrameBlockOfTheirSlot)
+{
+    constexpr int kFrames = 6;
+
+    auto             renderer = makeRenderer();
+    const CameraView camera{.position = {10.0f, 20.0f, -30.0f}};
+    renderer->addRenderable(std::make_shared<LambdaRenderable>(
+        [camera](const FrameContext& /*context*/, RenderQueue& queue)
+        {
+            queue.setCamera(camera);
+        }));
+
+    renderer->start();
+    for (int frame = 0; frame < kFrames; ++frame)
+    {
+        // Frame i: the time is 1 + i, the time between frames is (1 + i) / 100.
+        renderer->submitFrame(
+            {.timeSeconds = 1.0 + frame, .deltaSeconds = static_cast<float>(1.0 + frame) / 100.0f});
+    }
+    EXPECT_FALSE(renderer->stop());
+
+    const Extent extent = RendererTestAccess::swapchainExtent(*renderer);
+    ASSERT_NE(camera.view(), camera.projection(extent));
+
+    const auto blocks = RendererTestAccess::frameBlocks(*renderer);
+    ASSERT_EQ(blocks.size(), 2u);
+    EXPECT_NE(blocks[0], blocks[1]);
+    EXPECT_NE(blocks[0]->heapIndex(), blocks[1]->heapIndex());
+
+    std::vector<float> times;
+    for (const auto& buffer : blocks)
+    {
+        FrameBlock block{};
+        {
+            auto mapping = buffer->mapForWrite();
+            std::ranges::copy(mapping.bytes().first(sizeof(block)),
+                              std::as_writable_bytes(std::span{&block, 1u}).begin());
+        }
+
+        EXPECT_EQ(block.view, camera.view());
+        EXPECT_EQ(block.projection, camera.projection(extent));
+        EXPECT_EQ(block.viewProjection, camera.viewProjection(extent));
+        EXPECT_EQ(block.cameraPosition, Math::Vector4f(camera.position, 1.0f));
+        EXPECT_EQ(
+            block.viewport,
+            Math::Vector2f(static_cast<float>(extent.width), static_cast<float>(extent.height)));
+
+        // The time of one of the frames, with the time between frames of the same frame.
+        const float frame = block.timeSeconds - 1.0f;
+        EXPECT_GE(frame, 0.0f);
+        EXPECT_LT(frame, static_cast<float>(kFrames));
+        EXPECT_EQ(frame, std::floor(frame));
+        EXPECT_EQ(block.deltaSeconds, block.timeSeconds / 100.0f);
+        times.push_back(block.timeSeconds);
+    }
+    EXPECT_NE(times[0], times[1]);
+}
+
+/**
+ * The commands that recordDraws() records retain the Frame block that the draws read by its heap
+ * index: the block outlives the caller's last reference, which a frame drops when the next one
+ * starts, and dies when the pool of its command buffer is reset.
+ */
+TEST_F(RendererTest, recordedDrawsRetainTheFrameBlockUntilThePoolIsReset)
+{
+    using namespace Graphics::Vulkan;
+
+    auto                  renderer  = makeRenderer();
+    const DevicePtr       device    = RendererTestAccess::device(*renderer);
+    const auto            heap      = RendererTestAccess::heap(*renderer);
+    const auto            queue     = device->getGraphicsQueue();
+    const auto            fencePool = FencePool::create(device);
+    const auto            pool      = device->createCommandBufferPool();
+    const vk::Extent2D    extent{.width = 8u, .height = 8u};
+    const RenderTargetPtr target = device->createRenderTarget(
+        extent, gReadbackFormat, vk::ImageUsageFlagBits::eColorAttachment);
+
+    HeapBufferPtr                   frameBlock = device->createHeapBuffer(heap, sizeof(FrameBlock));
+    const std::weak_ptr<HeapBuffer> weak       = frameBlock;
+    const FramePacket               packet;
+
+    auto recorder = pool->record();
+    recorder.bindDescriptorHeap(heap);
+    recorder.setImageBarrier(target,
+                             {.srcStageMask  = vk::PipelineStageFlagBits2::eTopOfPipe,
+                              .dstStageMask  = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                              .dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+                              .oldLayout     = vk::ImageLayout::eUndefined,
+                              .newLayout     = vk::ImageLayout::eColorAttachmentOptimal,
+                              .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                              .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                              .subresourceRange    = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                                      .levelCount = 1u,
+                                                      .layerCount = 1u}});
+    {
+        auto pass = recorder.beginRendering({{.attachment = target}});
+        DrawRecording::recordDraws(pass, packet, {}, frameBlock, extent);
+    }
+    frameBlock.reset();
+    auto executable = recorder.finish();
+    EXPECT_FALSE(weak.expired());
+
+    queue->submit(*fencePool, {.commandBuffers = std::span{&executable, 1u}});
+    EXPECT_FALSE(weak.expired());
+
+    pool->reset();
+    EXPECT_TRUE(weak.expired());
+}
+
+/**
+ * The Frame block that the renderer writes reaches the shader: the shader paints the time, the time
+ * between frames and the width of the viewport as the red, green and blue of every pixel. The time
+ * of the packet is the one the pixels show, so a later packet shows a later time.
+ */
+TEST_F(RendererTest, frameBlockTimeAndViewportReachTheShader)
+{
+    constexpr std::uint32_t kSize = 32u;
+
+    auto           renderer = makeRenderer();
+    const Mesh     quad     = makeQuad(*renderer, 64.0f);
+    const Material material = makeMaterial(*renderer, "FrameTime");
+
+    const auto draw = [&](double timeSeconds, float deltaSeconds)
+    {
+        FramePacket packet{.frame = {.timeSeconds = timeSeconds, .deltaSeconds = deltaSeconds}};
+        packet.draws.setCamera(cameraBeforeThePlane());
+        packet.draws.submit(quad, material, Math::Matrix4x4f{1.0f});
+
+        return drawToPixels(*renderer, packet, kSize);
+    };
+
+    // 0.2 of 255 is 51, 0.4 is 102 and 0.6 is 153; a viewport of 32 over 32 is 1, which is 255.
+    const std::vector<std::byte> first  = draw(0.2, 0.4f);
+    const std::vector<std::byte> second = draw(0.6, 0.0f);
+
+    for (std::size_t pixel = 0u; pixel < std::size_t{kSize} * kSize; ++pixel)
+    {
+        ASSERT_TRUE(pixelIs(first, pixel, 51u, 102u, gFull)) << "pixel " << pixel;
+        ASSERT_TRUE(pixelIs(second, pixel, 153u, 0u, gFull)) << "pixel " << pixel;
     }
 }
 } // namespace VOG::Tests

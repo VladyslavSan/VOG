@@ -1,14 +1,18 @@
 #include "VOG/Engine/Renderer/Renderer.hpp"
 
 #include <VOG/Common/Assert.hpp>
+#include "VOG/Engine/Renderer/DrawPushData.hpp"
+#include "VOG/Engine/Renderer/DrawRecording.hpp"
+#include "VOG/Engine/Renderer/FrameBlocks.hpp"
 #include "VOG/Engine/Renderer/FramePacketQueue.hpp"
 #include "VOG/Engine/Renderer/MaterialDefinition.hpp"
 #include "VOG/Engine/Renderer/MeshDefinition.hpp"
 #include "VOG/Engine/Renderer/PipelineCache.hpp"
+#include "VOG/Engine/Renderer/ShaderDefinition.hpp"
+#include "VOG/Engine/Renderer/ShaderLibrary.hpp"
 #include "VOG/Engine/Renderer/TextureDefinition.hpp"
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Frame/FrameObjectManager.hpp>
-#include <VOG/Graphics/ShaderProgramCache.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/AcquiredSwapchainImage.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
@@ -68,72 +72,25 @@ toVk(Extent extent)
  */
 constexpr std::uint32_t gDescriptorHeapSlots = 4096u;
 
-/** The one sampler of the sampler heap, at index 0. */
-const vk::SamplerCreateInfo gLinearRepeatSampler{.magFilter    = vk::Filter::eLinear,
-                                                 .minFilter    = vk::Filter::eLinear,
-                                                 .mipmapMode   = vk::SamplerMipmapMode::eLinear,
-                                                 .addressModeU = vk::SamplerAddressMode::eRepeat,
-                                                 .addressModeV = vk::SamplerAddressMode::eRepeat,
-                                                 .addressModeW = vk::SamplerAddressMode::eRepeat,
-                                                 .maxLod       = vk::LodClampNone};
-
-/**
- * Records the pipeline and buffer binds of one rendering pass, and leaves out a bind that would
- * repeat the previous bind of its kind in the pass. The pass is one command buffer, and the earlier
- * bind already retained the resource in it until the fence signals, so a skipped bind loses no
- * retention. That also makes comparing addresses sound: this command buffer retains every bound
- * object, so no new allocation can reuse an address while the pass records. A non-indexed draw
- * binds no index buffer and leaves the bound one as it was.
- */
-class PassBinder
+/** A sampler of the sampler heap: one filter for magnification and minification, repeating. */
+constexpr vk::SamplerCreateInfo
+makeSampler(vk::Filter filter)
 {
-public:
-    explicit PassBinder(Graphics::Vulkan::CommandBufferRecorder::RenderingPass& pass)
-        : mPass{pass}
-    {
-    }
+    return {.magFilter    = filter,
+            .minFilter    = filter,
+            .mipmapMode   = vk::SamplerMipmapMode::eLinear,
+            .addressModeU = vk::SamplerAddressMode::eRepeat,
+            .addressModeV = vk::SamplerAddressMode::eRepeat,
+            .addressModeW = vk::SamplerAddressMode::eRepeat,
+            .maxLod       = vk::LodClampNone};
+}
 
-    void
-    pipeline(const Graphics::Vulkan::GraphicsPipelinePtr& pipeline)
-    {
-        if (pipeline.get() != mPipeline)
-        {
-            mPass.bindPipeline(pipeline);
-            mPipeline = pipeline.get();
-        }
-    }
+/** The samplers of the sampler heap; the index of a sampler is the value of its Filter, which
+ *  the include VOG/Draw.glsl documents: 0 linear, 1 nearest. */
+constexpr std::array gSamplers{makeSampler(vk::Filter::eLinear), makeSampler(vk::Filter::eNearest)};
+static_assert(std::to_underlying(Filter::eLinear) == 0u &&
+              std::to_underlying(Filter::eNearest) == 1u);
 
-    void
-    vertexBuffer(const Graphics::Vulkan::BufferPtr& buffer)
-    {
-        if (buffer.get() != mVertexBuffer)
-        {
-            mPass.bindVertexBuffers(0u, {{.buffer = buffer, .offset = 0u}});
-            mVertexBuffer = buffer.get();
-        }
-    }
-
-    void
-    indexBuffer(const Graphics::Vulkan::BufferPtr& buffer, vk::DeviceSize offset)
-    {
-        // Untested: every mesh owns its buffer, so the same buffer is always at the same offset;
-        // meshes that share a buffer would reach the offset comparison.
-        if (buffer.get() != mIndexBuffer || offset != mIndexOffset)
-        {
-            mPass.bindIndexBuffer(buffer, offset, vk::IndexType::eUint32);
-            mIndexBuffer = buffer.get();
-            mIndexOffset = offset;
-        }
-    }
-
-private:
-    Graphics::Vulkan::CommandBufferRecorder::RenderingPass& mPass;
-
-    const Graphics::Vulkan::GraphicsPipeline* mPipeline     = nullptr;
-    const Graphics::Vulkan::Buffer*           mVertexBuffer = nullptr;
-    const Graphics::Vulkan::Buffer*           mIndexBuffer  = nullptr;
-    vk::DeviceSize                            mIndexOffset  = 0u;
-};
 } // namespace
 
 Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& config)
@@ -149,9 +106,8 @@ Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& con
     , mGraphicsQueue{mVulkanDevice->getGraphicsQueue()}
     , mTransferQueue{mVulkanDevice->getTransferQueue()}
     , mFencePool{Graphics::Vulkan::FencePool::create(mVulkanDevice)}
-    , mShaderProgramCache{std::make_shared<Graphics::ShaderProgramCache>(mVulkanDevice,
-                                                                         config.shaderSourcePath)}
-    , mHeap{mVulkanDevice->createDescriptorHeap(gDescriptorHeapSlots, {&gLinearRepeatSampler, 1u})}
+    , mShaderLibrary{std::make_unique<ShaderLibrary>(mVulkanDevice, config.shaderSourcePath)}
+    , mHeap{mVulkanDevice->createDescriptorHeap(gDescriptorHeapSlots, gSamplers)}
     , mSwapchain{mVulkanDevice->createSwapchain(Graphics::Vulkan::Swapchain::SwapchainParameters{
           .framesInFlight = mFramesInFlight,
           .surface        = surfaceHandle,
@@ -159,6 +115,7 @@ Renderer::Renderer(const Common::SurfaceHandle& surfaceHandle, const Config& con
       })}
     , mFrameObjectManager{std::make_unique<Graphics::Frame::FrameObjectManager>(
           mVulkanDevice, frameSlotCount(mFramesInFlight, mSwapchain->getImageCount()), 1u)}
+    , mFrameBlocks{std::make_unique<FrameBlocks>(mVulkanDevice, mHeap)}
     , mRequestedExtent{config.extent}
     , mAppliedExtent{config.extent}
     , mUploadTimeline{mVulkanDevice->createTimelineSemaphore()}
@@ -370,62 +327,54 @@ Renderer::createTexture(const TextureDescription& description)
     }
 
     return Texture{std::make_shared<const Detail::TextureData>(
-        Detail::TextureData{.texture = std::move(texture)})};
+        Detail::TextureData{.texture = std::move(texture), .filter = description.filter})};
+}
+
+Shader
+Renderer::getShader(std::string_view name) const
+{
+    return Shader{mShaderLibrary->get(name)};
 }
 
 Material
 Renderer::createMaterial(MaterialDescription description)
 {
-    if (description.parameters.size() > gMaxParametersSize)
+    const std::string context = description.name.empty()
+                                  ? std::string{}
+                                  : std::format("Material \"{}\": ", description.name);
+
+    if (!description.shader)
     {
-        throw std::invalid_argument{
-            std::format("A material takes at most {} bytes of parameters; got {}.",
-                        gMaxParametersSize,
-                        description.parameters.size())};
+        throw std::invalid_argument{std::format(
+            "{}A material needs a shader; get it from Renderer::getShader().", context)};
     }
-    if (description.textures.size() > gMaxTextures)
+    const std::shared_ptr<const Detail::ShaderInfo>& shader = description.shader.mData;
+
+    const std::vector<std::byte> bytes =
+        packMaterialBlock(*shader, description.parameters, context);
+
+    // The parameters are written once, here: nothing writes the block after the material exists.
+    Graphics::Vulkan::HeapBufferPtr block = mVulkanDevice->createHeapBuffer(mHeap, bytes.size());
     {
-        throw std::invalid_argument{std::format("A material takes at most {} textures; got {}.",
-                                                gMaxTextures,
-                                                description.textures.size())};
-    }
-    if (std::ranges::any_of(description.textures,
-                            [](const Texture& texture)
-                            {
-                                return !texture;
-                            }))
-    {
-        throw std::invalid_argument{"A material texture is empty."};
+        auto mapping = block->mapForWrite();
+        std::ranges::copy(bytes, mapping.bytes().begin());
     }
 
-    Graphics::Vulkan::ShaderProgramPtr program = mShaderProgramCache->get(description.shader);
-
-    for (const Graphics::Vulkan::Shader::Reflection::BlockMember& member : program->pushConstants)
+    std::vector<Texture> textures;
+    for (const MaterialParameter& parameter : description.parameters)
     {
-        if (std::size_t{member.offset} + member.size > gPushDataSize)
+        if (const auto* texture = std::get_if<Texture>(&parameter.value))
         {
-            throw std::invalid_argument{std::format(
-                "Shader \"{}\" has a push-constant range [{}, {}) past the {} bytes of push data "
-                "that the renderer pushes.",
-                description.shader,
-                member.offset,
-                member.offset + member.size,
-                gPushDataSize)};
+            textures.push_back(*texture);
         }
     }
 
-    // The parameters are written once, here: nothing writes the block after the material exists.
-    Graphics::Vulkan::HeapBufferPtr block =
-        mVulkanDevice->createHeapBuffer(mHeap, description.parameters.size());
-    {
-        auto mapping = block->mapForWrite();
-        std::ranges::copy(description.parameters, mapping.bytes().begin());
-    }
-
     return Material{std::make_shared<const Detail::MaterialData>(
-        Detail::MaterialData{.program  = std::move(program),
-                             .block    = std::move(block),
-                             .textures = std::move(description.textures)})};
+        Detail::MaterialData{.shader     = shader,
+                             .block      = std::move(block),
+                             .textures   = std::move(textures),
+                             .parameters = std::move(description.parameters),
+                             .state      = description.state})};
 }
 
 void
@@ -446,7 +395,7 @@ Renderer::makePacket(const FrameContext& frameContext)
 
     // A fresh vector of draws per frame, reuse its capacity if profiling shows the
     // allocation.
-    FramePacket packet;
+    FramePacket packet{.frame = frameContext};
     for (const std::shared_ptr<Renderable>& renderable : mRenderables)
     {
         renderable->onDraw(frameContext, packet.draws);
@@ -487,7 +436,7 @@ Renderer::applyExtent(Extent requested)
 }
 
 void
-Renderer::renderFrame(FramePacket packet)
+Renderer::renderFrame(const FramePacket& packet)
 {
     using namespace VOG::Graphics::Vulkan;
 
@@ -525,9 +474,12 @@ Renderer::renderFrame(FramePacket packet)
     const auto& acquired = acquireResult.acquired;
     VOG_ASSERT_MSG(acquired, "eReady acquire must provide AcquiredSwapchainImage.");
 
-    const vk::Extent2D     extent = acquired->getExtent2D();
-    const Math::Matrix4x4f viewProjection =
-        packet.draws.mCamera.viewProjection({.width = extent.width, .height = extent.height});
+    const vk::Extent2D extent = acquired->getExtent2D();
+
+    // The slot's fences were waited in prepareNextFrame(), so no draw of an earlier frame reads
+    // this buffer any more.
+    const Graphics::Vulkan::HeapBufferPtr frameBlock = mFrameBlocks->of(frame);
+    DrawRecording::writeFrameBlock(*frameBlock, packet, extent);
 
     // Advance the frame slot only when we will actually submit: skip/out-of-date must not burn a
     // fence-keyed release slot. Its pools were reset in prepareNextFrame().
@@ -595,67 +547,7 @@ Renderer::renderFrame(FramePacket packet)
                                                   .storeOp    = vk::AttachmentStoreOp::eStore,
                                                   .clearValue = vk::ClearColorValue{gClearColor}}});
 
-            pass.setViewport(0,
-                             {
-                                 {
-                                     .x        = 0.0f,
-                                     .y        = 0.0f,
-                                     .width    = static_cast<float>(extent.width),
-                                     .height   = static_cast<float>(extent.height),
-                                     .minDepth = 0.0,
-                                     .maxDepth = 1.0,
-                                 },
-                             });
-            pass.setScissor(0,
-                            {
-                                {
-                                    .offset = {.x = 0, .y = 0},
-                                    .extent = {.width = extent.width, .height = extent.height},
-                                },
-                            });
-
-            PassBinder binder{pass};
-
-            for (std::size_t i = 0u; i < packet.draws.mDraws.size(); ++i)
-            {
-                const RenderQueue::Draw&    draw     = packet.draws.mDraws[i];
-                const Detail::MeshData&     mesh     = *draw.mesh.mData;
-                const Detail::MaterialData& material = *draw.material.mData;
-
-                // The matrix, then the heap indices of the parameter block and the textures;
-                // createMaterial checked that the shader's ranges end inside what is filled here.
-                const Math::Matrix4x4f               mvp = viewProjection * draw.world;
-                std::array<std::byte, gPushDataSize> pushData{};
-                std::memcpy(pushData.data(), &mvp, sizeof(mvp));
-                const std::uint32_t blockIndex = material.block->heapIndex();
-                std::memcpy(
-                    pushData.data() + gMaterialIndexOffset, &blockIndex, sizeof(blockIndex));
-
-                binder.pipeline(mPipelines[i]);
-                pass.useResource(material.block);
-                for (std::size_t textureIndex = 0u; textureIndex < material.textures.size();
-                     ++textureIndex)
-                {
-                    const std::shared_ptr<Graphics::Vulkan::Texture>& texture =
-                        material.textures[textureIndex].mData->texture;
-                    const std::uint32_t index = texture->heapIndex();
-                    std::memcpy(pushData.data() + gTexturesOffset + (textureIndex * sizeof(index)),
-                                &index,
-                                sizeof(index));
-                    pass.useResource(texture);
-                }
-                pass.pushData(0u, pushData);
-                binder.vertexBuffer(mesh.buffer);
-                if (mesh.indexCount == 0u)
-                {
-                    pass.draw(mesh.vertexCount, 1, 0, 0);
-                }
-                else
-                {
-                    binder.indexBuffer(mesh.buffer, mesh.indexOffset);
-                    pass.drawIndexed(mesh.indexCount, 1, 0, 0, 0);
-                }
-            }
+            DrawRecording::recordDraws(pass, packet, mPipelines, frameBlock, extent);
         }
 
         recorder.setImageBarrier(
@@ -753,7 +645,7 @@ Renderer::start()
                                  {
                                      break;
                                  }
-                                 renderFrame(std::move(*packet));
+                                 renderFrame(*packet);
                              }
                              exit.set_value();
                          }

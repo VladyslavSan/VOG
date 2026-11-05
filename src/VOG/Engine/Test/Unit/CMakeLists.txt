@@ -9,17 +9,21 @@ target_sources(VOG.Engine.Unit
         CameraViewTest.cpp
         FrameContextTest.cpp
         FramePacketQueueTest.cpp
+        MaterialTest.cpp
         PipelineCacheTest.cpp
         RegistryTest.cpp
         RenderQueueTest.cpp
         RendererTest.cpp
         SceneTest.cpp
+        TestShaders.hpp
 )
 
-# The renderer compiles every shader listed in config.json when it is constructed.
+# The renderer compiles every shader of its shader directory when it is constructed. The tests
+# copy the shaders of the engine and their own into a directory of their own (TestShaders.hpp).
 target_compile_definitions(VOG.Engine.Unit
     PRIVATE
-        VOG_TEST_SHADER_PATH="${PROJECT_SOURCE_DIR}/src/VOG/Graphics/resources/shaders"
+        VOG_ENGINE_SHADER_PATH="${PROJECT_SOURCE_DIR}/src/VOG/Engine/resources/shaders"
+        VOG_TEST_SHADER_SOURCE_PATH="${PROJECT_SOURCE_DIR}/src/VOG/Engine/Test/resources/shaders"
 )
 
 # The tests reach behind the public API: the private definitions of Mesh and Material, the

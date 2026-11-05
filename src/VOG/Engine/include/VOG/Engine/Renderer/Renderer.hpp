@@ -5,9 +5,11 @@
 #include <VOG/Engine/Renderer/Material.hpp>
 #include <VOG/Engine/Renderer/Mesh.hpp>
 #include <VOG/Engine/Renderer/Renderable.hpp>
+#include <VOG/Engine/Renderer/Shader.hpp>
 #include <VOG/Engine/Renderer/Texture.hpp>
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <exception>
@@ -16,16 +18,13 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <variant>
 #include <vector>
-
-namespace VOG::Graphics
-{
-class ShaderProgramCache;
-} // namespace VOG::Graphics
 
 namespace VOG::Graphics::Frame
 {
@@ -48,9 +47,17 @@ class TimelineSemaphore;
 
 namespace VOG::Engine
 {
+class FrameBlocks;
 class FramePacketQueue;
 class PipelineCache;
+class ShaderLibrary;
 struct FramePacket;
+
+namespace Detail
+{
+class ShaderInfo;
+struct MaterialMember;
+} // namespace Detail
 
 /**
  * Owns the Vulkan objects of one window and the thread that renders into it.
@@ -82,6 +89,11 @@ public:
 
         std::uint8_t framesInFlight = 1u;
 
+        /**
+         * The shader directory: `Name.vert.glsl` and `Name.frag.glsl` for every shader, and the
+         * includes of both in the subdirectory `include`. The engine's own shaders and its include
+         * VOG/Draw.glsl are in src/VOG/Engine/resources/shaders.
+         */
         std::filesystem::path shaderSourcePath;
 
         /**
@@ -160,11 +172,19 @@ public:
     [[nodiscard]] Texture createTexture(const TextureDescription& description);
 
     /**
-     * Looks up the shader of @p description and copies the parameters into a uniform block. Any
-     * thread: the shader cache is only read, and the allocator is internally synchronized.
-     * @throws std::invalid_argument for an unknown shader, more than 16384 bytes of parameters,
-     *         more than 4 textures, an empty texture, or a push-constant range of the shader that
-     *         ends past the 84 bytes the renderer pushes.
+     * The shader @p name of the shader directory, which was compiled and checked when the
+     * Renderer was made. Any thread: the shaders are only read.
+     * @throws std::invalid_argument if the directory has no shader of that name.
+     */
+    [[nodiscard]] Shader getShader(std::string_view name) const;
+
+    /**
+     * Checks the parameters of @p description against the Material block of its shader and copies
+     * them into a uniform block, written once. Any thread: the shaders are only read, and the
+     * allocator is internally synchronized.
+     * @throws std::invalid_argument if the shader is empty, a parameter is not a member of the
+     *         Material block, is given twice, has another type than the member or is an empty
+     *         texture, or a member has no value. A name in the description starts the message.
      * @throws std::runtime_error if the renderer's descriptor heap is full.
      */
     [[nodiscard]] Material createMaterial(MaterialDescription description);
@@ -228,6 +248,17 @@ private:
      *  camera view they set as a packet. */
     FramePacket makePacket(const FrameContext& frameContext);
 
+    /** The bytes of the Material block of @p shader holding @p parameters, which are checked first;
+     *  @p context starts an error message. See createMaterial(). */
+    static std::vector<std::byte> packMaterialBlock(const Detail::ShaderInfo&          shader,
+                                                    std::span<const MaterialParameter> parameters,
+                                                    std::string_view                   context);
+
+    /** Writes @p value at the offset of @p member in @p block. */
+    static void writeMaterialValue(std::span<std::byte>          block,
+                                   const Detail::MaterialMember& member,
+                                   const MaterialValue&          value);
+
     /** Render thread. Finds the pipeline of each draw of @p draws in mPipelines. */
     void resolvePipelines(const RenderQueue& draws);
 
@@ -235,7 +266,7 @@ private:
     bool applyExtent(Extent requested);
 
     /** Render thread. One frame; an exception ends the thread. */
-    void renderFrame(FramePacket packet);
+    void renderFrame(const FramePacket& packet);
 
     /** The bytes of a mesh or of a texture, waiting for the render thread to copy them from
      *  staging into the buffer or image, which are preferably device-local. */
@@ -254,10 +285,13 @@ private:
     std::shared_ptr<const Graphics::Vulkan::Queue>       mGraphicsQueue;
     std::shared_ptr<const Graphics::Vulkan::Queue>       mTransferQueue;
     std::shared_ptr<Graphics::Vulkan::FencePool>         mFencePool;
-    std::shared_ptr<Graphics::ShaderProgramCache>        mShaderProgramCache;
+    std::unique_ptr<ShaderLibrary>                       mShaderLibrary;
     std::shared_ptr<Graphics::Vulkan::DescriptorHeap>    mHeap;
     std::unique_ptr<Graphics::Vulkan::Swapchain>         mSwapchain;
     std::unique_ptr<Graphics::Frame::FrameObjectManager> mFrameObjectManager;
+
+    /** Render thread only: the buffers of the Frame block of the frame slots. */
+    std::unique_ptr<FrameBlocks> mFrameBlocks;
 
     /** Written by resize() on any thread. Extent is trivially copyable and 8 bytes, so the atomic
      * is lock-free (Renderer.cpp asserts it). */

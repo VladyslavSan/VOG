@@ -19,7 +19,7 @@ namespace fs = std::filesystem;
 
 constexpr auto kStage = Shader::ShadingStage::eFragment;
 
-/** A fragment shader that includes @p header with the directive @p directive. */
+/** A fragment shader that has the include directive @p directive, which brings in `kColor`. */
 std::string
 shaderIncluding(std::string_view directive)
 {

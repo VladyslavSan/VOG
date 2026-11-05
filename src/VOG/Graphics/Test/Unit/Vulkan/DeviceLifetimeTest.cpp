@@ -1,6 +1,5 @@
 #include "VOG/Graphics/Frame/FrameObjectManager.hpp"
 #include "VOG/Graphics/Frame/FrameObjects.hpp"
-#include "VOG/Graphics/ShaderProgramCache.hpp"
 #include "VOG/Graphics/Vulkan/Attachment/RenderTarget.hpp"
 #include "VOG/Graphics/Vulkan/Buffer.hpp"
 #include "VOG/Graphics/Vulkan/CommandBufferPool.hpp"
@@ -384,23 +383,6 @@ TEST_F(DeviceLifetime, frameObjectManagerKeepsDeviceAlive)
                                [](Graphics::Frame::FrameObjectManager& manager)
                                {
                                    manager.prepareNextFrame();
-                               });
-}
-
-/**
- * The call under test is the lookup: the shader modules were created before the device was
- * released, and the cache exposes no other Vulkan entry point.
- */
-TEST_F(DeviceLifetime, shaderProgramCacheKeepsDeviceAlive)
-{
-    auto cache = std::make_unique<Graphics::ShaderProgramCache>(mDevice, VOG_TEST_SHADER_PATH);
-    const auto released = releaseDevice();
-
-    expectDependentHoldsDevice(released,
-                               cache,
-                               [](Graphics::ShaderProgramCache& cache)
-                               {
-                                   EXPECT_TRUE(cache.get("WorldSpace")->stages.vertex.shader);
                                });
 }
 

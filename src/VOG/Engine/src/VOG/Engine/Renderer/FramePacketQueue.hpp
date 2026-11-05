@@ -19,6 +19,9 @@ struct FramePacket
 {
     /** Every draw has a mesh and a material. The camera view is in the queue. */
     RenderQueue draws;
+
+    /** What onDraw() saw of this frame; the Frame block of the shaders holds its time. */
+    FrameContext frame;
 };
 
 /**

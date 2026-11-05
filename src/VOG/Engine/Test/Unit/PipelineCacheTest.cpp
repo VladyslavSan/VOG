@@ -2,12 +2,14 @@
 
 #include "VOG/Engine/Renderer/MaterialDefinition.hpp"
 #include "VOG/Engine/Renderer/MeshDefinition.hpp"
-#include <VOG/Graphics/ShaderProgramCache.hpp>
+#include "VOG/Engine/Renderer/ShaderLibrary.hpp"
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
 
 #include <gtest/gtest.h>
+
+#include "TestShaders.hpp"
 
 using namespace VOG::Engine;
 
@@ -21,7 +23,7 @@ protected:
     Detail::MaterialData
     material(const char* shader) const
     {
-        return {.program = mShaderPrograms.get(shader)};
+        return {.shader = mShaders.get(shader)};
     }
 
     /** The cache keeps the pipeline, so the pointer stays valid. */
@@ -37,8 +39,8 @@ protected:
         Graphics::Vulkan::Instance::create(
             {.appName = "VOG PipelineCache Test", .engineName = "Test"})
             ->makeDevice();
-    Graphics::ShaderProgramCache mShaderPrograms{mDevice, VOG_TEST_SHADER_PATH};
-    PipelineCache                mCache{mDevice};
+    ShaderLibrary mShaders{mDevice, Tests::sharedTestShaderPath()};
+    PipelineCache mCache{mDevice};
 
     const Detail::MeshData mQuad{
         .stride = 24u, .attributes = {{VertexFormat::eFloat2, 0u}, {VertexFormat::eFloat4, 8u}}};

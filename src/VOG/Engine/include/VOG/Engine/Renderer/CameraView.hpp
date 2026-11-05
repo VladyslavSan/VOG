@@ -17,8 +17,13 @@ struct CameraView
     float          nearPlane = 1.0f;
     float          farPlane  = 200.0f; // NOLINT(readability-magic-numbers)
 
-    /** World space to clip space for a color target of @p extent; direction and up must be
-     *  normalized. */
+    /** World space to view space; direction and up must be normalized. */
+    Math::Matrix4x4f view() const;
+
+    /** View space to clip space for a color target of @p extent. */
+    Math::Matrix4x4f projection(Extent extent) const;
+
+    /** World space to clip space: projection(extent) * view(). */
     Math::Matrix4x4f viewProjection(Extent extent) const;
 };
 } // namespace VOG::Engine
