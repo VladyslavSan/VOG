@@ -70,6 +70,34 @@ void main() {
 )";
 } // namespace
 
+/** Every core value of every field of the rasterizer options reads back as it was set. */
+TEST(RasterizationOptionsTest, everyCoreValueOfEveryFieldReadsBackAsSet)
+{
+    using namespace VOG::Graphics::Vulkan;
+
+    // The topologies are the values 0 to 10, point list to patch list.
+    for (std::uint32_t value = 0u;
+         value <= static_cast<std::uint32_t>(PrimitiveTopology::ePatchList);
+         ++value)
+    {
+        const auto topology = static_cast<PrimitiveTopology>(value);
+        EXPECT_EQ((RasterizationOptions{.topology = topology}.topology), topology);
+    }
+    for (const auto polygonMode : {PolygonMode::eFill, PolygonMode::eLine, PolygonMode::ePoint})
+    {
+        EXPECT_EQ((RasterizationOptions{.polygonMode = polygonMode}.polygonMode), polygonMode);
+    }
+    for (const auto cullMode :
+         {CullMode::eNone, CullMode::eFront, CullMode::eBack, CullMode::eFrontAndBack})
+    {
+        EXPECT_EQ((RasterizationOptions{.cullMode = cullMode}.cullMode), cullMode);
+    }
+    for (const auto frontFace : {FrontFace::eCounterClockwise, FrontFace::eClockwise})
+    {
+        EXPECT_EQ((RasterizationOptions{.frontFace = frontFace}.frontFace), frontFace);
+    }
+}
+
 TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
 {
     using namespace VOG::Graphics::Vulkan;

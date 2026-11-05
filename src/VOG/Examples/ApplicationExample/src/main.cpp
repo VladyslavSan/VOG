@@ -77,6 +77,10 @@ makeCheckerboard()
 /** Rate at which the quads swing back and forth, in radians per second. */
 constexpr float gRotationRate = 1.6f;
 
+/** World units from the bottom of the window to the top: one unit is a pixel at this window
+ *  height. */
+constexpr float gWorldHeight = 720.0f;
+
 constexpr float gQuadHalfSizePixels = 300.0f;
 constexpr float gQuadDistance       = 20.0f;
 constexpr float gTexturedHalfSize   = 100.0f;
@@ -166,9 +170,6 @@ main(int argc, const char** argv) // NOLINT(bugprone-exception-escape)
             .shaderStoragePath = varMap["shader-storage-path"].as<std::string>(),
         });
 
-        constexpr float kNearPlane = 1.0f;
-        constexpr float kFarPlane  = 200.0f;
-
         VOG::Engine::Renderer& renderer = app.getRenderer();
         VOG::Engine::Scene&    scene    = app.getScene();
 
@@ -211,7 +212,7 @@ main(int argc, const char** argv) // NOLINT(bugprone-exception-escape)
         });
 
         scene.createGameObject().addComponent<VOG::Engine::Camera>(
-            VOG::Engine::Camera{.nearPlane = kNearPlane, .farPlane = kFarPlane});
+            VOG::Engine::Camera{.projection = VOG::Engine::Orthographic{.height = gWorldHeight}});
 
         VOG::Engine::GameObject quadObject = scene.createGameObject();
         quadObject.getTransform().position = {0.0f, 0.0f, gQuadDistance};

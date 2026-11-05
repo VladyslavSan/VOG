@@ -47,6 +47,35 @@ Buffer::mapForWrite()
     return MemoryMapping{{static_cast<std::byte*>(data), size}, *this, !isHostCoherent};
 }
 
+Buffer::ReadMapping
+Buffer::mapForRead()
+{
+    VOG_ASSERT_MSG(flags & AllocationFlag::eHostRandomAccess,
+                   "Only a buffer created with AllocationFlag::eHostRandomAccess can be mapped for "
+                   "reading.");
+
+    void* data   = nullptr;
+    auto  result = vmaMapMemory(allocator, allocation, &data);
+    if (result != VK_SUCCESS) [[unlikely]]
+    {
+        throw std::runtime_error{"Buffer::mapForRead: vmaMapMemory failed."};
+    }
+
+    if (!(memoryFlags & vk::MemoryPropertyFlagBits::eHostCoherent))
+    {
+        result = vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
+        if (result != VK_SUCCESS) [[unlikely]]
+        {
+            vmaUnmapMemory(allocator, allocation);
+
+            throw std::runtime_error{"Buffer::mapForRead: vmaInvalidateAllocation failed."};
+        }
+    }
+
+    // Nothing was written, so nothing is flushed.
+    return ReadMapping{{static_cast<std::byte*>(data), size}, *this};
+}
+
 vk::DeviceAddress
 Buffer::deviceAddress() const
 {

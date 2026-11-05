@@ -16,7 +16,8 @@ class Buffer
 public:
     using vk::raii::Buffer::operator*;
 
-    /** Scope guard for a mapped buffer: the destructor flushes (if needed) and unmaps. */
+    /** Scope guard for a mapped buffer: the destructor flushes (if it was mapped for writing, and
+     *  the memory needs it) and unmaps. */
     class MemoryMapping
     {
         friend class Buffer;
@@ -37,8 +38,9 @@ public:
         MemoryMapping& operator=(MemoryMapping&&)      = delete;
 
         /**
-         * The mapped memory, for writing: all the memory behind the buffer, which may be larger
-         * than Buffer::byteSize(). Use it only while the mapping is alive.
+         * The mapped memory, for writing or, after mapForRead(), for reading: all the memory behind
+         * the buffer, which may be larger than Buffer::byteSize(). Use it only while the mapping
+         * is alive.
          */
         [[nodiscard]] std::span<std::byte>
         bytes() const noexcept
@@ -61,6 +63,37 @@ public:
      * cannot map.
      */
     [[nodiscard]] MemoryMapping mapForWrite();
+
+    /** A mapping for reading: the memory can be read and not written. */
+    class ReadMapping
+    {
+        friend class Buffer;
+
+        ReadMapping(std::span<std::byte> bytes, const Buffer& buffer) noexcept
+            : mMapping{bytes, buffer, false}
+        {
+        }
+
+    public:
+        [[nodiscard]] std::span<const std::byte>
+        bytes() const noexcept
+        {
+            return mMapping.bytes();
+        }
+
+    private:
+        MemoryMapping mMapping;
+    };
+
+    /**
+     * Maps the buffer for reading, after the GPU finished writing it and a barrier made the writes
+     * visible to the host (stage eHost, access eHostRead). Only for a buffer created with
+     * AllocationFlag::eHostRandomAccess. Where the memory is not host-coherent, the mapping
+     * invalidates the CPU's caches first, so the reads see what the GPU wrote.
+     *
+     * @throws std::runtime_error if the memory cannot be mapped or invalidated.
+     */
+    [[nodiscard]] ReadMapping mapForRead();
 
     /** The size the buffer was created with; the memory behind it may be larger. */
     vk::DeviceSize

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VOG/Engine/Renderer/CameraView.hpp>
 #include <VOG/Engine/Renderer/Material.hpp>
 #include <VOG/Engine/Renderer/Mesh.hpp>
 #include <VOG/Math/Math.hpp>
@@ -34,15 +35,15 @@ struct MeshRenderer
 };
 
 /**
- * Looks along the +Z axis of its object's Transform with +Y up, orthographic, one world unit per
- * pixel (see CameraView). A Scene draws with at most one Camera: GameObject::addComponent<Camera>()
- * throws while another exists. A camera of a destroyed object exists until the next
- * Scene::update() ends, so to switch cameras within one frame, call removeComponent<Camera>() on
- * the old one first. Without a Camera the Scene draws with a default CameraView.
+ * Looks along the +Z axis of its object's Transform with +Y up (see CameraView). A Scene draws with
+ * at most one Camera: GameObject::addComponent<Camera>() throws while another exists. A camera of a
+ * destroyed object exists until the next Scene::update() ends, so to switch cameras within one
+ * frame, call removeComponent<Camera>() on the old one first. Without a Camera the Scene draws with
+ * a default CameraView.
  */
 struct Camera
 {
-    float nearPlane = 1.0f;
-    float farPlane  = 200.0f; // NOLINT(readability-magic-numbers)
+    Projection     projection = Orthographic{};
+    Math::Vector4f clearColor{0.0f, 0.0f, 0.0f, 1.0f};
 };
 } // namespace VOG::Engine

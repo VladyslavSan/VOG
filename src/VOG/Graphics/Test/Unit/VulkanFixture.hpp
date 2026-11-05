@@ -57,8 +57,7 @@ createColorTarget(Graphics::Vulkan::Device& device,
  * Records the copy of @p target, which a pass has just drawn into, to a new host buffer: the
  * barrier from color attachment to transfer source, the copy, and the barrier that makes the copy
  * visible to the host. The target is left in the transfer-source layout. Read the buffer through
- * mapForWrite() once the submit has finished; that is meant for writing, and legal on lavapipe,
- * whose host memory is coherent. No production code needs a readback.
+ * mapForRead() once the submit has finished. No production code needs a readback.
  */
 inline Graphics::Vulkan::BufferPtr
 recordReadback(Graphics::Vulkan::Device&                       device,
@@ -69,7 +68,7 @@ recordReadback(Graphics::Vulkan::Device&                       device,
                                 target->getExtent().height * vk::blockSize(target->getFormat());
     Graphics::Vulkan::BufferPtr readback =
         device.createBuffer({.size = size, .usage = vk::BufferUsageFlagBits::eTransferDst},
-                            {.flags = Graphics::Vulkan::AllocationFlag::eHostSequentialWrite});
+                            {.flags = Graphics::Vulkan::AllocationFlag::eHostRandomAccess});
 
     recorder.setImageBarrier(target,
                              {.srcStageMask  = vk::PipelineStageFlagBits2::eColorAttachmentOutput,

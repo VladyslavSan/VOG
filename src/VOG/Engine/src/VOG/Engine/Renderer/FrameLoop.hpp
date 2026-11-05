@@ -4,12 +4,18 @@
 #include "VOG/Engine/Renderer/PipelineTable.hpp"
 #include <VOG/Engine/Renderer/Extent.hpp>
 #include <VOG/Engine/Renderer/Renderer.hpp>
+#include <VOG/Graphics/Typedefs.hpp>
 
 #include <atomic>
 #include <exception>
 #include <stop_token>
 #include <thread>
 #include <vector>
+
+namespace VOG::Graphics::Vulkan
+{
+VOG_DECLARE_PTR(RenderTarget);
+} // namespace VOG::Graphics::Vulkan
 
 namespace VOG::Engine
 {
@@ -95,6 +101,16 @@ private:
     Extent mAppliedExtent;
 
     PipelineTable mPipelines;
+
+    /**
+     * The depth target that the frames share. Frames draw one after the other on the queue, and a
+     * barrier at the start of each frame orders its depth writes after those of the frame before,
+     * so one image does for all the frames in flight. It has the size of the image that the frame
+     * acquired: the extent that was requested is not always the size of the images (surfaces that
+     * report their own size ignore it). A new target replaces it when that size changes; a frame
+     * that still draws into the old one holds it. Null until the first frame.
+     */
+    Graphics::Vulkan::RenderTargetPtr mDepthTarget;
 
     /** The draws of the frame being rendered. Scratch space, kept to reuse its capacity. */
     std::vector<ResolvedDraw> mResolved;

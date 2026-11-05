@@ -40,13 +40,13 @@ namespace VOG::Engine
  */
 class Renderer final
 {
+    static constexpr std::uint64_t kBytesPerMebibyte = std::uint64_t{1} << 20u;
+
 public:
     static constexpr std::uint8_t kMaxFramesInFlight = 3;
 
     /** The default of Config::resourceSlots. */
     static constexpr std::uint32_t kDefaultResourceSlots = 4096u;
-
-    static constexpr std::uint64_t kBytesPerMebibyte = std::uint64_t{1} << 20u;
 
     /** The default of Config::backgroundUploadBytesPerFrame: 64 MiB. */
     static constexpr std::uint64_t kDefaultBackgroundUploadBytes = 64u * kBytesPerMebibyte;

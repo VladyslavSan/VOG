@@ -10,9 +10,11 @@
 #include "VOG/Engine/Renderer/UploadTicket.hpp"
 #include <VOG/Graphics/Frame/FrameObjectManager.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/AcquiredSwapchainImage.hpp>
+#include <VOG/Graphics/Vulkan/Attachment/RenderTarget.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferRecorder.hpp>
+#include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/Queue.hpp>
 
 #include <array>
@@ -34,8 +36,7 @@ constexpr std::chrono::milliseconds gZeroExtentBackoff{16};
  * and the presentation engine make progress.
  */
 constexpr std::chrono::milliseconds gAcquireTimeout{100};
-constexpr std::size_t               gThreadId   = 0u;
-constexpr std::array                gClearColor = {0.0f, 0.0f, 0.0f, 1.0f};
+constexpr std::size_t               gThreadId = 0u;
 } // namespace
 
 FrameLoop::FrameLoop(GpuContext&       gpu,
@@ -196,7 +197,8 @@ FrameLoop::renderFrame(const FramePacket& packet)
     }
 
     // Before acquiring: a pipeline that fails to build throws while no image is acquired.
-    DrawRecording::resolve(packet, mPipelines, mGpu.swapchain->getFormat(), mResolved);
+    DrawRecording::resolve(
+        packet, mPipelines, mGpu.swapchain->getFormat(), mGpu.depthFormat, mResolved);
 
     // Before the acquire: the slot's fences show that its semaphores are free to signal again. The
     // waits have no timeout, unlike the acquire.
@@ -222,6 +224,14 @@ FrameLoop::renderFrame(const FramePacket& packet)
     VOG_ASSERT_MSG(acquired, "eReady acquire must provide AcquiredSwapchainImage.");
 
     const vk::Extent2D extent = acquired->getExtent2D();
+
+    // The depth target has the size of the image: attachments have to cover the render area. A
+    // frame that still draws into the old target holds it.
+    if (!mDepthTarget || mDepthTarget->getExtent2D() != extent)
+    {
+        mDepthTarget = mGpu.device->createRenderTarget(
+            extent, mGpu.depthFormat, vk::ImageUsageFlagBits::eDepthStencilAttachment);
+    }
 
     // The slot's fences were waited in prepareNextFrame(), so no draw of an earlier frame reads
     // this buffer any more.
@@ -258,11 +268,14 @@ FrameLoop::renderFrame(const FramePacket& packet)
                  .layerCount     = VK_REMAINING_ARRAY_LAYERS,
              }});
 
+        const auto depth = DrawRecording::prepareDepth(recorder, mDepthTarget);
+
         {
             auto pass = recorder.beginRendering({{.attachment = acquired,
                                                   .loadOp     = vk::AttachmentLoadOp::eClear,
                                                   .storeOp    = vk::AttachmentStoreOp::eStore,
-                                                  .clearValue = vk::ClearColorValue{gClearColor}}});
+                                                  .clearValue = DrawRecording::clearColor(packet)}},
+                                                depth);
 
             DrawRecording::recordDraws(pass, packet, mResolved, mPipelines, frameBlock, extent);
         }

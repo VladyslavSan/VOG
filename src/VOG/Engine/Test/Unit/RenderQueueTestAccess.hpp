@@ -31,6 +31,13 @@ struct RenderQueueTestAccess
         return queue.mCamera;
     }
 
+    /** The frame that @p queue holds, as the render thread gets it. */
+    static FramePacket
+    packet(RenderQueue&& queue, const FrameContext& frame = {})
+    {
+        return {.draws = std::move(queue.mDraws), .camera = queue.mCamera, .frame = frame};
+    }
+
     /** Adds a draw to @p packet as the render thread finds it: checked by nobody. */
     static void
     addDraw(FramePacket& packet, Mesh mesh, Material material, const Math::Matrix4x4f& world)

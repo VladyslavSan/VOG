@@ -4,15 +4,20 @@
 #include "VOG/Engine/Renderer/MaterialDefinition.hpp"
 #include "VOG/Engine/Renderer/MeshDefinition.hpp"
 #include "VOG/Engine/Renderer/TextureDefinition.hpp"
+#include <VOG/Graphics/Vulkan/Attachment/RenderTarget.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/GraphicsPipeline.hpp>
 #include <VOG/Graphics/Vulkan/HeapBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Texture.hpp>
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cstddef>
+#include <cstdint>
 #include <ranges>
 #include <span>
+#include <tuple>
 
 namespace VOG::Engine
 {
@@ -77,19 +82,125 @@ private:
 };
 } // namespace
 
+namespace
+{
+/** The bits of an id: the material id is the high half of the sort key of an opaque draw. */
+constexpr unsigned gIdBits = 32u;
+
+/** An unsigned integer that orders like @p value does as a float, for a value that is not NaN. */
+std::uint32_t
+orderedBits(float value)
+{
+    const auto bits = std::bit_cast<std::uint32_t>(value);
+
+    constexpr std::uint32_t kSignBit = 0x80000000u;
+
+    return (bits & kSignBit) != 0u ? ~bits : bits | kSignBit;
+}
+} // namespace
+
+std::uint64_t
+DrawRecording::blendedKey(float viewDepth)
+{
+    // -0 and +0 are one distance: they must not order apart.
+    if (viewDepth == 0.0f)
+    {
+        viewDepth = 0.0f;
+    }
+
+    return ~orderedBits(viewDepth);
+}
+
 void
 DrawRecording::resolve(const FramePacket&         packet,
                        PipelineTable&             pipelines,
                        vk::Format                 colorFormat,
+                       vk::Format                 depthFormat,
                        std::vector<ResolvedDraw>& resolved)
 {
     resolved.clear();
+
+    const auto isBlended = [](const auto& draw)
+    {
+        return draw.material.mData->state.blend != BlendMode::eOpaque;
+    };
+    const auto pipelineOf = [&](const auto& draw)
+    {
+        return pipelines.resolve(*draw.mesh.mData, *draw.material.mData, colorFormat, depthFormat);
+    };
+
+    // The opaque bucket, then the blended one: each is filled before it is sorted.
     for (const auto& [index, draw] : std::views::zip(std::views::iota(0u), packet.draws))
     {
-        resolved.push_back({.index         = index,
-                            .pipelineIndex = pipelines.resolve(
-                                *draw.mesh.mData, *draw.material.mData, colorFormat)});
+        if (!isBlended(draw))
+        {
+            resolved.push_back(
+                {.index         = index,
+                 .pipelineIndex = pipelineOf(draw),
+                 .sortKey       = (std::uint64_t{draw.material.mData->materialId} << gIdBits) |
+                                  draw.mesh.mData->meshId});
+        }
     }
+    const auto opaqueEnd = static_cast<std::ptrdiff_t>(resolved.size());
+
+    const Math::Matrix4x4f view = packet.camera.view();
+    for (const auto& [index, draw] : std::views::zip(std::views::iota(0u), packet.draws))
+    {
+        if (isBlended(draw))
+        {
+            // Along the view direction +Z, a larger z is farther; the key grows as z falls.
+            const float depth = (view * draw.world[3]).z;
+            resolved.push_back(
+                {.index = index, .pipelineIndex = pipelineOf(draw), .sortKey = blendedKey(depth)});
+        }
+    }
+
+    std::ranges::stable_sort(std::span{resolved}.first(static_cast<std::size_t>(opaqueEnd)),
+                             [](const ResolvedDraw& left, const ResolvedDraw& right)
+                             {
+                                 return std::tie(left.pipelineIndex, left.sortKey) <
+                                        std::tie(right.pipelineIndex, right.sortKey);
+                             });
+    std::ranges::stable_sort(std::span{resolved}.subspan(static_cast<std::size_t>(opaqueEnd)),
+                             {},
+                             &ResolvedDraw::sortKey);
+}
+
+vk::ClearColorValue
+DrawRecording::clearColor(const FramePacket& packet)
+{
+    const Math::Vector4f& clear = packet.camera.clearColor;
+
+    return vk::ClearColorValue{std::array{clear.r, clear.g, clear.b, clear.a}};
+}
+
+Graphics::Vulkan::CommandBufferRecorder::DepthAttachment
+DrawRecording::prepareDepth(Graphics::Vulkan::CommandBufferRecorder& recorder,
+                            const Graphics::Vulkan::RenderTargetPtr& depthTarget)
+{
+    constexpr auto kDepthTests = vk::PipelineStageFlagBits2::eEarlyFragmentTests |
+                                 vk::PipelineStageFlagBits2::eLateFragmentTests;
+
+    recorder.setImageBarrier(depthTarget,
+                             {.srcStageMask  = kDepthTests,
+                              .srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+                              .dstStageMask  = kDepthTests,
+                              .dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead |
+                                               vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+                              .oldLayout     = vk::ImageLayout::eUndefined,
+                              .newLayout     = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                              .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                              .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                              .subresourceRange    = {.aspectMask   = vk::ImageAspectFlagBits::eDepth,
+                                                      .baseMipLevel = 0u,
+                                                      .levelCount   = VK_REMAINING_MIP_LEVELS,
+                                                      .baseArrayLayer = 0u,
+                                                      .layerCount     = VK_REMAINING_ARRAY_LAYERS}});
+
+    return {.attachment = depthTarget,
+            .loadOp     = vk::AttachmentLoadOp::eClear,
+            .storeOp    = vk::AttachmentStoreOp::eDontCare,
+            .clearValue = {.depth = 1.0f, .stencil = 0u}};
 }
 
 void
@@ -101,7 +212,7 @@ DrawRecording::writeFrameBlock(Graphics::Vulkan::HeapBuffer& block,
     const Extent      viewport{.width = extent.width, .height = extent.height};
     const FrameBlock  frameBlock{
         .view           = camera.view(),
-        .projection     = camera.projection(viewport),
+        .projection     = camera.projectionMatrix(viewport),
         .viewProjection = camera.viewProjection(viewport),
         .cameraPosition = {camera.position, 1.0f},
         .viewport       = {static_cast<float>(extent.width), static_cast<float>(extent.height)},

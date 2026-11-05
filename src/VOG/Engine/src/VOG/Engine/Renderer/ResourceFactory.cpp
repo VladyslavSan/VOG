@@ -158,6 +158,7 @@ ResourceFactory::createMesh(const MeshDescription& description)
                          .vertexCount = vertexCount,
                          .layout      = layout,
                          .layoutId    = internLayout(layout),
+                         .meshId      = ++mLastMeshId,
                          .indexCount  = static_cast<std::uint32_t>(description.indices.size()),
                          .indexOffset = indexOffset,
                          .ticket      = std::move(ticket)})};
@@ -242,6 +243,7 @@ ResourceFactory::createMaterial(MaterialDescription description)
 
     return Material{std::make_shared<const Detail::MaterialData>(
         Detail::MaterialData{.shader     = shader,
+                             .materialId = ++mLastMaterialId,
                              .block      = std::move(block),
                              .textures   = std::move(textures),
                              .parameters = std::move(description.parameters),

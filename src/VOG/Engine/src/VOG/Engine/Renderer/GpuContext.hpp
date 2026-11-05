@@ -70,6 +70,9 @@ public:
     Graphics::Vulkan::FencePoolPtr                 fencePool;
     Graphics::Vulkan::DescriptorHeapPtr            heap;
     std::unique_ptr<Graphics::Vulkan::Swapchain>   swapchain;
+    /** The format of the depth target, which every frame draws into. */
+    const vk::Format depthFormat;
+
     /** The number of frame slots: framesInFlight, or the number of images of the swapchain if that
      *  is less. */
     const std::uint8_t                                   frameSlots;

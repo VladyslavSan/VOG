@@ -1,5 +1,6 @@
 #pragma once
 
+#include <VOG/Engine/Renderer/Material.hpp>
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 
@@ -23,11 +24,11 @@ class MaterialData;
 } // namespace Detail
 
 /**
- * The graphics pipelines of the draws seen so far, one per shader program, vertex layout and color
- * format. Everything else about a pipeline is fixed. A pipeline is found by the value of its key,
- * never by the address of an object, and it gets an index that does not change: the draws of a
- * frame refer to their pipelines by it. The table never evicts; the pipelines live until the table
- * does.
+ * The graphics pipelines of the draws seen so far, one per shader program, vertex layout, render
+ * state, color format and depth format. Everything else about a pipeline is fixed. A pipeline is
+ * found by the value of its key, never by the address of an object, and it gets an index that does
+ * not change: the draws of a frame refer to their pipelines by it. The table never evicts; the
+ * pipelines live until the table does.
  */
 class PipelineTable
 {
@@ -36,7 +37,9 @@ public:
     {
         std::uint32_t programId;
         std::uint32_t layoutId;
+        RenderState   state;
         vk::Format    colorFormat;
+        vk::Format    depthFormat;
 
         auto operator<=>(const Key&) const = default;
     };
@@ -45,13 +48,16 @@ public:
 
     /**
      * Render thread only. The index of the pipeline for @p mesh drawn with @p material into a
-     * target of @p colorFormat; builds the pipeline at the first call for the key.
+     * target of @p colorFormat with a depth target of @p depthFormat; builds the pipeline at the
+     * first call for the key. The pipeline has the blend, the depth test and the cull of the render
+     * state of the material, and clockwise faces are front faces.
      * @throws std::invalid_argument if the mesh cannot feed the shader. Draws that went through
      *         RenderQueue::submit() have passed that check already.
      */
     [[nodiscard]] std::uint32_t resolve(const Detail::MeshData&     mesh,
                                         const Detail::MaterialData& material,
-                                        vk::Format                  colorFormat);
+                                        vk::Format                  colorFormat,
+                                        vk::Format                  depthFormat);
 
     /** The pipeline of an index that resolve() returned. The reference is valid for the life of
      *  the table: no call changes or moves a pipeline. */

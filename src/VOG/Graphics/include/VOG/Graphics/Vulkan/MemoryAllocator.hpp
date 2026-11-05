@@ -22,6 +22,9 @@ enum class AllocationFlag : std::uint8_t
 {
     /** The CPU writes the memory in order and never reads it: map with Buffer::mapForWrite(). */
     eHostSequentialWrite = 1u << 0u,
+    /** The CPU reads the memory, in any order: map with Buffer::mapForRead(). VMA picks memory the
+     *  CPU can read quickly, host-cached where the device has it. */
+    eHostRandomAccess = 1u << 1u,
 };
 } // namespace VOG::Graphics::Vulkan
 
@@ -34,7 +37,8 @@ struct FlagTraits<VOG::Graphics::Vulkan::AllocationFlag>
     // NOLINTBEGIN(readability-identifier-naming)
     static constexpr bool                                             isBitmask = true;
     static constexpr vk::Flags<VOG::Graphics::Vulkan::AllocationFlag> allFlags =
-        VOG::Graphics::Vulkan::AllocationFlag::eHostSequentialWrite;
+        VOG::Graphics::Vulkan::AllocationFlag::eHostSequentialWrite |
+        VOG::Graphics::Vulkan::AllocationFlag::eHostRandomAccess;
     // NOLINTEND(readability-identifier-naming)
 };
 } // namespace vk

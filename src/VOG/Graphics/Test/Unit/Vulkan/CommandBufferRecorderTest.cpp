@@ -441,8 +441,7 @@ namespace
  * timeline at 1, then on the graphics queue reads it back into a host buffer and returns the
  * bytes. The graphics submit waits for the timeline at 1 only if @p waitForUpload.
  *
- * The host buffer is read through mapForWrite(), which is meant for writing: that is legal on
- * lavapipe, whose host memory is coherent, and no production code needs a readback.
+ * The host buffer is read through mapForRead(); no production code needs a readback.
  */
 std::vector<std::byte>
 uploadAndReadBack(const DevicePtr& device, const BufferPtr& staging, bool waitForUpload)
@@ -457,7 +456,7 @@ uploadAndReadBack(const DevicePtr& device, const BufferPtr& staging, bool waitFo
         {});
     BufferPtr readBack =
         device->createBuffer({.size = size, .usage = vk::BufferUsageFlagBits::eTransferDst},
-                             {.flags = AllocationFlag::eHostSequentialWrite});
+                             {.flags = AllocationFlag::eHostRandomAccess});
 
     auto fencePool    = FencePool::create(device);
     auto transferPool = device->createCommandBufferPool(transferFamily);
@@ -497,7 +496,7 @@ uploadAndReadBack(const DevicePtr& device, const BufferPtr& staging, bool waitFo
     transferPool->reset();
     graphicsPool->reset();
 
-    const auto mapping = readBack->mapForWrite();
+    const auto mapping = readBack->mapForRead();
     const auto bytes   = mapping.bytes().first(size);
     return {bytes.begin(), bytes.end()};
 }
@@ -699,7 +698,7 @@ TEST_F(VulkanValidationFixture, CommandBufferRecorder_clearedRenderTargetReadsBa
     // 0.2, 0.4, 0.6 and 0.8 of 255, which are whole numbers.
     constexpr std::array<std::byte, 4> kPixel{
         std::byte{51}, std::byte{102}, std::byte{153}, std::byte{204}};
-    const auto mapping = readback->mapForWrite();
+    const auto mapping = readback->mapForRead();
     const auto bytes   = mapping.bytes().first(kSize * kSize * kPixel.size());
     for (std::size_t pixel = 0u; pixel < kSize * kSize; ++pixel)
     {
@@ -872,6 +871,35 @@ TEST_F(VulkanFixture, CommandBufferRecorderDeathTest_misusedUploadAndPushDataAss
             recorder.copyImageToBuffer(color, staging);
         },
         "destination of copyImageToBuffer is smaller");
+}
+
+/** A buffer maps only the way its allocation flag allows: reading needs eHostRandomAccess. */
+TEST_F(VulkanFixture, BufferDeathTest_mappingNeedsTheFlagOfItsDirection)
+{
+    GTEST_FLAG_SET(death_test_style, "threadsafe");
+
+    const auto makeBuffer = [&](AllocationFlag flag)
+    {
+        return mDevice->createBuffer({.size = 16u, .usage = vk::BufferUsageFlagBits::eTransferDst},
+                                     {.flags = flag});
+    };
+
+    // Each direction works on the buffer that was made for it.
+    EXPECT_EQ(makeBuffer(AllocationFlag::eHostSequentialWrite)->mapForWrite().bytes().size() >= 16u,
+              true);
+    EXPECT_EQ(makeBuffer(AllocationFlag::eHostRandomAccess)->mapForRead().bytes().size() >= 16u,
+              true);
+
+    const auto useStderr = []
+    {
+        spdlog::set_default_logger(spdlog::stderr_logger_mt("assert"));
+    };
+    EXPECT_DEATH(
+        {
+            useStderr();
+            std::ignore = makeBuffer(AllocationFlag::eHostSequentialWrite)->mapForRead();
+        },
+        "eHostRandomAccess");
 }
 #endif
 } // namespace VOG::Tests

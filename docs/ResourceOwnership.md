@@ -106,6 +106,14 @@ a handle is the same one:
   uploads back (`uploadsGoThroughDroppedFrames`). Heap buffers stay host-visible (see "Uploads and
   the transfer queue").
 - The `PipelineTable` holds its pipelines until `~Renderer`; `bindPipeline` retains them per frame.
+  A pipeline is found by the value of its key (program id, layout id, render state, color format,
+  depth format), never by an address.
+- The depth target is one `RenderTarget` that `FrameLoop` makes at the size of the image that a
+  frame acquired, and replaces when that size changes. Every frame in flight draws into it, ordered
+  by a barrier at the start of the frame whose source scope is the fragment test stages with the
+  depth write access (an execution dependency alone would not make the writes of the frame before
+  visible). `beginRendering` retains the target, so a frame that still draws into a replaced
+  target holds it until its fence signals; the loop keeps no other reference to it.
 
 ## Uploads and the transfer queue
 

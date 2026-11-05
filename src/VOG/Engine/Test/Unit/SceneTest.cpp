@@ -749,7 +749,10 @@ TEST(SceneTest, cameraComponentSetsFrameView)
     object.getTransform().position = {3.0f, 4.0f, 5.0f};
     object.getTransform().rotation =
         glm::angleAxis(glm::radians(90.0f), Vector3f{0.0f, 1.0f, 0.0f});
-    object.addComponent<Camera>(Camera{.nearPlane = 2.0f, .farPlane = 300.0f});
+    const Perspective perspective{
+        .verticalFovRadians = 1.0f, .nearPlane = 2.0f, .farPlane = 300.0f};
+    object.addComponent<Camera>(
+        Camera{.projection = perspective, .clearColor = {0.25f, 0.5f, 0.75f, 1.0f}});
 
     Detail::DrawCheck check;
     RenderQueue       queue = RenderQueueTestAccess::make(check);
@@ -763,8 +766,8 @@ TEST(SceneTest, cameraComponentSetsFrameView)
     EXPECT_NEAR(view.up.x, 0.0f, kTolerance);
     EXPECT_NEAR(view.up.y, 1.0f, kTolerance);
     EXPECT_NEAR(view.up.z, 0.0f, kTolerance);
-    EXPECT_EQ(view.nearPlane, 2.0f);
-    EXPECT_EQ(view.farPlane, 300.0f);
+    EXPECT_EQ(view.projection, Projection{perspective});
+    EXPECT_EQ(view.clearColor, (Vector4f{0.25f, 0.5f, 0.75f, 1.0f}));
 }
 
 TEST(SceneTest, noCameraLeavesDefaultView)
@@ -775,10 +778,10 @@ TEST(SceneTest, noCameraLeavesDefaultView)
     // A view the queue already has survives: the scene sets none without a Camera.
     Detail::DrawCheck check;
     RenderQueue       queue = RenderQueueTestAccess::make(check);
-    queue.setCamera(CameraView{.nearPlane = 7.0f});
+    queue.setCamera(CameraView{.clearColor = {7.0f, 0.0f, 0.0f, 1.0f}});
     scene.onDraw(gFrame, queue);
 
-    EXPECT_EQ(RenderQueueTestAccess::camera(queue).nearPlane, 7.0f);
+    EXPECT_EQ(RenderQueueTestAccess::camera(queue).clearColor.x, 7.0f);
 }
 
 // NOLINTEND(readability-magic-numbers, readability-function-cognitive-complexity)

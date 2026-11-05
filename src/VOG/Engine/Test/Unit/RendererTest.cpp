@@ -8,6 +8,7 @@
 #include "VOG/Engine/Renderer/RendererImpl.hpp"
 #include "VOG/Engine/Renderer/TextureDefinition.hpp"
 #include <VOG/Engine/Renderer/Renderer.hpp>
+#include <VOG/Engine/Scene/Scene.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/RenderTarget.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
@@ -37,6 +38,7 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <numbers>
 #include <optional>
 #include <set>
 #include <span>
@@ -118,6 +120,25 @@ struct RendererTestAccess
     heap(const Renderer& renderer)
     {
         return renderer.mImpl->gpu.heap;
+    }
+
+    /** After join(): the size of the depth target, or 0 x 0 before the first frame. */
+    static Extent
+    depthExtent(const Renderer& renderer)
+    {
+        const auto& target = renderer.mImpl->loop.mDepthTarget;
+        if (!target)
+        {
+            return {};
+        }
+
+        return {.width = target->getExtent2D().width, .height = target->getExtent2D().height};
+    }
+
+    static vk::Format
+    depthFormat(const Renderer& renderer)
+    {
+        return renderer.mImpl->gpu.depthFormat;
     }
 
     static const vk::PhysicalDeviceLimits&
@@ -832,6 +853,84 @@ private:
     vk::raii::detail::DeviceDispatcher& mTable;
 };
 
+/** What one vkCmdBeginRendering of the render thread asked for. */
+struct SpiedRendering
+{
+    std::uint32_t        colorCount = 0u;
+    vk::AttachmentLoadOp colorLoadOp{};
+    std::array<float, 4> colorClear{};
+    bool                 hasDepth = false;
+    vk::AttachmentLoadOp depthLoadOp{};
+    float                depthClear = 0.0f;
+};
+
+std::mutex                  gRenderingMutex;
+std::vector<SpiedRendering> gSpiedRenderings;
+PFN_vkCmdBeginRendering     gRealBeginRendering = nullptr;
+
+VKAPI_ATTR void VKAPI_CALL
+spyBeginRendering(VkCommandBuffer commandBuffer, const VkRenderingInfo* info)
+{
+    SpiedRendering spied{.colorCount = info->colorAttachmentCount};
+    if (info->colorAttachmentCount > 0u)
+    {
+        const VkRenderingAttachmentInfo& color = info->pColorAttachments[0];
+        spied.colorLoadOp                      = static_cast<vk::AttachmentLoadOp>(color.loadOp);
+        std::ranges::copy(std::span{color.clearValue.color.float32}, spied.colorClear.begin());
+    }
+    if (info->pDepthAttachment != nullptr)
+    {
+        spied.hasDepth    = true;
+        spied.depthLoadOp = static_cast<vk::AttachmentLoadOp>(info->pDepthAttachment->loadOp);
+        spied.depthClear  = info->pDepthAttachment->clearValue.depthStencil.depth;
+    }
+    {
+        const std::scoped_lock lock{gRenderingMutex};
+        gSpiedRenderings.push_back(spied);
+    }
+
+    gRealBeginRendering(commandBuffer, info);
+}
+
+/**
+ * Notes what each vkCmdBeginRendering of the render thread asked for, by swapping the call in the
+ * device's function table for a forwarder, like BindCounter: the clear color, the depth attachment
+ * and its load op of a real frame, which no swapchain image lets a test read back. Make it while
+ * the render thread is idle, and read after a join().
+ */
+// The state is in globals, because the forwarder it swaps in is a plain function; the members are
+// the interface of the instance.
+// NOLINTBEGIN(readability-convert-member-functions-to-static)
+class RenderingSpy
+{
+public:
+    explicit RenderingSpy(vk::raii::detail::DeviceDispatcher& table)
+        : mTable{table}
+    {
+        gSpiedRenderings.clear();
+        gRealBeginRendering       = table.vkCmdBeginRendering;
+        table.vkCmdBeginRendering = spyBeginRendering;
+    }
+
+    ~RenderingSpy() { mTable.vkCmdBeginRendering = gRealBeginRendering; }
+
+    RenderingSpy(const RenderingSpy&)            = delete;
+    RenderingSpy& operator=(const RenderingSpy&) = delete;
+
+    [[nodiscard]] std::vector<SpiedRendering>
+    renderings() const
+    {
+        const std::scoped_lock lock{gRenderingMutex};
+
+        return gSpiedRenderings;
+    }
+
+private:
+    vk::raii::detail::DeviceDispatcher& mTable;
+};
+
+// NOLINTEND(readability-convert-member-functions-to-static)
+
 void
 releaseTheUploadRing(Renderer& renderer)
 {
@@ -1377,13 +1476,16 @@ TEST_F(RendererTest, indexedMeshIsDrawn)
 }
 
 /**
- * A draw does not bind what the draw before it bound in the same frame. One frame draws, in order:
- * mesh A (indexed) twice, A with another program, a non-indexed mesh B, A again, and an indexed
- * mesh C. Binds that reach the driver, with the reason for each:
- *   pipeline 2: the first draw, and A's second program;
- *   vertex buffers 4: A, B, A again (B came between), C;
- *   index buffers 2: A, and C. A is not bound again after B, because a non-indexed draw leaves the
- *   bound index buffer as it was.
+ * A draw does not bind what the draw before it bound in the same frame. One frame submits, in
+ * order: mesh A (indexed) twice, A with another program, a non-indexed mesh B, A again, and an
+ * indexed mesh C. The renderer records them sorted by pipeline, material and mesh: A, A with the
+ * first program; then A, A, B, C with the other one. Binds that reach the driver, with the reason
+ * for each:
+ *   pipeline 2: the first draw, and the first of the other program;
+ *   vertex buffers 3: A, B, C (the program changes between A and A, which is no reason to bind it
+ *   again);
+ *   index buffers 2: A, and C. B draws without indices and leaves the bound index buffer as it
+ *   was.
  * Without the skip it is 6, 6 and 5.
  */
 // The score comes from the gtest assertion macros.
@@ -1441,7 +1543,7 @@ TEST_F(RendererTest, repeatedBindsAreSkipped)
         EXPECT_FALSE(renderer->failure());
         EXPECT_EQ(RendererTestAccess::pipelineCount(*renderer), 2u);
         EXPECT_EQ(gPipelineBinds, 2);
-        EXPECT_EQ(gVertexBufferBinds, 4);
+        EXPECT_EQ(gVertexBufferBinds, 3);
         EXPECT_EQ(gIndexBufferBinds, 2);
     }
 }
@@ -2099,6 +2201,7 @@ TEST_F(RendererTest, resizeRecreatesAtRequestedExtent)
     }
 }
 
+// NOLINTBEGIN(readability-magic-numbers): the numbers are sizes and distances of the scenes.
 namespace
 {
 /** RGBA, one byte each: what DrawRecording draws into a target of this format. */
@@ -2142,19 +2245,22 @@ drawToPixels(Renderer& renderer, const FramePacket& packet, std::uint32_t size)
     const vk::Extent2D        extent{.width = size, .height = size};
     PipelineTable             pipelines{device};
     std::vector<ResolvedDraw> resolved;
-    DrawRecording::resolve(packet, pipelines, gReadbackFormat, resolved);
+    const vk::Format          depthFormat = RendererTestAccess::depthFormat(renderer);
+    DrawRecording::resolve(packet, pipelines, gReadbackFormat, depthFormat, resolved);
 
     const RenderTargetPtr target = device->createRenderTarget(
         extent,
         gReadbackFormat,
         vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc);
+    const RenderTargetPtr depthTarget = device->createRenderTarget(
+        extent, depthFormat, vk::ImageUsageFlagBits::eDepthStencilAttachment);
     const HeapBufferPtr frameBlock = device->createHeapBuffer(heap, sizeof(FrameBlock));
     DrawRecording::writeFrameBlock(*frameBlock, packet, extent);
 
     const vk::DeviceSize bytes = vk::DeviceSize{size} * size * 4u;
     const BufferPtr      readback =
         device->createBuffer({.size = bytes, .usage = vk::BufferUsageFlagBits::eTransferDst},
-                             {.flags = AllocationFlag::eHostSequentialWrite});
+                             {.flags = AllocationFlag::eHostRandomAccess});
 
     constexpr vk::ImageSubresourceRange kColor{
         .aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = 1u, .layerCount = 1u};
@@ -2171,11 +2277,12 @@ drawToPixels(Renderer& renderer, const FramePacket& packet, std::uint32_t size)
                               .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                               .subresourceRange    = kColor});
     {
-        auto pass = recorder.beginRendering(
-            {{.attachment = target,
-              .loadOp     = vk::AttachmentLoadOp::eClear,
-              .storeOp    = vk::AttachmentStoreOp::eStore,
-              .clearValue = vk::ClearColorValue{std::array{0.0f, 0.0f, 0.0f, 1.0f}}}});
+        auto depth = DrawRecording::prepareDepth(recorder, depthTarget);
+        auto pass  = recorder.beginRendering({{.attachment = target,
+                                               .loadOp     = vk::AttachmentLoadOp::eClear,
+                                               .storeOp    = vk::AttachmentStoreOp::eStore,
+                                               .clearValue = DrawRecording::clearColor(packet)}},
+                                             depth);
         DrawRecording::recordDraws(pass, packet, resolved, pipelines, frameBlock, extent);
     }
     recorder.setImageBarrier(target,
@@ -2203,55 +2310,130 @@ drawToPixels(Renderer& renderer, const FramePacket& packet, std::uint32_t size)
     // Waits the fence of the submit.
     pool->reset();
 
-    // Read through mapForWrite(), which is meant for writing: legal on lavapipe, whose host
-    // memory is coherent.
-    const auto mapping = readback->mapForWrite();
+    const auto mapping = readback->mapForRead();
     const auto pixels  = mapping.bytes().first(bytes);
 
     return {pixels.begin(), pixels.end()};
 }
 
-/** A quad of side 2 * @p half around the origin in the plane z = 0, two floats of position and
- *  two of uv per vertex, drawn through indices. */
+/**
+ * The quad of the example: a square of side 2 * @p half around the origin in the plane z = 0, two
+ * floats of position and two of uv per vertex, drawn through indices. It goes bottom left, top
+ * left, top right, which is clockwise for a viewer, and its uv row 0 is at the top. With
+ * @p reversed its indices run the other way round.
+ */
 Mesh
-makeQuad(Renderer& renderer, float half)
+makeQuad(Renderer& renderer, float half, bool reversed = false)
 {
     const std::array<float, 16>        vertices{-half,
                                                 -half,
                                                 0.0f,
-                                                0.0f,
+                                                1.0f, // bottom left
                                                 -half,
                                                 half,
                                                 0.0f,
-                                                1.0f,
+                                                0.0f, // top left
                                                 half,
                                                 half,
                                                 1.0f,
-                                                1.0f,
+                                                0.0f, // top right
                                                 half,
                                                 -half,
                                                 1.0f,
-                                                0.0f};
-    const std::array<std::uint32_t, 6> indices{0u, 1u, 2u, 2u, 3u, 0u};
+                                                1.0f}; // bottom right
+    const std::array<std::uint32_t, 6> forward{0u, 1u, 2u, 2u, 3u, 0u};
+    const std::array<std::uint32_t, 6> backward{2u, 1u, 0u, 0u, 3u, 2u};
 
-    return renderer.createMesh({.name     = "quad",
+    return renderer.createMesh({.name     = reversed ? "reversed quad" : "quad",
                                 .vertices = std::as_bytes(std::span{vertices}),
-                                .indices  = indices,
+                                .indices  = reversed ? backward : forward,
                                 .layout   = gTexturedLayout});
 }
 
-/** The camera that looks at the plane z = 0 from the distance of 20, where the near plane is not
- *  in the way. */
+/** A position of three floats and a color of four: what the WorldSpace shader reads. */
+constexpr VertexLayout gColoredLayout = vertexLayout(
+    7u * sizeof(float),
+    {{VertexFormat::eFloat3, 0u}, {VertexFormat::eFloat4, sizeOf(VertexFormat::eFloat3)}});
+
+/** What makeColoredQuad() makes. */
+struct ColoredQuad
+{
+    /** Half the side. */
+    float half;
+    /** The z of its plane. */
+    float          depth;
+    Math::Vector4f color;
+};
+
+/** A square in the plane z = quad.depth, centered on the axis, every vertex of the same color;
+ *  clockwise for a viewer, like makeQuad(). */
+Mesh
+makeColoredQuad(Renderer& renderer, const ColoredQuad& quad)
+{
+    const auto& [half, depth, color] = quad;
+    std::vector<float> vertices;
+    vertices.reserve(std::size_t{4u} * 7u);
+    for (const auto [across, height] : {std::pair{-half, -half},
+                                        std::pair{-half, half},
+                                        std::pair{half, half},
+                                        std::pair{half, -half}})
+    {
+        vertices.insert(vertices.end(),
+                        {across, height, depth, color.r, color.g, color.b, color.a});
+    }
+    const std::array<std::uint32_t, 6> indices{0u, 1u, 2u, 2u, 3u, 0u};
+
+    return renderer.createMesh({.name     = "colored quad",
+                                .vertices = std::as_bytes(std::span{vertices}),
+                                .indices  = indices,
+                                .layout   = gColoredLayout});
+}
+
+/** A camera at the distance of 20 before the plane z = 0, showing @p height world units from the
+ *  bottom to the top. */
 CameraView
-cameraBeforeThePlane()
+cameraBeforeThePlane(float height = 10.0f)
 {
     constexpr float kDistance = 20.0f;
 
-    return CameraView{.position = {0.0f, 0.0f, -kDistance}};
+    return CameraView{.position   = {0.0f, 0.0f, -kDistance},
+                      .projection = Orthographic{.height = height}};
 }
 
 /** The brightest value of a color channel. */
 constexpr std::uint8_t gFull = 255u;
+
+/** The four channels of the pixel at column @p x and row @p y (rows from the top) of the square
+ *  image @p pixels of @p size pixels a side. */
+std::array<int, 4>
+pixelAt(const std::vector<std::byte>& pixels,
+        std::uint32_t                 size,
+        std::uint32_t                 column,
+        std::uint32_t                 row)
+{
+    const std::size_t first = ((std::size_t{row} * size) + column) * 4u;
+
+    return {std::to_integer<int>(pixels[first]),
+            std::to_integer<int>(pixels[first + 1u]),
+            std::to_integer<int>(pixels[first + 2u]),
+            std::to_integer<int>(pixels[first + 3u])};
+}
+
+/** Whether every channel of @p actual is within one step of @p expected: a blend rounds either
+ *  way. */
+bool
+nearlyEqual(const std::array<int, 4>& actual, const std::array<int, 4>& expected)
+{
+    for (std::size_t channel = 0u; channel < actual.size(); ++channel)
+    {
+        if (std::abs(actual[channel] - expected[channel]) > 1)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
 
 /** Whether the pixel @p index of @p pixels has these colors. */
 bool
@@ -2291,7 +2473,7 @@ TEST_F(RendererTest, textureFilterSelectsTheSamplerOfTheDraw)
                                      .width  = 2u,
                                      .height = 2u,
                                      .filter = filter});
-        FramePacket packet{.camera = cameraBeforeThePlane()};
+        FramePacket packet{.camera = cameraBeforeThePlane(2.0f * kHalf)};
         RenderQueueTestAccess::addDraw(packet,
                                        makeQuad(*renderer, kHalf),
                                        makeTexturedMaterial(*renderer, texture),
@@ -2362,7 +2544,7 @@ TEST_F(RendererTest, renderedFramesWriteTheFrameBlockOfTheirSlot)
     EXPECT_FALSE(renderer->failure());
 
     const Extent extent = RendererTestAccess::swapchainExtent(*renderer);
-    ASSERT_NE(camera.view(), camera.projection(extent));
+    ASSERT_NE(camera.view(), camera.projectionMatrix(extent));
 
     const auto blocks = RendererTestAccess::frameBlocks(*renderer);
     ASSERT_EQ(blocks.size(), 2u);
@@ -2380,7 +2562,7 @@ TEST_F(RendererTest, renderedFramesWriteTheFrameBlockOfTheirSlot)
         }
 
         EXPECT_EQ(block.view, camera.view());
-        EXPECT_EQ(block.projection, camera.projection(extent));
+        EXPECT_EQ(block.projection, camera.projectionMatrix(extent));
         EXPECT_EQ(block.viewProjection, camera.viewProjection(extent));
         EXPECT_EQ(block.cameraPosition, Math::Vector4f(camera.position, 1.0f));
         EXPECT_EQ(
@@ -2435,8 +2617,9 @@ TEST_F(RendererTest, recordedDrawsRetainTheFrameBlockUntilThePoolIsReset)
                                                       .levelCount = 1u,
                                                       .layerCount = 1u}});
     {
-        auto pass = recorder.beginRendering({{.attachment = target}});
-        DrawRecording::recordDraws(pass, packet, {}, PipelineTable{device}, frameBlock, extent);
+        const PipelineTable pipelines{device};
+        auto                pass = recorder.beginRendering({{.attachment = target}});
+        DrawRecording::recordDraws(pass, packet, {}, pipelines, frameBlock, extent);
     }
     frameBlock.reset();
     auto executable = recorder.finish();
@@ -2481,4 +2664,447 @@ TEST_F(RendererTest, frameBlockTimeAndViewportReachTheShader)
         ASSERT_TRUE(pixelIs(second, pixel, 153u, 0u, gFull)) << "pixel " << pixel;
     }
 }
+
+namespace
+{
+constexpr std::uint32_t gReadbackSize = 64u;
+
+constexpr Math::Vector4f gRed{1.0f, 0.0f, 0.0f, 1.0f};
+constexpr Math::Vector4f gGreen{0.0f, 1.0f, 0.0f, 1.0f};
+constexpr Math::Vector4f gBlue{0.0f, 0.0f, 1.0f, 1.0f};
+
+constexpr std::array<int, 4> gRedPixel{255, 0, 0, 255};
+constexpr std::array<int, 4> gGreenPixel{0, 255, 0, 255};
+constexpr std::array<int, 4> gBluePixel{0, 0, 255, 255};
+} // namespace
+
+/**
+ * With the depth test on, the nearer of two overlapping quads wins whatever the order they are
+ * drawn in, under a perspective camera. The near quad is the older mesh, so the sort puts it first
+ * and the far quad, which a missing depth test would let overwrite it, second. The camera also
+ * clears the target to its clear color, which shows where no quad is.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, nearerQuadWinsWithDepthUnderAPerspectiveCamera)
+{
+    auto renderer = makeRenderer();
+
+    const Mesh nearQuad = makeColoredQuad(*renderer, {.half = 1.0f, .depth = 5.0f, .color = gRed});
+    const Mesh farQuad =
+        makeColoredQuad(*renderer, {.half = 4.0f, .depth = 10.0f, .color = gGreen});
+    const Material material = makeMaterial(*renderer, "WorldSpace");
+
+    // A right angle of view: the near quad fills a fifth of the half height, the far one two
+    // fifths.
+    FramePacket packet{.camera = {.projection = Perspective{.verticalFovRadians =
+                                                                std::numbers::pi_v<float> / 2.0f},
+                                  .clearColor = gBlue}};
+    RenderQueueTestAccess::addDraw(packet, nearQuad, material, Math::Matrix4x4f{1.0f});
+    RenderQueueTestAccess::addDraw(packet, farQuad, material, Math::Matrix4x4f{1.0f});
+
+    const std::vector<std::byte> pixels = drawToPixels(*renderer, packet, gReadbackSize);
+
+    constexpr std::uint32_t kMiddle = gReadbackSize / 2u;
+    EXPECT_EQ(pixelAt(pixels, gReadbackSize, kMiddle, kMiddle), gRedPixel);
+    EXPECT_EQ(pixelAt(pixels, gReadbackSize, kMiddle + 10u, kMiddle), gGreenPixel);
+    EXPECT_EQ(pixelAt(pixels, gReadbackSize, 2u, 2u), gBluePixel);
+}
+
+/**
+ * Alpha blending mixes the color of a draw with what is behind it by its alpha: half red over blue
+ * is half of each; additive adds half the red to the blue; opaque ignores the alpha. The quad
+ * does not write depth, which keeps its order free.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, blendModesMixTheColorWithWhatIsBehind)
+{
+    auto renderer = makeRenderer();
+
+    const Mesh quad = makeColoredQuad(
+        *renderer, {.half = 2.0f, .depth = 0.0f, .color = {1.0f, 0.0f, 0.0f, 0.5f}});
+
+    const auto draw = [&](BlendMode blend)
+    {
+        const Material material =
+            renderer->createMaterial({.shader = renderer->getShader("WorldSpace"),
+                                      .state  = {.blend = blend, .depth = DepthMode::eTestOnly}});
+        FramePacket packet{.camera = {.position = {0.0f, 0.0f, -20.0f}, .clearColor = gBlue}};
+        RenderQueueTestAccess::addDraw(packet, quad, material, Math::Matrix4x4f{1.0f});
+
+        const auto pixels = drawToPixels(*renderer, packet, gReadbackSize);
+
+        return pixelAt(pixels, gReadbackSize, gReadbackSize / 2u, gReadbackSize / 2u);
+    };
+
+    // 0.5 of 255 is 127.5: either neighbour.
+    EXPECT_TRUE(nearlyEqual(draw(BlendMode::eAlpha), {128, 0, 128, 255}));
+    EXPECT_TRUE(nearlyEqual(draw(BlendMode::eAdditive), {128, 0, 255, 255}));
+    EXPECT_EQ(draw(BlendMode::eOpaque), (std::array<int, 4>{255, 0, 0, 128}));
+}
+
+/**
+ * World +Y is up the screen and the uv row 0 of a texture is at the top of the quad of the example:
+ * a texture with a red row 0 and a blue row 1 is red in the upper half of the image and blue in the
+ * lower, in the readback, whose rows run from the top.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, plusYIsUpAndTheFirstTextureRowIsAtTheTop)
+{
+    constexpr float kHalf = 2.0f;
+
+    auto renderer = makeRenderer();
+
+    // Two pixels wide, two high: row 0 red, row 1 blue.
+    const std::array<std::uint8_t, 16> pixelsOfTexture{
+        255, 0, 0, 255, 255, 0, 0, 255, 0, 0, 255, 255, 0, 0, 255, 255};
+    const Texture texture =
+        renderer->createTexture({.pixels = std::as_bytes(std::span{pixelsOfTexture}),
+                                 .width  = 2u,
+                                 .height = 2u,
+                                 .format = TextureFormat::eRGBA8Unorm,
+                                 .filter = Filter::eNearest});
+
+    FramePacket packet{.camera = cameraBeforeThePlane(2.0f * kHalf)};
+    RenderQueueTestAccess::addDraw(packet,
+                                   makeQuad(*renderer, kHalf),
+                                   makeTexturedMaterial(*renderer, texture),
+                                   Math::Matrix4x4f{1.0f});
+
+    const std::vector<std::byte> pixels = drawToPixels(*renderer, packet, gReadbackSize);
+
+    EXPECT_EQ(pixelAt(pixels, gReadbackSize, 32u, 4u), gRedPixel);
+    EXPECT_EQ(pixelAt(pixels, gReadbackSize, 32u, 59u), gBluePixel);
+}
+
+/**
+ * eBack keeps the quad of the example, which is clockwise for a viewer, and discards the same quad
+ * with its indices in the other order. The front face of the pipeline is clockwise: this is the
+ * readback that shows what a driver does with that choice. A material without culling draws both.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, backFaceCullingKeepsTheClockwiseQuadAndDiscardsTheOtherWay)
+{
+    constexpr float kHalf = 2.0f;
+
+    auto renderer = makeRenderer();
+
+    const std::array<std::uint8_t, 4> white{255, 255, 255, 255};
+    const Texture texture = renderer->createTexture({.pixels = std::as_bytes(std::span{white}),
+                                                     .width  = 1u,
+                                                     .height = 1u,
+                                                     .format = TextureFormat::eRGBA8Unorm});
+    const auto    center  = [&](bool reversed, CullMode cull)
+    {
+        const Material material = renderer->createMaterial(
+            {.shader     = renderer->getShader("Textured"),
+             .parameters = {{"tint", Math::Vector4f{1.0f}}, {"albedo", texture}},
+             .state      = {.cull = cull}});
+        FramePacket packet{.camera = cameraBeforeThePlane(2.0f * kHalf)};
+        RenderQueueTestAccess::addDraw(
+            packet, makeQuad(*renderer, kHalf, reversed), material, Math::Matrix4x4f{1.0f});
+
+        const auto pixels = drawToPixels(*renderer, packet, gReadbackSize);
+
+        return pixelAt(pixels, gReadbackSize, gReadbackSize / 2u, gReadbackSize / 2u);
+    };
+
+    constexpr std::array<int, 4> kWhitePixel{255, 255, 255, 255};
+    constexpr std::array<int, 4> kClearPixel{0, 0, 0, 255};
+    EXPECT_EQ(center(false, CullMode::eBack), kWhitePixel);
+    EXPECT_EQ(center(true, CullMode::eBack), kClearPixel);
+    EXPECT_EQ(center(false, CullMode::eNone), kWhitePixel);
+    EXPECT_EQ(center(true, CullMode::eNone), kWhitePixel);
+}
+
+/**
+ * An object at the default Transform under the default Camera is on the screen: the default
+ * orthographic projection has its near plane behind the camera, so the plane z = 0 is inside it.
+ * A near plane of 1 would clip the quad away, silently.
+ */
+TEST_F(RendererTest, anObjectAtTheDefaultTransformUnderTheDefaultCameraIsVisible)
+{
+    auto renderer = makeRenderer();
+
+    Scene scene;
+    scene.createGameObject().addComponent<Camera>();
+    scene.createGameObject().addComponent<MeshRenderer>(MeshRenderer{
+        .mesh     = makeColoredQuad(*renderer, {.half = 1.0f, .depth = 0.0f, .color = gGreen}),
+        .material = makeMaterial(*renderer, "WorldSpace")});
+    scene.update({});
+
+    Detail::DrawCheck check;
+    RenderQueue       queue = RenderQueueTestAccess::make(check);
+    scene.onDraw({}, queue);
+
+    const std::vector<std::byte> pixels =
+        drawToPixels(*renderer, RenderQueueTestAccess::packet(std::move(queue)), gReadbackSize);
+
+    EXPECT_EQ(pixelAt(pixels, gReadbackSize, gReadbackSize / 2u, gReadbackSize / 2u), gGreenPixel);
+}
+
+/**
+ * The frame lists the opaque draws first, sorted by pipeline, then material, then mesh, whatever
+ * order they were submitted in; and the blended ones after them, from the farthest to the nearest
+ * of the camera, draws at the same distance in the order they were submitted in. The expected
+ * order is spelled out from the ids of the meshes and the materials, which grow in the order of
+ * creation, and the pipelines, which are numbered in the order the opaque draws ask for them.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, drawsAreListedOpaqueFirstSortedAndBlendedFarToNear)
+{
+    auto renderer = makeRenderer();
+
+    const Mesh first  = makeMesh(*renderer, gCompatibleLayout);
+    const Mesh second = makeMesh(*renderer, gCompatibleLayout);
+    const Mesh third  = makeMesh(*renderer, gCompatibleLayout);
+
+    const Material program = makeMaterial(*renderer, "WorldSpace");
+    const Material other   = makeMaterial(*renderer, "ScreenSpacePositionColor");
+    // The program of the first, made after it: the same pipeline, the next material id.
+    const Material later   = makeMaterial(*renderer, "WorldSpace");
+    const Material blended = renderer->createMaterial(
+        {.shader = renderer->getShader("WorldSpace"), .state = {.blend = BlendMode::eAlpha}});
+
+    const auto atDepth = [](float depth)
+    {
+        return glm::translate(Math::Matrix4x4f{1.0f}, Math::Vector3f{0.0f, 0.0f, depth});
+    };
+    FramePacket packet;
+    // 0..4 opaque: the pipelines are numbered 0 for "other" and 1 for "program", in this order.
+    RenderQueueTestAccess::addDraw(packet, third, other, atDepth(0.0f));
+    RenderQueueTestAccess::addDraw(packet, first, program, atDepth(0.0f));
+    RenderQueueTestAccess::addDraw(packet, second, program, atDepth(0.0f));
+    RenderQueueTestAccess::addDraw(packet, first, other, atDepth(0.0f));
+    RenderQueueTestAccess::addDraw(packet, first, later, atDepth(0.0f));
+    // 5..8 blended: z 5, 9, 5 and -3.
+    RenderQueueTestAccess::addDraw(packet, first, blended, atDepth(5.0f));
+    RenderQueueTestAccess::addDraw(packet, first, blended, atDepth(9.0f));
+    RenderQueueTestAccess::addDraw(packet, second, blended, atDepth(5.0f));
+    RenderQueueTestAccess::addDraw(packet, first, blended, atDepth(-3.0f));
+
+    PipelineTable             pipelines{RendererTestAccess::device(*renderer)};
+    std::vector<ResolvedDraw> resolved;
+    DrawRecording::resolve(
+        packet, pipelines, gReadbackFormat, RendererTestAccess::depthFormat(*renderer), resolved);
+
+    std::vector<std::uint32_t> order;
+    order.reserve(resolved.size());
+    for (const ResolvedDraw& draw : resolved)
+    {
+        order.push_back(draw.index);
+    }
+    // -0 and +0 are one distance; a nearer draw has the larger key.
+    EXPECT_EQ(DrawRecording::blendedKey(0.0f), DrawRecording::blendedKey(-0.0f));
+    EXPECT_LT(DrawRecording::blendedKey(9.0f), DrawRecording::blendedKey(5.0f));
+    EXPECT_LT(DrawRecording::blendedKey(0.0f), DrawRecording::blendedKey(-3.0f));
+    EXPECT_LT(DrawRecording::blendedKey(5.0f), DrawRecording::blendedKey(0.0f));
+
+    // Pipeline 0, "other": draws 3 (mesh first) and 0 (mesh third); pipeline 1, "program": by
+    // material first, so draws 1 and 2 (the material "program") before draw 4 (the material
+    // "later"), though draw 4 has the first mesh. Then z 9 (draw 6), z 5 in the order submitted
+    // (5, then 7), and z -3 (draw 8).
+    EXPECT_EQ(order, (std::vector<std::uint32_t>{3u, 0u, 1u, 2u, 4u, 6u, 5u, 7u, 8u}));
+}
+
+/**
+ * Two blended quads that overlap mix with each other and with what is behind them, when the
+ * material does not write depth (DepthMode::eTestOnly): red and green, half transparent, over
+ * blue. The z is that of the world matrix of a draw. At the same z the one submitted last is on
+ * top: red then green is (0.25, 0.5, 0.25), green then red is (0.5, 0.25, 0.25). At different z the
+ * sort puts the farthest first, whatever the order of the submits: the nearer red over the farther
+ * green is (0.5, 0.25, 0.25), though the red was submitted first. The default depth mode, which
+ * writes, lets the first of two quads at the same z hide the second: only the red mixes, (0.5, 0,
+ * 0.5).
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, blendedQuadsMixWhenTheyDoNotWriteDepthAndAreSortedFarToNear)
+{
+    auto renderer = makeRenderer();
+
+    const auto pixelOf = [&](DepthMode             depth,
+                             const Math::Vector4f& firstColor,
+                             float                 firstDepth,
+                             const Math::Vector4f& secondColor,
+                             float                 secondDepth)
+    {
+        const Material blended =
+            renderer->createMaterial({.shader = renderer->getShader("WorldSpace"),
+                                      .state  = {.blend = BlendMode::eAlpha, .depth = depth}});
+        FramePacket packet{.camera = {.position = {0.0f, 0.0f, -20.0f}, .clearColor = gBlue}};
+        RenderQueueTestAccess::addDraw(
+            packet,
+            makeColoredQuad(*renderer, {.half = 2.0f, .depth = 0.0f, .color = firstColor}),
+            blended,
+            glm::translate(Math::Matrix4x4f{1.0f}, Math::Vector3f{0.0f, 0.0f, firstDepth}));
+        RenderQueueTestAccess::addDraw(
+            packet,
+            makeColoredQuad(*renderer, {.half = 2.0f, .depth = 0.0f, .color = secondColor}),
+            blended,
+            glm::translate(Math::Matrix4x4f{1.0f}, Math::Vector3f{0.0f, 0.0f, secondDepth}));
+
+        const auto pixels = drawToPixels(*renderer, packet, gReadbackSize);
+
+        return pixelAt(pixels, gReadbackSize, gReadbackSize / 2u, gReadbackSize / 2u);
+    };
+
+    constexpr Math::Vector4f kHalfRed{1.0f, 0.0f, 0.0f, 0.5f};
+    constexpr Math::Vector4f kHalfGreen{0.0f, 1.0f, 0.0f, 0.5f};
+
+    EXPECT_TRUE(nearlyEqual(pixelOf(DepthMode::eTestOnly, kHalfRed, 0.0f, kHalfGreen, 0.0f),
+                            {64, 128, 64, 255}));
+    EXPECT_TRUE(nearlyEqual(pixelOf(DepthMode::eTestOnly, kHalfGreen, 0.0f, kHalfRed, 0.0f),
+                            {128, 64, 64, 255}));
+    EXPECT_TRUE(nearlyEqual(pixelOf(DepthMode::eTestOnly, kHalfRed, -5.0f, kHalfGreen, 5.0f),
+                            {128, 64, 64, 255}));
+    EXPECT_TRUE(nearlyEqual(pixelOf(DepthMode::eTestAndWrite, kHalfRed, 0.0f, kHalfGreen, 0.0f),
+                            {128, 0, 128, 255}));
+}
+
+/**
+ * DepthMode::eTestOnly tests against the depth buffer and does not write it. A nearer quad of that
+ * mode, drawn first, leaves no depth behind, so a farther opaque quad drawn after it on the same
+ * pixels shows; a nearer quad of the default mode hides the farther one. The nearer quad is drawn
+ * first because its pipeline is asked for first, and the sort keeps the pipelines in that order.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, aTestOnlyQuadLeavesNoDepthForTheQuadBehindIt)
+{
+    auto renderer = makeRenderer();
+
+    const Mesh nearQuad = makeColoredQuad(*renderer, {.half = 2.0f, .depth = -5.0f, .color = gRed});
+    const Mesh farQuad = makeColoredQuad(*renderer, {.half = 2.0f, .depth = 5.0f, .color = gGreen});
+
+    const auto centerWith = [&](DepthMode nearDepth)
+    {
+        const Material nearMaterial = renderer->createMaterial(
+            {.shader = renderer->getShader("WorldSpace"), .state = {.depth = nearDepth}});
+        const Material farMaterial = makeMaterial(*renderer, "WorldSpace");
+        // Drawn in the order of their pipelines: the state of the near one comes first.
+        FramePacket packet{.camera = {.position = {0.0f, 0.0f, -20.0f}, .clearColor = gBlue}};
+        RenderQueueTestAccess::addDraw(packet, nearQuad, nearMaterial, Math::Matrix4x4f{1.0f});
+        RenderQueueTestAccess::addDraw(packet, farQuad, farMaterial, Math::Matrix4x4f{1.0f});
+
+        const auto pixels = drawToPixels(*renderer, packet, gReadbackSize);
+
+        return pixelAt(pixels, gReadbackSize, gReadbackSize / 2u, gReadbackSize / 2u);
+    };
+
+    EXPECT_EQ(centerWith(DepthMode::eTestOnly), gGreenPixel);
+    EXPECT_EQ(centerWith(DepthMode::eTestAndWrite), gRedPixel);
+}
+
+/**
+ * A real frame clears its color target to the clear color of the camera of the frame, and renders
+ * into a depth target that it clears to 1: no swapchain image can be read back, so the call that
+ * the render thread makes to begin the pass is read instead.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, aRealFrameClearsToTheCameraColorAndRendersIntoAClearedDepthTarget)
+{
+    constexpr Math::Vector4f kClear{0.25f, 0.5f, 0.75f, 1.0f};
+
+    auto renderer = makeRenderer();
+    renderer->addRenderable(std::make_shared<LambdaRenderable>(
+        [kClear](const FrameContext& /*context*/, RenderQueue& queue)
+        {
+            queue.setCamera(CameraView{.clearColor = kClear});
+        }));
+
+    const RenderingSpy spy{RendererTestAccess::dispatcher(*renderer)};
+    for (int frame = 0; frame < 3; ++frame)
+    {
+        renderer->submitFrame({});
+    }
+    RendererTestAccess::join(*renderer);
+    ASSERT_FALSE(renderer->failure());
+
+    const std::vector<SpiedRendering> renderings = spy.renderings();
+    ASSERT_GE(renderings.size(), 2u);
+    for (const SpiedRendering& rendering : renderings)
+    {
+        EXPECT_EQ(rendering.colorCount, 1u);
+        EXPECT_EQ(rendering.colorLoadOp, vk::AttachmentLoadOp::eClear);
+        EXPECT_EQ(rendering.colorClear, (std::array<float, 4>{0.25f, 0.5f, 0.75f, 1.0f}));
+        EXPECT_TRUE(rendering.hasDepth);
+        EXPECT_EQ(rendering.depthLoadOp, vk::AttachmentLoadOp::eClear);
+        EXPECT_EQ(rendering.depthClear, 1.0f);
+    }
+}
+
+/**
+ * Frames in flight draw into one depth target, and the barrier at the start of a frame makes the
+ * depth writes of the frame before visible to it. The synchronization validation of the layer,
+ * which the fixture turns on when the layer is installed, would report a depth write that races
+ * the write of the frame before; every validation message fails the test. The test asserts that the
+ * layer is installed: without it nothing here would see anything.
+ */
+TEST_F(RendererTest, framesInFlightShareTheDepthTargetWithoutASynchronizationMessage)
+{
+    ASSERT_TRUE(mValidationInstalled)
+        << "VK_LAYER_KHRONOS_validation or VK_EXT_debug_utils is missing, so this test would see "
+           "nothing.";
+
+    Renderer::Config config = makeConfig();
+    config.framesInFlight   = 2u;
+
+    auto renderer = makeRenderer(config);
+    renderer->addRenderable(
+        drawing(makeColoredQuad(*renderer, {.half = 4.0f, .depth = 0.0f, .color = gRed}),
+                makeMaterial(*renderer, "WorldSpace")));
+
+    constexpr int kFrames = 12;
+    for (int frame = 0; frame < kFrames; ++frame)
+    {
+        renderer->submitFrame({});
+    }
+    RendererTestAccess::join(*renderer);
+
+    EXPECT_FALSE(renderer->failure());
+}
+
+/**
+ * The depth target has the size of the image that the frame acquired. A resize that shrinks the
+ * swapchain below the target, and one that grows it above, draw without a validation message and
+ * leave a target of the size of the swapchain: attachments have to cover the render area.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, resizeGivesTheDepthTargetTheSizeOfTheSwapchain)
+{
+    ASSERT_TRUE(mValidationInstalled);
+
+    auto renderer = makeRenderer();
+    renderer->addRenderable(
+        drawing(makeColoredQuad(*renderer, {.half = 4.0f, .depth = 0.0f, .color = gRed}),
+                makeMaterial(*renderer, "WorldSpace")));
+
+    for (const std::uint32_t size : {gStartExtent.width, gResizedExtent, gResizedAgainExtent * 2u})
+    {
+        renderer->resize({.width = size, .height = size});
+        for (int frame = 0; frame < 3; ++frame)
+        {
+            renderer->submitFrame({});
+        }
+        EXPECT_TRUE(becomesTrue(
+            [&]
+            {
+                return RendererTestAccess::packets(*renderer).empty();
+            }));
+    }
+    RendererTestAccess::join(*renderer);
+
+    EXPECT_FALSE(renderer->failure());
+    EXPECT_EQ(RendererTestAccess::depthExtent(*renderer),
+              RendererTestAccess::swapchainExtent(*renderer));
+}
+
+// NOLINTEND(readability-magic-numbers)
 } // namespace VOG::Tests

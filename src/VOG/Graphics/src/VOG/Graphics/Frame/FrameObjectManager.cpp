@@ -1,16 +1,7 @@
 #include "VOG/Graphics/Frame/FrameObjectManager.hpp"
 
-#include <VOG/Common/Assert.hpp>
-
-#include <algorithm>
-
 namespace VOG::Graphics::Frame
 {
-namespace
-{
-constexpr std::size_t gDefaultPoolSize = 32;
-}
-
 FrameObjectManager::FrameObjectManager(const Vulkan::DevicePtr& device, Counts counts)
     : mDevice{device}
     , mRenderFrame{0u}

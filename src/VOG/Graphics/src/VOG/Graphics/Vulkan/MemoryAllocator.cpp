@@ -40,6 +40,10 @@ toVma(const MemoryAllocator::AllocationParameters& parameters)
     {
         flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
     }
+    if (parameters.flags & AllocationFlag::eHostRandomAccess)
+    {
+        flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
+    }
 
     return {.flags = flags, .usage = VMA_MEMORY_USAGE_AUTO};
 }

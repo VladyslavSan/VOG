@@ -17,15 +17,23 @@ using vk::PolygonMode;
 using vk::PrimitiveTopology;
 using CullMode = vk::CullModeFlagBits;
 
+/**
+ * The enums of Vulkan-Hpp have a signed underlying type (all but CullMode, whose flags are
+ * unsigned), and a signed bit-field holds one bit less than its width. A field that is too narrow
+ * for a value turns it into a negative one (frontFace eClockwise, 1, in one bit is -1) that the
+ * driver rejects. The fields hold the core values: topology up to ePatchList (10), polygonMode
+ * eFill, eLine and ePoint, all four cull modes, both front faces. The values of extensions, such as
+ * PolygonMode::eFillRectangleNV, do not fit and are not supported.
+ */
 struct RasterizationOptions
 {
     // PipelineInputAssemblyStateCreateInfo
-    PrimitiveTopology topology              : 4 = PrimitiveTopology::eTriangleList;
+    PrimitiveTopology topology              : 5 = PrimitiveTopology::eTriangleList;
     // PipelineRasterizationStateCreateInfo
     bool        rasterizationDiscardEnabled : 1 = false;
-    PolygonMode polygonMode                 : 2 = PolygonMode::eFill;
+    PolygonMode polygonMode                 : 3 = PolygonMode::eFill;
     CullMode    cullMode                    : 2 = CullMode::eBack;
-    FrontFace   frontFace                   : 1 = FrontFace::eCounterClockwise;
+    FrontFace   frontFace                   : 2 = FrontFace::eCounterClockwise;
     bool        primitiveRestartEnabled     : 1 = false;
 };
 

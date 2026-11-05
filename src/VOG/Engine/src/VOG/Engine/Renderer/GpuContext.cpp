@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <stdexcept>
 #include <utility>
 
 namespace VOG::Engine
@@ -40,6 +41,29 @@ static_assert(std::to_underlying(Filter::eLinear) == 0u &&
               std::to_underlying(Filter::eNearest) == 1u);
 
 constexpr std::size_t gThreadCount = 1u;
+
+/**
+ * The format of the depth target. The spec requires a device to render into at least one of
+ * X8_D24_UNORM_PACK32 and D32_SFLOAT as a depth attachment (not both); D32_SFLOAT is the better
+ * one, and the other is the fallback. Neither has a stencil aspect, which the recorder needs.
+ */
+vk::Format
+chooseDepthFormat(const Graphics::Vulkan::Device& device)
+{
+    for (const vk::Format format : {vk::Format::eD32Sfloat, vk::Format::eX8D24UnormPack32})
+    {
+        const vk::FormatProperties properties =
+            device.raiiPhysicalDevice().getFormatProperties(format);
+        if (properties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment)
+        {
+            return format;
+        }
+    }
+
+    throw std::runtime_error{
+        "The device renders into neither D32_SFLOAT nor X8_D24_UNORM_PACK32 as a depth "
+        "attachment, which the spec requires of one of them."};
+}
 } // namespace
 
 GpuContext::GpuContext(const Common::SurfaceHandle& surfaceHandle, const Renderer::Config& config)
@@ -61,6 +85,7 @@ GpuContext::GpuContext(const Common::SurfaceHandle& surfaceHandle, const Rendere
           .surface        = surfaceHandle,
           .extent         = toVk(config.extent),
       })}
+    , depthFormat{chooseDepthFormat(*device)}
     , frameSlots{frameSlotCount(framesInFlight, swapchain->getImageCount())}
     , frames{std::make_unique<Graphics::Frame::FrameObjectManager>(
           device,

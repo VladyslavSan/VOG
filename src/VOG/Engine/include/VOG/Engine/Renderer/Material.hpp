@@ -73,7 +73,16 @@ enum class CullMode : std::uint8_t
     eBack
 };
 
-/** The part of the pipeline a material chooses. */
+/**
+ * The part of the pipeline a material chooses. Opaque draws are drawn first, in an order that
+ * batches them (by pipeline, material and mesh), and blended draws after them, from the farthest
+ * to the nearest.
+ *
+ * The default depth mode, DepthMode::eTestAndWrite, also applies to a blended material: its draw
+ * writes depth, and a draw behind it, or at the same z, then fails the test and does not mix. A
+ * blended sprite that other blended sprites may overlap needs DepthMode::eTestOnly, which tests
+ * against what the opaque draws wrote and writes nothing.
+ */
 struct RenderState
 {
     BlendMode blend = BlendMode::eOpaque;
@@ -96,7 +105,7 @@ struct MaterialDescription
     Shader shader;
     /** Exactly one value per member of the shader's Material block, in any order. */
     std::vector<MaterialParameter> parameters;
-    /** Stored with the material; the renderer does not apply it yet. */
+    /** Applied by the pipeline of every draw of the material. */
     RenderState state;
 };
 

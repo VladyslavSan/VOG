@@ -5,6 +5,7 @@
 #include <VOG/Engine/Renderer/Texture.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -69,6 +70,9 @@ private:
     Graphics::Vulkan::DevicePtr         mDevice;
     Graphics::Vulkan::DescriptorHeapPtr mHeap;
     UploadQueue&                        mUploads;
+
+    std::atomic<std::uint32_t> mLastMeshId     = 0u;
+    std::atomic<std::uint32_t> mLastMaterialId = 0u;
 
     std::mutex                            mLayoutMutex;
     std::map<VertexLayout, std::uint32_t> mLayoutIds;

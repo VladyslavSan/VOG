@@ -53,7 +53,8 @@ protected:
     ShaderLibrary mShaders{mDevice, Tests::sharedTestShaderPath()};
     PipelineTable mTable{mDevice};
 
-    static constexpr vk::Format kFormat = vk::Format::eB8G8R8A8Unorm;
+    static constexpr vk::Format kFormat      = vk::Format::eB8G8R8A8Unorm;
+    static constexpr vk::Format kDepthFormat = vk::Format::eD32Sfloat;
 
     const Detail::MeshData mQuad{
         .layout   = vertexLayout(24u, {{VertexFormat::eFloat2, 0u}, {VertexFormat::eFloat4, 8u}}),
@@ -65,11 +66,11 @@ TEST_F(PipelineTableTest, sameLayoutProgramAndFormatShareAPipeline)
 {
     const Detail::MaterialData worldSpace = material("WorldSpace");
 
-    const std::uint32_t first = mTable.resolve(mQuad, worldSpace, kFormat);
+    const std::uint32_t first = mTable.resolve(mQuad, worldSpace, kFormat, kDepthFormat);
 
-    EXPECT_EQ(mTable.resolve(mQuad, worldSpace, kFormat), first);
+    EXPECT_EQ(mTable.resolve(mQuad, worldSpace, kFormat, kDepthFormat), first);
     // A material with the same program, made again.
-    EXPECT_EQ(mTable.resolve(mQuad, material("WorldSpace"), kFormat), first);
+    EXPECT_EQ(mTable.resolve(mQuad, material("WorldSpace"), kFormat, kDepthFormat), first);
     EXPECT_EQ(PipelineTableTestAccess::size(mTable), 1u);
 }
 
@@ -77,16 +78,41 @@ TEST_F(PipelineTableTest, differentFormatLayoutOrProgramBuildsAnotherPipeline)
 {
     const Detail::MaterialData worldSpace = material("WorldSpace");
 
-    const std::uint32_t first = mTable.resolve(mQuad, worldSpace, kFormat);
+    const std::uint32_t first = mTable.resolve(mQuad, worldSpace, kFormat, kDepthFormat);
 
-    EXPECT_NE(mTable.resolve(mQuad, worldSpace, vk::Format::eR8G8B8A8Unorm), first);
-    EXPECT_NE(mTable.resolve(mQuad, material("ScreenSpacePositionColor"), kFormat), first);
+    EXPECT_NE(mTable.resolve(mQuad, worldSpace, vk::Format::eR8G8B8A8Unorm, kDepthFormat), first);
+    EXPECT_NE(mTable.resolve(mQuad, material("ScreenSpacePositionColor"), kFormat, kDepthFormat),
+              first);
 
     // Another layout id with the layout of the first mesh: the id is the key, and the layout is
     // what the pipeline is built from.
     Detail::MeshData wider = mQuad;
     wider.layoutId         = 2u;
-    EXPECT_NE(mTable.resolve(wider, worldSpace, kFormat), first);
+    EXPECT_NE(mTable.resolve(wider, worldSpace, kFormat, kDepthFormat), first);
+}
+
+/**
+ * The render state of the material is part of the key: a material that blends, or tests depth
+ * differently, or culls, is another pipeline, and a material with the same state shares one. The
+ * depth format is part of it too.
+ */
+TEST_F(PipelineTableTest, theRenderStateAndTheDepthFormatAreInTheKey)
+{
+    const Detail::MaterialData opaque = material("WorldSpace");
+
+    const std::uint32_t first = mTable.resolve(mQuad, opaque, kFormat, kDepthFormat);
+    EXPECT_EQ(mTable.resolve(mQuad, material("WorldSpace"), kFormat, kDepthFormat), first);
+
+    for (const RenderState state : {RenderState{.blend = BlendMode::eAlpha},
+                                    RenderState{.blend = BlendMode::eAdditive},
+                                    RenderState{.depth = DepthMode::eTestOnly},
+                                    RenderState{.cull = CullMode::eBack}})
+    {
+        Detail::MaterialData changed = material("WorldSpace");
+        changed.state                = state;
+        EXPECT_NE(mTable.resolve(mQuad, changed, kFormat, kDepthFormat), first);
+    }
+    EXPECT_NE(mTable.resolve(mQuad, opaque, kFormat, vk::Format::eX8D24UnormPack32), first);
 }
 
 /**
@@ -101,22 +127,22 @@ TEST_F(PipelineTableTest, theKeyIsTheProgramIdAndAnIndexStaysValid)
 {
     const Detail::MaterialData worldSpace = material("WorldSpace");
 
-    const std::uint32_t first = mTable.resolve(mQuad, worldSpace, kFormat);
+    const std::uint32_t first = mTable.resolve(mQuad, worldSpace, kFormat, kDepthFormat);
     const auto&         held  = mTable.at(first);
     const auto*         raw   = held.get();
 
     auto sameId    = std::make_shared<Detail::ShaderInfo>(*worldSpace.shader);
     auto anotherId = std::make_shared<Detail::ShaderInfo>(*worldSpace.shader);
     anotherId->programId += gOtherProgramOffset;
-    EXPECT_EQ(mTable.resolve(mQuad, {.shader = sameId}, kFormat), first);
-    EXPECT_NE(mTable.resolve(mQuad, {.shader = anotherId}, kFormat), first);
+    EXPECT_EQ(mTable.resolve(mQuad, {.shader = sameId}, kFormat, kDepthFormat), first);
+    EXPECT_NE(mTable.resolve(mQuad, {.shader = anotherId}, kFormat, kDepthFormat), first);
 
     // Many more pipelines: the first one has not moved.
     for (std::uint32_t id = 1u; id <= gMoreLayouts; ++id)
     {
         Detail::MeshData other = mQuad;
         other.layoutId         = gFirstOtherLayout + id;
-        std::ignore            = mTable.resolve(other, worldSpace, kFormat);
+        std::ignore            = mTable.resolve(other, worldSpace, kFormat, kDepthFormat);
     }
     EXPECT_EQ(mTable.at(first).get(), raw);
     EXPECT_EQ(&mTable.at(first), &held);

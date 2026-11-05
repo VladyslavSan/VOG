@@ -48,13 +48,13 @@ constexpr float gSecond = 2.0f;
 FramePacket
 packet(float marker)
 {
-    return FramePacket{.camera = CameraView{.nearPlane = marker}};
+    return FramePacket{.camera = CameraView{.clearColor = {marker, 0.0f, 0.0f, 1.0f}}};
 }
 
 float
 markerOf(const std::optional<FramePacket>& result)
 {
-    return result ? result->camera.nearPlane : -1.0f;
+    return result ? result->camera.clearColor.x : -1.0f;
 }
 
 /** Takes the packet in the slot, or returns nothing if there is none: it never waits. */

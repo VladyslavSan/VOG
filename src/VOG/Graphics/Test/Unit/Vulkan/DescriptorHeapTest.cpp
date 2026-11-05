@@ -352,7 +352,7 @@ TEST_F(VulkanValidationFixture, DescriptorHeap_texturedDrawIsValidationClean)
     // The triangle covers the target; look at the corners and the middle.
     constexpr std::array<std::byte, 4> kGreen{
         std::byte{0}, std::byte{255}, std::byte{0}, std::byte{255}};
-    const auto mapping = readback->mapForWrite();
+    const auto mapping = readback->mapForRead();
     using Position     = std::pair<std::uint32_t, std::uint32_t>;
     for (const auto [x, y] :
          {Position{0u, 0u}, Position{kSize - 1u, kSize - 1u}, Position{kSize / 2u, kSize / 2u}})

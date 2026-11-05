@@ -67,10 +67,10 @@ TEST(RenderQueueTest, lastSetCameraWins)
     Detail::DrawCheck check;
     RenderQueue       queue = RenderQueueTestAccess::make(check);
 
-    queue.setCamera(CameraView{.nearPlane = 2.0f});
-    queue.setCamera(CameraView{.nearPlane = 3.0f});
+    queue.setCamera(CameraView{.clearColor = {2.0f, 0.0f, 0.0f, 1.0f}});
+    queue.setCamera(CameraView{.clearColor = {3.0f, 0.0f, 0.0f, 1.0f}});
 
-    EXPECT_EQ(RenderQueueTestAccess::camera(queue).nearPlane, 3.0f);
+    EXPECT_EQ(RenderQueueTestAccess::camera(queue).clearColor.x, 3.0f);
 }
 
 TEST(RenderQueueTest, defaultCameraIsDefaultView)
@@ -83,8 +83,8 @@ TEST(RenderQueueTest, defaultCameraIsDefaultView)
     EXPECT_EQ(camera.position, defaultView.position);
     EXPECT_EQ(camera.direction, defaultView.direction);
     EXPECT_EQ(camera.up, defaultView.up);
-    EXPECT_EQ(camera.nearPlane, defaultView.nearPlane);
-    EXPECT_EQ(camera.farPlane, defaultView.farPlane);
+    EXPECT_EQ(camera.projection, defaultView.projection);
+    EXPECT_EQ(camera.clearColor, defaultView.clearColor);
     EXPECT_TRUE(RenderQueueTestAccess::draws(queue).empty());
 }
 

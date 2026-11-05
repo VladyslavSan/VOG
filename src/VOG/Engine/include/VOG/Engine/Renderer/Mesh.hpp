@@ -18,6 +18,7 @@ namespace VOG::Engine
 enum class VertexFormat : std::uint8_t
 {
     eFloat2,
+    eFloat3,
     eFloat4
 };
 

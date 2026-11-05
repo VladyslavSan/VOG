@@ -264,11 +264,11 @@ Scene::onDraw(const FrameContext& /*frame*/, RenderQueue& queue)
     mRegistry.each<Camera, Transform>(
         [&queue](Detail::Entity /*entity*/, Camera& camera, Transform& transform)
         {
-            queue.setCamera({.position  = transform.position,
-                             .direction = transform.rotation * Math::Vector3f{0.0f, 0.0f, 1.0f},
-                             .up        = transform.rotation * Math::Vector3f{0.0f, 1.0f, 0.0f},
-                             .nearPlane = camera.nearPlane,
-                             .farPlane  = camera.farPlane});
+            queue.setCamera({.position   = transform.position,
+                             .direction  = transform.rotation * Math::Vector3f{0.0f, 0.0f, 1.0f},
+                             .up         = transform.rotation * Math::Vector3f{0.0f, 1.0f, 0.0f},
+                             .projection = camera.projection,
+                             .clearColor = camera.clearColor});
         });
 }
 } // namespace VOG::Engine
