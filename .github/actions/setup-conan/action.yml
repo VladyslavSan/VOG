@@ -6,10 +6,6 @@ inputs:
     description: Python version to install.
     required: false
     default: "3.12"
-  cppstd:
-    description: C++ standard to enforce in the Conan profile. Leave empty to skip patching.
-    required: false
-    default: "20"
 
 runs:
   using: composite
@@ -30,13 +26,16 @@ runs:
         echo "CONAN_PROFILE=$HOME/.conan2/profiles/default" >> "$GITHUB_ENV"
         cat $CONAN_PROFILE
 
-    - name: Patch cppstd in Conan profile if needed
-      if: inputs.cppstd != ''
+    - name: Set the C++ standard of the Conan profile
       shell: bash
       run: |
-        if ! grep -q "compiler.cppstd=${{ inputs.cppstd }}" "$CONAN_PROFILE"; then
-          echo "Patching compiler.cppstd to ${{ inputs.cppstd }}"
-          sed 's/compiler\.cppstd=.*/compiler.cppstd=${{ inputs.cppstd }}/' "$CONAN_PROFILE" > /tmp/conan_profile
+        # conanfile.py names the standard (CPPSTD); the profile must match what it requires. A
+        # Windows checkout has CRLF line ends.
+        cppstd=$(tr -d '\r' < conanfile.py | sed -n 's/^CPPSTD = \([0-9][0-9]*\)$/\1/p')
+        test -n "$cppstd" || { echo "CPPSTD not found in conanfile.py"; exit 1; }
+        if ! grep -q "compiler.cppstd=$cppstd" "$CONAN_PROFILE"; then
+          echo "Patching compiler.cppstd to $cppstd"
+          sed "s/compiler\.cppstd=.*/compiler.cppstd=$cppstd/" "$CONAN_PROFILE" > /tmp/conan_profile
           mv /tmp/conan_profile "$CONAN_PROFILE"
         fi
         cat "$CONAN_PROFILE"

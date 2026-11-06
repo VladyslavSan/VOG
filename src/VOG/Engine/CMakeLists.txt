@@ -23,21 +23,76 @@ target_sources(Engine
         BASE_DIRS
             include/
         FILES
+            include/VOG/Engine/Renderer/CameraView.hpp
+            include/VOG/Engine/Renderer/Extent.hpp
             include/VOG/Engine/Renderer/FrameContext.hpp
-            include/VOG/Engine/Renderer/RenderItem.hpp
+            include/VOG/Engine/Renderer/Input.hpp
+            include/VOG/Engine/Renderer/Material.hpp
+            include/VOG/Engine/Renderer/Mesh.hpp
             include/VOG/Engine/Renderer/Renderable.hpp
             include/VOG/Engine/Renderer/Renderer.hpp
-            include/VOG/Engine/Renderer/ResourceContext.hpp
+            include/VOG/Engine/Renderer/Shader.hpp
+            include/VOG/Engine/Renderer/Texture.hpp
+            include/VOG/Engine/Scene/Components.hpp
+            include/VOG/Engine/Scene/Detail/Registry.hpp
+            include/VOG/Engine/Scene/Scene.hpp
     PRIVATE
+        src/VOG/Engine/Renderer/CameraView.cpp
+        src/VOG/Engine/Renderer/DrawCheck.cpp
+        src/VOG/Engine/Renderer/DrawCheck.hpp
+        src/VOG/Engine/Renderer/DrawPushData.hpp
+        src/VOG/Engine/Renderer/DrawRecording.cpp
+        src/VOG/Engine/Renderer/DrawRecording.hpp
+        src/VOG/Engine/Renderer/FrameBlocks.cpp
+        src/VOG/Engine/Renderer/FrameBlocks.hpp
+        src/VOG/Engine/Renderer/FrameLoop.cpp
+        src/VOG/Engine/Renderer/FrameLoop.hpp
+        src/VOG/Engine/Renderer/FramePacketQueue.hpp
+        src/VOG/Engine/Renderer/GpuContext.cpp
+        src/VOG/Engine/Renderer/Input.cpp
+        src/VOG/Engine/Renderer/GpuContext.hpp
+        src/VOG/Engine/Renderer/MaterialDefinition.cpp
+        src/VOG/Engine/Renderer/MaterialDefinition.hpp
+        src/VOG/Engine/Renderer/MeshDefinition.hpp
+        src/VOG/Engine/Renderer/PipelineTable.cpp
+        src/VOG/Engine/Renderer/PipelineTable.hpp
+        src/VOG/Engine/Renderer/RenderQueue.cpp
         src/VOG/Engine/Renderer/Renderer.cpp
+        src/VOG/Engine/Renderer/RendererImpl.hpp
+        src/VOG/Engine/Renderer/ResourceFactory.cpp
+        src/VOG/Engine/Renderer/ResourceFactory.hpp
+        src/VOG/Engine/Renderer/ShaderDefinition.hpp
+        src/VOG/Engine/Renderer/ShaderLibrary.cpp
+        src/VOG/Engine/Renderer/ShaderLibrary.hpp
+        src/VOG/Engine/Renderer/TextureDefinition.hpp
+        src/VOG/Engine/Renderer/UploadQueue.cpp
+        src/VOG/Engine/Renderer/UploadQueue.hpp
+        src/VOG/Engine/Renderer/UploadTicket.cpp
+        src/VOG/Engine/Renderer/UploadTicket.hpp
+        src/VOG/Engine/Scene/Detail/Registry.cpp
+        src/VOG/Engine/Scene/Scene.cpp
 )
+
+# Every header under include/ must be in the public header set: VOG.Engine.PublicHeadersTest is
+# generated from the set, so a header left out of it would escape the check that no public header
+# pulls in Graphics or Vulkan.
+file(GLOB_RECURSE onDiskHeaders CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+    include/*.hpp)
+get_target_property(setHeaders Engine HEADER_SET_public_headers)
+foreach(header IN LISTS onDiskHeaders)
+    cmake_path(ABSOLUTE_PATH header BASE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} OUTPUT_VARIABLE headerPath)
+    if(NOT headerPath IN_LIST setHeaders)
+        message(FATAL_ERROR "${header} is not in the public_headers FILE_SET of Engine; "
+                            "add it, or it escapes VOG.Engine.PublicHeadersTest.")
+    endif()
+endforeach()
 
 target_link_libraries(Engine
     PUBLIC
         ${PROJECT_NAME}::Common
         ${PROJECT_NAME}::Math
-        ${PROJECT_NAME}::Graphics
     PRIVATE
+        ${PROJECT_NAME}::Graphics
         spdlog::spdlog
 )
 

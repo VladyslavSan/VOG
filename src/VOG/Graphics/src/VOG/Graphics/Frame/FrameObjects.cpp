@@ -4,6 +4,7 @@
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 
+#include <algorithm>
 #include <ranges>
 #include <vector>
 
@@ -11,6 +12,7 @@ namespace VOG::Graphics::Frame
 {
 FrameObjects::FrameObjects(Vulkan::DevicePtr device, std::size_t threadCount)
     : mDevice{std::move(device)}
+    , mAcquireSemaphore{mDevice->createSemaphore()}
     , mRenderFinishedSemaphore{mDevice->createSemaphore()}
 {
     mCommandBufferPools.reserve(threadCount);
@@ -20,6 +22,18 @@ FrameObjects::FrameObjects(Vulkan::DevicePtr device, std::size_t threadCount)
                     {
                         return mDevice->createCommandBufferPool();
                     });
+}
+
+std::size_t
+FrameObjects::index() const noexcept
+{
+    return mIndex;
+}
+
+const Vulkan::SemaphorePtr&
+FrameObjects::getAcquireSemaphore() const
+{
+    return mAcquireSemaphore;
 }
 
 const Vulkan::SemaphorePtr&

@@ -20,18 +20,22 @@ anything that flows through the tracked APIs.
    `CommandBufferRecorder` (recording) and `Queue::submit` (semaphores) call it.
    The command buffer keeps them
    in a set, so binding one pipeline 1000 times holds one reference:
-   - `RenderingPass::bindVertexBuffers` retains each buffer, and
+   - `RenderingPass::bindVertexBuffers` retains each buffer, `bindIndexBuffer` its buffer, and
      `RenderingPass::bindPipeline` the pipeline
      (`Graphics/Vulkan/CommandBufferRecorder.cpp`).
    - `CommandBufferRecorder::beginRendering` retains every color and depth
      attachment.
    - `setImageBarrier` / `setBufferBarrier` retain the passed attachment or
      buffer. `setImageBarrier` fills `barrier.image` from the attachment.
+   - `CommandBufferRecorder::bindDescriptorHeap` retains the `DescriptorHeap`.
+     `RenderingPass::useResource` retains a `Texture` or a `HeapBuffer` that a draw
+     reads by heap index. `copyBuffer`, `copyBufferToTexture` and `copyImageToBuffer` retain the staging buffer (or image)
+     and the destination, and `acquire` retains the buffer or texture it takes over.
 
 2. **Submission retains the command buffer.** `Queue::submit` consumes
    `ExecutableCommandBuffer`s (what `CommandBufferRecorder::finish()` returns).
-   It makes each retain the wait and signal `Semaphore`s, so the caller can
-   drop them, then calls `vkQueueSubmit2` with a `FenceHandle` whose fence
+   It makes each retain the wait and signal `Semaphore`s and `TimelineSemaphore`s, so the caller
+   can drop them, then calls `vkQueueSubmit2` with a `FenceHandle` whose fence
    becomes pending only if the call returned, then parks each `CommandBuffer`
    with that handle in its pool's submitted list (`Graphics/Vulkan/Queue.cpp`,
    `Graphics/Vulkan/CommandBufferPool.cpp`). If the submit throws, nothing is
@@ -39,8 +43,8 @@ anything that flows through the tracked APIs.
    discard, which releases everything it retained at once. The command buffer
    — and therefore everything it retains — stays alive while the GPU works.
 
-3. **Fence wait releases.** When a frame slot is re-acquired
-   (`FrameObjectManager::acquireNextFrame` → `FrameObjects::onFrameStart` →
+3. **Fence wait releases.** When a frame slot is prepared
+   (`FrameObjectManager::prepareNextFrame` → `FrameObjects::onFrameStart` →
    `CommandBufferPool::reset`), the pool **waits on the fences first**, resets
    the Vulkan pool, then calls `CommandBuffer::releaseRetained`. Only at that
    point do retained resources drop their reference and (possibly) die.
@@ -63,6 +67,117 @@ after the fence of the frame that referenced the resource has signaled.
    no `waitIdle`: the old generation is retired by reference count.
    Details: `SwapchainSync.md`.
 
+## Meshes and materials
+
+The Engine hands out the value handles `Mesh`, `Texture` and `Material`. A handle is a copyable
+class around one private `shared_ptr<const MeshData>` (`TextureData`, `MaterialData`), so a copy
+shares the data and costs no allocation; a default-constructed handle is empty. The chain behind
+a handle is the same one:
+
+- A `Mesh` shares a `MeshData`, which owns a `BufferPtr`. The packet that
+  `Renderer::submitFrame` queues holds each draw, and so its mesh, from `submitFrame` until the
+  render thread has recorded the frame; the queue holds at most one packet.
+- `bindVertexBuffers` and `bindIndexBuffer` retain the buffer, not the `Mesh`; the vertices and
+  the indices of a mesh are in one buffer. Dropping the last `Mesh` handle while a frame
+  is in flight frees the CPU object; the buffer dies when that frame's slot is reused and its
+  fence has signalled (`meshBufferOutlivesMeshWhileFrameInFlight`). The draw loop skips a
+  pipeline or buffer bind that repeats the previous bind of its kind in the frame; the first
+  bind's retain covers the rest, because all draws of a frame are in one command buffer and its
+  retained set lives until the fence signals.
+- A `Material` shares a `MaterialData`, which holds its `ShaderInfo` (and through it the
+  `ShaderProgram`), a `HeapBuffer` that holds its parameters, the `Texture` handles that the
+  parameters name, and the parameters as given. A draw pushes the heap indices of the material block
+  and of the frame's Frame block (`DrawPushData`); the textures are in the material block, as heap
+  indices. The draw records the blocks and the textures with `RenderingPass::useResource`, which
+  retains them: dropping the last `Material` handle while a frame is in flight frees the CPU object,
+  and the block and the images die when that frame's slot is reused
+  (`textureOutlivesMaterialWhileFrameInFlight`, `parameterBlockOutlivesMaterialWhileFrameInFlight`).
+- `Renderer::createMesh` and `Renderer::createTexture` copy the bytes into a host-visible staging
+  buffer on the calling thread and queue the upload (an `UploadJob`: the staging buffer, the
+  destination and an `UploadTicket`) in the `UploadQueue`. Neither destination asks for host
+  access, so VMA places it in device-local memory where it can. The render thread records the
+  copies on a command buffer of one of the two transfer pools of the `UploadQueue` ring, in every
+  iteration that has a job to record, with or without a frame, and drops the job after the transfer
+  `Queue::submit` returned. The command buffer holds the staging buffer and the destination until
+  the ring uses the pool again, which is two copies later (`uploadsAreRecordedAndStagingReleased`).
+  A job whose destination has no handle left (`use_count() == 1`: only the job holds it) is
+  dropped without a copy (`uploadsCountDownAndADroppedMeshIsNeverCopied`).
+  A frame that is dropped (zero-sized window, out-of-date or skipped acquire) does not hold the
+  uploads back (`uploadsGoThroughDroppedFrames`). Heap buffers stay host-visible (see "Uploads and
+  the transfer queue").
+- The `PipelineTable` holds its pipelines until `~Renderer`; `bindPipeline` retains them per frame.
+  A pipeline is found by the value of its key (program id, layout id, render state, color format,
+  depth format), never by an address.
+- The depth target is one `RenderTarget` that `FrameLoop` makes at the size of the image that a
+  frame acquired, and replaces when that size changes. Every frame in flight draws into it, ordered
+  by a barrier at the start of the frame whose source scope is the fragment test stages with the
+  depth write access (an execution dependency alone would not make the writes of the frame before
+  visible). `beginRendering` retains the target, so a frame that still draws into a replaced
+  target holds it until its fence signals; the loop keeps no other reference to it.
+
+## Uploads and the transfer queue
+
+An iteration that records copies submits to the transfer queue, and every frame submits to the
+graphics queue. Both submits come from the render thread:
+
+1. An iteration with jobs to record takes the next of the two pools of the `UploadQueue` ring
+   (command buffer pools of the transfer queue's family, never the pool of a frame slot: a frame
+   slot waits for the presentation of its last frame before it can be used, so an iteration that
+   only uploads and used a slot would make the frames wait for each other). It resets the pool,
+   which waits for the submit of two copies ago, and records `copyBuffer` and `copyBufferToTexture`
+   for every job: all the jobs whose resource a draw of the iteration uses (`ticket->referenced`),
+   and the other jobs in the order they came until their bytes reach
+   `Renderer::Config::backgroundUploadBytesPerFrame`. When the transfer and the graphics family
+   differ each copy ends with the release half of a queue family ownership transfer.
+   `Queue::submit` on the transfer queue waits for the previous value of the timeline semaphore and
+   signals it with the next value (`UploadQueue::mTimeline`, `mValue`). After the submit returned,
+   the tickets of the jobs hold that value: `Mesh::isResident()` is true when the semaphore has
+   reached it (`TimelineSemaphore::counterValue()`, from any thread). The wait for the previous
+   value is there because the two pools do not order their copies.
+2. The graphics command buffer of a frame records the matching `acquire` of every copy that was
+   submitted since the last frame (`UploadQueue::acquireCopied()`) before the rendering pass
+   (nothing, when the families are equal: a texture is ready because its copy recorded the barrier
+   to shader-read-only, and a buffer because the graphics submit waits for the copy), and the
+   graphics submit waits for `UploadQueue::value()` at `ALL_COMMANDS`. The wait is in every graphics
+   submit, not only in one that follows a copy: a draw of a mesh or texture that an earlier
+   iteration uploaded is ordered after that copy by the wait. `ALL_COMMANDS` is the only stage that
+   can wait for a queue family ownership transfer without
+   `VK_DEPENDENCY_QUEUE_FAMILY_OWNERSHIP_TRANSFER_USE_ALL_STAGES_BIT_KHR`, which VOG does not
+   use.
+
+`UploadQueue::mValue` is raised after the transfer `Queue::submit` returned, so a submit that
+throws leaves it unchanged; it lives as long as the renderer and only grows. `TimelineSemaphore`
+holds no counter for that reason. The tickets hold the timeline semaphore, so a handle that
+outlives the `Renderer` answers `isResident()` from the semaphore that the device still holds
+(`handleOutlivingTheRendererStillAnswersIsResident`).
+
+`createMesh` and `createTexture` enqueue before they return. A packet that draws a resource was
+pushed after that, and the render thread, in the iteration that takes the packet, marks the tickets
+of the resources of its draws as referenced before it takes the jobs, so the copy of a resource
+that a frame draws is recorded in the iteration of that frame (or an earlier iteration already
+recorded it), and that frame's wait covers it.
+
+**Queue selection.** `PhysicalDevice::selectQueueFamilies` picks the graphics family and, with its
+`dedicatedTransfer` argument, a transfer-only family (a DMA engine) for transfer. The device
+passes `PhysicalDevice::kDedicatedTransferFamily`, which is `false`: the transfer queue is the
+graphics family's queue on every device. The code for two families (the release and acquire
+barriers of `UploadBarriers.hpp`, and the selection of a DMA family) is checked by value only
+(`UploadBarriers.*`, `QueueFamilies.*`), because no driver the tests run on has two queue
+families; it has never run on a GPU. Flip the constant after an upload has run on an NVIDIA or AMD
+GPU. With one family, the two `Queue` objects wrap the same `VkQueue`, and so does the
+swapchain's present queue; that is safe only because every submit and present is on the render
+thread.
+
+**Why meshes are staged and heap buffers are not.** A mesh is as large as its vertices. For a
+buffer that the CPU writes sequentially and the GPU reads, VMA requires host-visible memory and
+prefers device-local, which on a discrete GPU without resizable BAR is the 256 MiB BAR heap, and
+VMA falls back to system RAM when it is full. A block is at most 16 KiB, and that heap holds many of
+them.
+
+**For parallel recording (S7).** The acquires stay in the first command buffer of the frame's graphics
+submit. That is a conservative rule: the acquire only needs the release to have been submitted
+before it.
+
 ## Self-sufficient handles
 
 The model, generalised from Metal: **any object you hold keeps alive everything
@@ -71,7 +186,7 @@ objects it references. Holding one handle is always enough; user code never
 keeps a parent around "for" a child and never sequences teardown.
 Examples, not the whole list: a `Buffer` keeps its `Device` alive; a
 `CommandBufferRecorder` or `ExecutableCommandBuffer` keeps its pool (and through it the device) alive; a
-`Device` keeps its `Instance` alive. Scope guards (`Buffer::MemoryMapping`,
+`Device` keeps its `Instance` alive. Scope guards (`Buffer::MemoryMapping` and `Buffer::ReadMapping`,
 `CommandBufferRecorder` and its `RenderingPass`) are the one deliberate
 exception — see requirement 2.
 
@@ -91,7 +206,7 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    *Exception — lifetime strictly nested in the referent's:* borrowing is
    allowed when the borrower provably cannot outlive what it borrows, and the
    type is non-copyable and non-movable so that stays true:
-   - a scope guard, like `std::lock_guard` (`Buffer::MemoryMapping`,
+   - a scope guard, like `std::lock_guard` (`Buffer::MemoryMapping`, `Buffer::ReadMapping`,
      `CommandBufferRecorder`, `CommandBufferRecorder::RenderingPass`);
    - a sub-object exclusively owned by its referent and never handed out
      (`MemoryAllocator` inside `Device` holding `Device&`).
@@ -102,17 +217,18 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    non-copyable and stores no back-reference.
 3. **Leaves are `unique_ptr`, parents are `shared_ptr`.** Factories return
    `std::unique_ptr` by default (`Shader`, `ShaderProgram`, `GraphicsPipeline`,
-   `Swapchain`, `RenderBuffer`, `Buffer`) — callers convert to `shared_ptr`
+   `Swapchain`, `RenderTarget`, `Buffer`, `Texture`, `HeapBuffer`) — callers convert to `shared_ptr`
    when they need to share or record the object. A type that hands out
    dependents (calls `shared_from_this()`: `Instance`, `Device`,
-   `CommandBufferPool`, `FencePool`) must be created as `shared_ptr`, since
+   `CommandBufferPool`, `FencePool`, `DescriptorHeap`) must be created as `shared_ptr`, since
    `shared_from_this()` on a `unique_ptr`-owned object throws
    `std::bad_weak_ptr` at runtime. Enforced, not documented: those types have
    private constructors, deleted copy and move constructors, and are created only
    through a factory returning `shared_ptr` (`Instance::create`, `Instance::makeDevice`,
-   `Device::createCommandBufferPool`, `FencePool::create`). `Semaphore` is a
-   leaf that Device::createSemaphore returns as `shared_ptr`, because every
-   submit shares it with the command buffers.
+   `Device::createCommandBufferPool`, `Device::createDescriptorHeap`, `FencePool::create`).
+   `Semaphore` and `TimelineSemaphore` are leaves that `Device::createSemaphore` and
+   `Device::createTimelineSemaphore` return as `shared_ptr`, because every submit shares them with
+   the command buffers.
 4. **No cycles.** A dependency never strongly references its dependents, so
    dropping the last reference destroys the object.
 5. **Own handle first, dependencies last — by declaration order.** C++ destroys
@@ -124,10 +240,10 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    is what forced the hand-written `~Buffer` at 16af4c1. `DeviceChild` is that
    earlier base for types that derive from a `vk::raii` handle and need the
    device (`Fence`, `GraphicsPipeline`, `Semaphore`, `TimelineSemaphore`).
-   A `GraphicsPipeline` retains its `ShaderProgram`, which owns the pipeline
-   layout, so the layout outlives the pipeline by retention, not by order.
+   A `GraphicsPipeline` retains its `ShaderProgram`. Pipelines have no layout and a program
+   owns no Vulkan object: its shaders hold the device.
    The `vk::raii` base is `private` in `Semaphore`, `TimelineSemaphore`,
-   `GraphicsPipeline`, `Buffer`, `PhysicalDevice`, `Device`, `Instance`, `Fence`,
+   `GraphicsPipeline`, `Buffer`, `Texture`, `RenderTarget`, `PhysicalDevice`, `Device`, `Instance`, `Fence`,
    `Queue` and `CommandBuffer`, with a `using` for the calls that have callers,
    so a caller cannot slice the wrapper into the bare handle and drop the
    object that keeps its dependencies alive. `Device::raii()`,
@@ -155,9 +271,40 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    `Swapchain::present`, dropping a `Swapchain::Presentation` (it holds a
    `FenceHandle`), `AcquiredSwapchainImage` (its destructor releases an
    unpresented image on the swapchain) and `FrameObjects::retainUntilPresented`.
-   The `Renderer` makes this hold by ownership: it owns the frame slots, the
-   fence pool and the swapchain, only its render thread uses them while it
-   runs, and `~Renderer` joins that thread before it destroys them.
+   The `Renderer` makes this hold by ownership: its implementation owns the frame slots, the
+   fence pool, the swapchain and the pools of the upload ring, only its render thread uses them
+   while it runs, and `~Renderer` joins that thread (`FrameLoop::stop()`) before any member of
+   the implementation is destroyed. The member order of the implementation protects the
+   construction, not this. The members then die in reverse: after the thread the renderables, the
+   draw check and the resource factory, then the `UploadQueue`, the packet queue, the shader
+   library and the `GpuContext`.
+
+   **Threads.** Two threads work with a `Renderer`. The main thread (the caller of `submitFrame`)
+   owns the renderables and runs `Renderable::onDraw`, and with it the check of
+   `RenderQueue::submit` (the `DrawCheck`, which takes no lock). The render thread starts in the
+   constructor and ends in the destructor; it owns the objects of the list above and runs no
+   user code. Main and render thread share the packet queue (one slot, a mutex, which also carries
+   the mark that uploads are waiting and the recycled vector of draws), `FrameLoop::mRequestedExtent`
+   (an atomic), and the state of the render thread (an atomic) with its failure (written before the
+   state becomes `eFailed`).
+   The pending-renderable list is shared between the callers of `addRenderable` and the submitting
+   thread; it has a mutex, and so has the list of the tasks that `Application::post()` takes from
+   any thread and the main thread runs at the start of a frame. The `Scene`, its `GameObject`s and
+   its `Behaviour`s are main-thread state: in a debug build, every public member of `Scene` and
+   `GameObject` that reads or writes scene state aborts when another thread calls it (`each`,
+   `isValid`, `hasComponent` and the quit requests too). Only copying and comparing a `GameObject`,
+   its destructor, and `getGameObject()` and `getScene()` of a `Behaviour` read nothing but the
+   handle or the behaviour and do not check. `Application` updates the scene and runs `onDraw` on
+   the main thread, and only the packet crosses to the render thread. `createMesh`, `createTexture` and `createMaterial` are safe from any thread: VMA is
+   created without `EXTERNALLY_SYNCHRONIZED`, so the allocator locks internally, the
+   `ShaderLibrary` is only read after its constructor, the heap's free list has a mutex, the layouts
+   of the meshes are numbered under a mutex, and the jobs of the uploads are pushed to the
+   `UploadQueue` under its mutex, which the render thread empties by moving the jobs out. The
+   push sets the mark in the packet queue under that queue's mutex before it notifies, so the
+   render thread, which waits for a packet or for uploads, cannot sleep through an upload. A packet holds meshes, materials and a camera view,
+   none of the objects above, so it may die on any thread. `onDraw` may run inside an SDL event
+   watch on the main thread (`SwapchainSync.md`, "Live resize"): no renderer lock is held, but it
+   must not wait for a thread that pushes SDL events.
 
    All destructors are `noexcept`. A Vulkan call that can fail in a destructor goes through
    `inDestructor` (`Graphics/Vulkan/InDestructor.hpp`), which logs a
@@ -173,17 +320,20 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    Covered: `Device` (its `Instance`), `Buffer`, `FencePool`, `CommandBufferPool`,
    `CommandBufferRecorder`, `ExecutableCommandBuffer`, `Semaphore`,
    `TimelineSemaphore`, `Queue`,
-   `RenderBuffer`, `Shader`, `ShaderProgram`, `GraphicsPipeline`,
-   `FrameObjects`, `FrameObjectManager`, `ShaderProgramCache`, `Swapchain`,
+   `RenderTarget`, `Shader`, `GraphicsPipeline`, `DescriptorHeap`, `Texture`, `HeapBuffer`,
+   `FrameObjects`, `FrameObjectManager`, `Swapchain`,
    `SwapchainGeneration` (private to the library, reached through the
    `AcquiredSwapchainImage` and `Presentation` that hold it) and
    `AcquiredSwapchainImage` (`SwapchainTest.cpp`, on a headless surface via
    `VK_EXT_headless_surface`; the generation is covered by
-   `acquiredImageKeepsSwapchainAlive`, which holds nothing else). `Shader`, `ShaderProgram`, `RenderBuffer`,
-   `Semaphore` and `ExecutableCommandBuffer` expose no Vulkan call, so their
-   destruction is the call under test; for `ShaderProgramCache` it is the lookup.
-   `Device` (its `Instance`) and `Queue` are ownership-only: no Vulkan call is
-   reachable through a transfer `Queue`, and the `Device` test checks the
+   `acquiredImageKeepsSwapchainAlive`, which holds nothing else). `Shader`, `RenderTarget`, `Semaphore`, `ExecutableCommandBuffer`,
+   `DescriptorHeap`, `Texture` and `HeapBuffer` expose no Vulkan call, so their
+   destruction is the call under test (the texture and the heap buffer also expire their heap).
+   A `ShaderProgram` owns no Vulkan object, so it
+   has no test of its own: its shaders hold the device (`Shader_keepsDeviceAlive`).
+   `Device` (its `Instance`) and `Queue` are ownership-only: the `Queue` test holds the transfer
+   handle and calls nothing through it (a submit through the queue is
+   `submittedCommandBufferKeepsDeviceAlive`), and the `Device` test checks the
    expiry order without the validation layer. A `FenceHandle` is only
    reachable through the pool that holds it, and that pool keeps the device alive
    on its own, so the handle's retention has no test that could fail
@@ -205,14 +355,20 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
 ## Known gaps (intentional, to be addressed where they arise)
 
 - **Unpresented acquired image.** Dropping an `AcquiredSwapchainImage` without
-  presenting it releases the image but leaves its acquire semaphore signaled or
-  pending. The next acquire's swap trick can then get a signaled spare, and the
-  generation destroys a semaphore with a signal pending. Only an exception
-  between acquire and present (a Vulkan error, or out of memory) reaches it; see
-  `SwapchainSync.md`.
+  presenting it releases the image but leaves its slot's acquire semaphore signaled or
+  pending. The next acquire on that slot can then get a signaled semaphore, and
+  `FrameObjects` destroys a semaphore with a signal pending. Only an exception
+  between acquire and submit (a Vulkan error, or out of memory) reaches it. An exception
+  between submit and present is a separate case, which leaves the slot's render-finished
+  semaphore signaled; see `SwapchainSync.md`.
 
-- **Descriptor-set-referenced resources** (future textures/UBOs): tracking must
-  be extended to descriptor set binding when those appear.
+- **The pipeline cache never evicts.** A pipeline stays until `~Renderer`, even if no mesh or
+  material uses its vertex layout, shader program and color format any more.
+
+- **Heap-referenced resources** (textures and heap buffers on the descriptor heap): a draw that
+  references one by heap index must retain it through `RenderingPass::useResource`, which
+  nothing enforces. The `Renderer` calls it for the Frame block of the frame and for the material
+  block and the textures of every draw (`DrawRecording::recordDraws`).
 
 - **Out-of-date and suboptimal paths are untested.** A headless surface never
   reports them, so no automated test reaches the acquire/present
@@ -220,10 +376,10 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
   rethrow in `Swapchain::present`. The example's resize and close runs on a real
   window are the only coverage.
 
-- **Windows CI only builds.** The Windows job does not run the tests.
+- **Windows and macOS CI only build.** Those jobs do not run the tests.
 
-- **Wayland and X11 have no CI.** The Linux jobs build and test on a headless
-  surface; the Wayland and X11 surface paths have not run in CI.
+- **Wayland has no CI.** The Linux jobs run the Application tests on X11 under Xvfb and the
+  other tests on a headless surface; the Wayland surface path has not run in CI.
 
 ## Performance note
 

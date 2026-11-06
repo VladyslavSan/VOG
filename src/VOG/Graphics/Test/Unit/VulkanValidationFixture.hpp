@@ -27,4 +27,29 @@ protected:
         }
     }
 };
+
+/**
+ * VulkanValidationFixture with the synchronization validation of the layer on: a missing
+ * dependency between two accesses is an ERROR, "SYNC-HAZARD-...". Skipped under the same
+ * condition. Whether the setting reached the layer is not checked here; a test needs a negative
+ * control that provokes a hazard.
+ */
+class VulkanSyncValidationFixture : public VulkanFixture
+{
+public:
+    VulkanSyncValidationFixture()
+        : VulkanFixture{Options{.validation = true, .syncValidation = true}}
+    {
+    }
+
+protected:
+    void
+    SetUp() override
+    {
+        if (!validationActive())
+        {
+            GTEST_SKIP() << "VK_LAYER_KHRONOS_validation or VK_EXT_debug_utils not available";
+        }
+    }
+};
 } // namespace VOG::Tests

@@ -4,6 +4,7 @@
 #include <VOG/Graphics/Frame/FrameObjects.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 
+#include <memory>
 #include <vector>
 
 namespace VOG::Graphics::Vulkan
@@ -16,16 +17,29 @@ namespace VOG::Graphics::Frame
 class FrameObjectManager
 {
 public:
-    FrameObjectManager(const Vulkan::DevicePtr& device,
-                       std::size_t              frameCount,
-                       std::size_t              threadCount);
+    /** How many slots the manager makes, and how many threads record into each of them. A struct,
+     *  because two counts in a row of parameters are easily swapped. */
+    struct Counts
+    {
+        std::size_t frames  = 1u;
+        std::size_t threads = 1u;
+    };
 
-    FrameObjectsPtr getCurrentFrame();
+    FrameObjectManager(const Vulkan::DevicePtr& device, Counts counts);
 
-    FrameObjectsPtr acquireNextFrame();
+    /**
+     * The slot the next frame renders into, ready to record: its pools are reset and its previous
+     * presentation is dropped. Both wait for fences (submit and present) without a timeout, so the
+     * GPU and the presentation engine must make progress. This is what makes the slot's
+     * semaphores safe to signal again, so call it before the swapchain acquire.
+     *
+     * Does not advance: a second call before advance() returns the same slot and changes nothing.
+     * A frame that is dropped (skipped or out-of-date acquire) therefore does not use up a slot.
+     */
+    FrameObjectsPtr prepareNextFrame();
 
-private:
-    std::size_t getCurrentFrameIndex() const;
+    /** Makes the slot prepareNextFrame() returned the current one. Call it once per frame. */
+    void advance();
 
 protected:
     /** Hard reference to graphics provider*/

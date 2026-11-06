@@ -1,51 +1,32 @@
 #include "VOG/Graphics/Frame/FrameObjectManager.hpp"
 
-#include <VOG/Common/Assert.hpp>
-
-#include <algorithm>
-
 namespace VOG::Graphics::Frame
 {
-namespace
-{
-constexpr std::size_t gDefaultPoolSize = 32;
-}
-
-FrameObjectManager::FrameObjectManager(const Vulkan::DevicePtr& device,
-                                       std::size_t              frameCount,
-                                       std::size_t              threadCount)
+FrameObjectManager::FrameObjectManager(const Vulkan::DevicePtr& device, Counts counts)
     : mDevice{device}
     , mRenderFrame{0u}
 {
-    mFrameObjects.reserve(frameCount);
-    std::generate_n(std::back_inserter(mFrameObjects),
-                    frameCount,
-                    [this, threadCount]()
-                    {
-                        return std::make_shared<FrameObjects>(mDevice, threadCount);
-                    });
+    mFrameObjects.reserve(counts.frames);
+    for (std::size_t index = 0u; index < counts.frames; ++index)
+    {
+        auto& frame =
+            mFrameObjects.emplace_back(std::make_shared<FrameObjects>(mDevice, counts.threads));
+        frame->mIndex = index;
+    }
 }
 
 FrameObjectsPtr
-FrameObjectManager::getCurrentFrame()
+FrameObjectManager::prepareNextFrame()
 {
-    return mFrameObjects[getCurrentFrameIndex()];
-}
-
-FrameObjectsPtr
-FrameObjectManager::acquireNextFrame()
-{
-    ++mRenderFrame;
-
-    auto frame = getCurrentFrame();
+    const FrameObjectsPtr& frame = mFrameObjects[(mRenderFrame + 1u) % mFrameObjects.size()];
     frame->onFrameStart();
 
     return frame;
 }
 
-std::size_t
-FrameObjectManager::getCurrentFrameIndex() const
+void
+FrameObjectManager::advance()
 {
-    return mRenderFrame % mFrameObjects.size();
+    ++mRenderFrame;
 }
 } // namespace VOG::Graphics::Frame

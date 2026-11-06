@@ -1,8 +1,10 @@
 #include "VOG/Graphics/Vulkan/MemoryAllocator.hpp"
 
+#include <VOG/Graphics/Vulkan/Attachment/RenderTarget.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
+#include <VOG/Graphics/Vulkan/Texture.hpp>
 #include <VOG/Graphics/Vulkan/VmaConfig.hpp>
 
 #include <stdexcept>
@@ -37,6 +39,10 @@ toVma(const MemoryAllocator::AllocationParameters& parameters)
     if (parameters.flags & AllocationFlag::eHostSequentialWrite)
     {
         flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+    }
+    if (parameters.flags & AllocationFlag::eHostRandomAccess)
+    {
+        flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
     }
 
     return {.flags = flags, .usage = VMA_MEMORY_USAGE_AUTO};
@@ -111,6 +117,7 @@ MemoryAllocator::MemoryAllocator(Device& device)
     };
 
     VmaAllocatorCreateInfo allocatorInfo = {
+        .flags            = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
         .physicalDevice   = *static_cast<const PhysicalDevice&>(mDevice),
         .device           = *mDevice,
         .pVulkanFunctions = &vulkanFunctions,
@@ -140,13 +147,14 @@ MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
     VmaAllocationInfo       allocationInfo;
     VmaAllocationCreateInfo vmaAllocationCreateInfo = toVma(allocationCreateInfo);
 
-    vk::Result result =
-        static_cast<vk::Result>(vmaCreateBuffer(mAllocator,
-                                                &static_cast<const VkBufferCreateInfo&>(createInfo),
-                                                &vmaAllocationCreateInfo,
-                                                &buffer,
-                                                &allocation,
-                                                &allocationInfo));
+    vk::Result result = static_cast<vk::Result>(
+        vmaCreateBufferWithAlignment(mAllocator,
+                                     &static_cast<const VkBufferCreateInfo&>(createInfo),
+                                     &vmaAllocationCreateInfo,
+                                     allocationCreateInfo.alignment,
+                                     &buffer,
+                                     &allocation,
+                                     &allocationInfo));
 
     if (result != vk::Result::eSuccess || buffer == VK_NULL_HANDLE)
     {
@@ -166,6 +174,95 @@ MemoryAllocator::makeBuffer(const vk::BufferCreateInfo& createInfo,
     vk::raii::Buffer owningBuffer{mDevice.raii(), buffer};
 
     return std::unique_ptr<Buffer>(
-        new Buffer{std::move(owningAllocation), std::move(owningBuffer)});
+        new Buffer{std::move(owningAllocation), std::move(owningBuffer), createInfo.size});
+}
+
+std::unique_ptr<Texture>
+MemoryAllocator::makeTexture(const vk::ImageCreateInfo& createInfo, DescriptorHeap::Slot slot)
+{
+    // Taken before vmaCreateImage, like in makeBuffer.
+    DevicePtr device = mDevice.shared_from_this();
+
+    VkImage                 image;
+    VmaAllocation           allocation;
+    VmaAllocationInfo       allocationInfo;
+    VmaAllocationCreateInfo vmaAllocationCreateInfo = toVma({});
+
+    vk::Result result =
+        static_cast<vk::Result>(vmaCreateImage(mAllocator,
+                                               &static_cast<const VkImageCreateInfo&>(createInfo),
+                                               &vmaAllocationCreateInfo,
+                                               &image,
+                                               &allocation,
+                                               &allocationInfo));
+
+    if (result != vk::Result::eSuccess || image == VK_NULL_HANDLE)
+    {
+        throw std::runtime_error{"Texture creation failed."};
+    }
+
+    // Owned in the order Texture's bases are declared, like in makeBuffer.
+    Allocation      owningAllocation{std::move(device),
+                                     mAllocator,
+                                     allocation,
+                                     allocationInfo.size,
+                                     getMemoryFlags(mAllocator, allocationInfo.memoryType),
+                                     AllocationFlags{}};
+    vk::raii::Image owningImage{mDevice.raii(), image};
+
+    return std::unique_ptr<Texture>(new Texture{std::move(owningAllocation),
+                                                std::move(owningImage),
+                                                std::move(slot),
+                                                {createInfo.extent.width, createInfo.extent.height},
+                                                createInfo.format});
+}
+
+std::unique_ptr<RenderTarget>
+MemoryAllocator::makeRenderTarget(const vk::ImageCreateInfo& createInfo,
+                                  vk::ImageAspectFlags       aspects)
+{
+    // Taken before vmaCreateImage, like in makeBuffer.
+    DevicePtr device = mDevice.shared_from_this();
+
+    VkImage                 image;
+    VmaAllocation           allocation;
+    VmaAllocationInfo       allocationInfo;
+    VmaAllocationCreateInfo vmaAllocationCreateInfo = toVma({});
+
+    vk::Result result =
+        static_cast<vk::Result>(vmaCreateImage(mAllocator,
+                                               &static_cast<const VkImageCreateInfo&>(createInfo),
+                                               &vmaAllocationCreateInfo,
+                                               &image,
+                                               &allocation,
+                                               &allocationInfo));
+
+    if (result != vk::Result::eSuccess || image == VK_NULL_HANDLE)
+    {
+        throw std::runtime_error{"Render target creation failed."};
+    }
+
+    // Owned in the order RenderTarget's bases and members are declared, like in makeBuffer: if
+    // the view cannot be made, the image and then the allocation are released.
+    Allocation          owningAllocation{std::move(device),
+                                         mAllocator,
+                                         allocation,
+                                         allocationInfo.size,
+                                         getMemoryFlags(mAllocator, allocationInfo.memoryType),
+                                         AllocationFlags{}};
+    vk::raii::Image     owningImage{mDevice.raii(), image};
+    vk::raii::ImageView owningView{
+        mDevice.raii(),
+        {.image            = *owningImage,
+         .viewType         = vk::ImageViewType::e2D,
+         .format           = createInfo.format,
+         .subresourceRange = {.aspectMask = aspects, .levelCount = 1u, .layerCount = 1u}}};
+
+    return std::unique_ptr<RenderTarget>(
+        new RenderTarget{std::move(owningAllocation),
+                         std::move(owningImage),
+                         std::move(owningView),
+                         createInfo.format,
+                         {createInfo.extent.width, createInfo.extent.height}});
 }
 } // namespace VOG::Graphics::Vulkan

@@ -3,6 +3,10 @@ from conan.tools.cmake import CMake, CMakeToolchain, CMakeConfigDeps, cmake_layo
 from conan.tools.files import copy
 from conan.tools.build import check_min_cppstd
 
+# The C++ standard of VOG. validate() rejects a lower profile, and the Conan profile of CI is
+# patched from this line (.github/actions/setup-conan/action.yml).
+CPPSTD = 23
+
 
 class VOGConan(ConanFile):
     name = "VOG"
@@ -24,7 +28,6 @@ class VOGConan(ConanFile):
         self.requires("spdlog/1.15.3")
 
         # Private dependencies
-        self.requires("nlohmann_json/3.10.5", transitive_headers=False, transitive_libs=False)
         self.requires(f"vulkan-headers/{self.vulkan_version}", transitive_headers=False, transitive_libs=False)
         self.requires("vulkan-memory-allocator/3.3.0", transitive_headers=False, transitive_libs=False)
         self.requires(f"spirv-cross/{self.vulkan_version}", transitive_headers=False, transitive_libs=False)
@@ -38,7 +41,7 @@ class VOGConan(ConanFile):
         self.test_requires("gtest/1.17.0")
 
     def validate(self):
-        check_min_cppstd(self, 20, gnu_extensions=False)
+        check_min_cppstd(self, CPPSTD, gnu_extensions=False)
 
     def configure(self):
         self.options["spirv-tools"].build_executables = False

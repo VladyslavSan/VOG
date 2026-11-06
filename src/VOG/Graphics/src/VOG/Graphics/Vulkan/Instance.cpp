@@ -7,7 +7,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <exception>
 #include <format>
+#include <mutex>
 #include <ranges>
 #include <stdexcept>
 #include <string>
@@ -19,6 +21,43 @@ namespace VOG::Graphics::Vulkan
 namespace
 {
 const char* gPortabilityEnumerationExtension = "VK_KHR_portability_enumeration";
+
+/** Hands the message to the sink. An exception must not cross into the Vulkan loader. */
+vk::Bool32
+onMessage(vk::DebugUtilsMessageSeverityFlagBitsEXT /*severity*/,
+          vk::DebugUtilsMessageTypeFlagsEXT /*types*/,
+          const vk::DebugUtilsMessengerCallbackDataEXT* data,
+          void*                                         user)
+{
+    const auto& holder = *static_cast<const Detail::MessageSinkHolder*>(user);
+    try
+    {
+        holder.callback(data->pMessage != nullptr ? data->pMessage : "");
+    }
+    catch (const std::exception& exception)
+    {
+        spdlog::error("The Vulkan message sink threw: {}", exception.what());
+    }
+    catch (...)
+    {
+        spdlog::error("The Vulkan message sink threw an unknown exception.");
+    }
+
+    return VK_FALSE;
+}
+
+/** Errors of the types general, validation and performance. The loader also reports warnings
+ * (duplicate layers) that are not failures. */
+vk::DebugUtilsMessengerCreateInfoEXT
+messengerInfo(Detail::MessageSinkHolder& holder)
+{
+    return {.messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
+            .messageType     = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
+                               vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
+                               vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
+            .pfnUserCallback = &onMessage,
+            .pUserData       = &holder};
+}
 
 constexpr std::vector<const char*>
 getInstanceRequiredExtensions()
@@ -35,7 +74,7 @@ getInstanceRequiredExtensions()
 
 #ifdef PLATFORM_VIDEO_WINDOWS
     requiredExtensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
-#elif defined(PLATFORM_VIDEO_APPLE)
+#elifdef PLATFORM_VIDEO_APPLE
     requiredExtensions.push_back(VK_EXT_METAL_SURFACE_EXTENSION_NAME);
 #endif
     // Linux WSI extensions are added opportunistically in makeInstance when present,
@@ -45,7 +84,9 @@ getInstanceRequiredExtensions()
 }
 
 vk::raii::Instance
-makeInstance(const vk::raii::Context& context, const Instance::InstanceParameters& parameters)
+makeInstance(const vk::raii::Context&            context,
+             const Instance::InstanceParameters& parameters,
+             Detail::MessageSinkHolder&          holder)
 {
     spdlog::info("Vulkan instance layers:");
     for (const auto& layer : context.enumerateInstanceLayerProperties())
@@ -124,6 +165,17 @@ makeInstance(const vk::raii::Context& context, const Instance::InstanceParameter
                        return extension;
                    });
 
+    if (parameters.messageSink)
+    {
+        if (!hasExtension(availableInstanceExtensions, VK_EXT_DEBUG_UTILS_EXTENSION_NAME))
+        {
+            throw std::runtime_error{
+                "A message sink was asked for, but the instance does not offer "
+                "VK_EXT_debug_utils."};
+        }
+        extensionsAll.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    }
+
     // The caller's list and the required list can name the same extension; Vulkan wants each once.
     const auto byName = [](const char* name)
     {
@@ -140,6 +192,14 @@ makeInstance(const vk::raii::Context& context, const Instance::InstanceParameter
         .ppEnabledLayerNames     = layersAll.data(),
         .enabledExtensionCount   = static_cast<std::uint32_t>(extensionsAll.size()),
         .ppEnabledExtensionNames = extensionsAll.data()};
+
+    // On pNext, a messenger reports vkCreateInstance and vkDestroyInstance, which the messenger of
+    // the Instance cannot: it exists only between the two.
+    const vk::DebugUtilsMessengerCreateInfoEXT messenger = messengerInfo(holder);
+    if (parameters.messageSink)
+    {
+        instanceCreateInfo.pNext = &messenger;
+    }
 
     return {context, instanceCreateInfo};
 }
@@ -302,7 +362,11 @@ makePhysicalDevice(const vk::raii::Instance& instance)
 } // namespace
 
 Instance::Instance(const InstanceParameters& parameters)
-    : vk::raii::Instance{makeInstance(*this, parameters)}
+    : Detail::MessageSinkHolder{parameters.messageSink}
+    , vk::raii::Instance{makeInstance(*this, parameters, *this)}
+    , mMessenger{parameters.messageSink
+                     ? vk::raii::Instance::createDebugUtilsMessengerEXT(messengerInfo(*this))
+                     : vk::raii::DebugUtilsMessengerEXT{nullptr}}
 {
 }
 

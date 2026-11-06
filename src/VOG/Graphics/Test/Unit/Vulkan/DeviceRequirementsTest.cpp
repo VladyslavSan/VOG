@@ -26,10 +26,13 @@ requiresExtension(std::string_view name)
 }
 } // namespace
 
-// Dropping either extension from the table would let selection accept a device that cannot present
-// safely.
+// Dropping either swapchain extension from the table would let selection accept a device that
+// cannot present safely; dropping a heap extension, one that cannot run the shaders.
 static_assert(requiresExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME));
 static_assert(requiresExtension(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME));
+static_assert(requiresExtension(VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME));
+static_assert(requiresExtension(VK_KHR_SHADER_UNTYPED_POINTERS_EXTENSION_NAME));
+static_assert(requiresExtension(VK_KHR_MAINTENANCE_5_EXTENSION_NAME));
 
 /** The device the fixture created was selected by missing(), so nothing can be missing from it. */
 TEST_F(VulkanFixture, DeviceRequirements_selectedDeviceMissesNothing)

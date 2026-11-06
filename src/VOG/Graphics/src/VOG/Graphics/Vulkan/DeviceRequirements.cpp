@@ -47,7 +47,10 @@ DeviceRequirements::missing(const vk::raii::PhysicalDevice& device)
     auto supported = device.getFeatures2<vk::PhysicalDeviceFeatures2,
                                          vk::PhysicalDeviceVulkan12Features,
                                          vk::PhysicalDeviceVulkan13Features,
-                                         vk::PhysicalDeviceSwapchainMaintenance1FeaturesKHR>();
+                                         vk::PhysicalDeviceSwapchainMaintenance1FeaturesKHR,
+                                         vk::PhysicalDeviceDescriptorHeapFeaturesEXT,
+                                         vk::PhysicalDeviceShaderUntypedPointersFeaturesKHR,
+                                         vk::PhysicalDeviceMaintenance5FeaturesKHR>();
     static_assert(std::is_same_v<decltype(supported), Features>);
 
     for (const Feature& feature : kFeatures)

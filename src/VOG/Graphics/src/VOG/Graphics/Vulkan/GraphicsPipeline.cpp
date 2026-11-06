@@ -4,39 +4,54 @@
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 
+#include <algorithm>
+#include <array>
+#include <format>
 #include <stdexcept>
+#include <string>
 
 namespace VOG::Graphics::Vulkan
 {
 namespace
 {
-bool
-validateVertexAttributes(const ShaderProgram& shaderProgram, const VertexLayout& vertexLayout)
+/**
+ * Every location the vertex shader reads needs an attribute of a compatible numeric type, or the
+ * pipeline is invalid (VUID-VkGraphicsPipelineCreateInfo-Input-07904, -08733). Extra attributes
+ * are allowed, and so are attributes with fewer or more components than the shader declares.
+ */
+void
+validateVertexInputs(const ShaderProgram& program, const VertexLayout& vertexLayout)
 {
-    const auto& vertexAttributes = shaderProgram.stages.vertex.shader->reflection.inAttributes;
-    if (vertexAttributes.size() != vertexLayout.attributeDescription.size()) [[unlikely]]
+    for (const auto& input : program.stages.vertex.shader->reflection.inAttributes)
     {
-        return false;
-    }
-
-    for (const auto& vertexAttribute : vertexAttributes)
-    {
-        const auto found =
-            std::find_if(vertexLayout.attributeDescription.begin(),
-                         vertexLayout.attributeDescription.end(),
-                         [location = vertexAttribute.location](const auto& description)
-                         {
-                             return location == description.location;
-                         });
-
-        if (found == vertexLayout.attributeDescription.end() ||
-            !Shader::vertexFormatCompatible(vertexAttribute.format, found->format))
+        for (std::uint32_t location = input.location;
+             location < input.location + input.locationCount;
+             ++location)
         {
-            return false;
+            const auto found = std::ranges::find(vertexLayout.attributeDescription,
+                                                 location,
+                                                 &vk::VertexInputAttributeDescription::location);
+            if (found == vertexLayout.attributeDescription.end())
+            {
+                throw std::invalid_argument{
+                    std::format("The vertex shader reads \"{}\" ({}) at location {}, but the "
+                                "vertex layout has no attribute there.",
+                                input.name,
+                                Shader::describe(input.format),
+                                location)};
+            }
+            if (!Shader::vertexFormatCompatible(input.format, found->format))
+            {
+                throw std::invalid_argument{
+                    std::format("The vertex shader reads \"{}\" ({}) at location {}, which the "
+                                "vertex attribute format {} cannot feed.",
+                                input.name,
+                                Shader::describe(input.format),
+                                location,
+                                vk::to_string(found->format))};
+            }
         }
     }
-
-    return true;
 }
 
 vk::raii::Pipeline
@@ -60,6 +75,7 @@ makePipeline(const Device&                       device,
     };
 
     const auto& vertexLayout = createInfo.vertexLayout;
+    validateVertexInputs(program, vertexLayout);
 
     const vk::PipelineVertexInputStateCreateInfo vertexInputState{
         .vertexBindingDescriptionCount =
@@ -90,6 +106,7 @@ makePipeline(const Device&                       device,
         .dynamicStateCount = static_cast<std::uint32_t>(createInfo.dynamicStates.size()),
         .pDynamicStates    = createInfo.dynamicStates.data()};
 
+    // No pipeline layout: the shaders reach their resources through the descriptor heap.
     vk::StructureChain info{
         vk::GraphicsPipelineCreateInfo{
             .stageCount          = static_cast<std::uint32_t>(shadingStages.size()),
@@ -102,8 +119,10 @@ makePipeline(const Device&                       device,
             .pDepthStencilState  = &createInfo.depthStencil,
             .pColorBlendState    = &blendingState,
             .pDynamicState       = &dynamicState,
-            .layout              = *program.pipelineLayout,
+            .layout              = nullptr,
         },
+        vk::PipelineCreateFlags2CreateInfo{.flags =
+                                               vk::PipelineCreateFlagBits2::eDescriptorHeapEXT},
         vk::PipelineRenderingCreateInfo{
             .colorAttachmentCount = static_cast<std::uint32_t>(
                 createInfo.renderingDescription.colorAttachmentFormats.size()),
@@ -120,12 +139,6 @@ makePipeline(const Device&                       device,
     catch (const vk::SystemError& error)
     {
         using namespace std::string_literals;
-        if (!validateVertexAttributes(program, vertexLayout))
-        {
-            throw std::runtime_error{
-                "GraphicsPipeline creation failed. Shader program is incompatible with vertex "
-                "layout provided."};
-        }
         throw std::runtime_error{"GraphicsPipeline creation failed. "s + error.what()};
     }
 }
@@ -143,7 +156,6 @@ GraphicsPipeline::GraphicsPipeline(DevicePtr device, Parameters createInfo)
     : DeviceChild{std::move(device)}
     , vk::raii::Pipeline{makePipeline(
           *DeviceChild::device(), requireProgram(createInfo), createInfo)}
-    , renderingDescription{createInfo.renderingDescription}
     , program{std::move(createInfo.shading)}
 {
 }

@@ -1,14 +1,25 @@
 #include "VOG/Graphics/Vulkan/Device.hpp"
 
-#include <VOG/Graphics/Vulkan/Attachment/RenderBuffer.hpp>
+#include <VOG/Common/Assert.hpp>
+#include <VOG/Graphics/Vulkan/Attachment/RenderTarget.hpp>
 #include <VOG/Graphics/Vulkan/Attachment/Swapchain.hpp>
 #include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
+#include <VOG/Graphics/Vulkan/Common.hpp>
+#include <VOG/Graphics/Vulkan/DescriptorHeap.hpp>
 #include <VOG/Graphics/Vulkan/DeviceRequirements.hpp>
+#include <VOG/Graphics/Vulkan/HeapBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
 #include <VOG/Graphics/Vulkan/MemoryAllocator.hpp>
 #include <VOG/Graphics/Vulkan/Shader.hpp>
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
+#include <VOG/Graphics/Vulkan/Texture.hpp>
+
+#include <algorithm>
+#include <format>
+#include <stdexcept>
+#include <utility>
+#include <vector>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -16,55 +27,34 @@ namespace
 {
 const char* gPortabilityExtensionName = "VK_KHR_portability_subset";
 
-PhysicalDevice::QueueInfos
-findGraphicsTransferQueues(const vk::raii::PhysicalDevice& device)
+/**
+ * Descriptor heaps are only usable if the dispatcher resolved their entry points. A device that
+ * lists VK_EXT_descriptor_heap can still miss them: the loader or a layer in the way may not know
+ * the extension. Untested: a loader that drops the entry points cannot be faked.
+ */
+void
+requireHeapEntryPoints(const vk::raii::Device& device)
 {
-    constexpr vk::QueueFlags kGraphicsFamily = vk::QueueFlagBits::eGraphics;
-    constexpr vk::QueueFlags kTransferOrComputeFamily =
-        vk::QueueFlagBits::eTransfer | vk::QueueFlagBits::eCompute;
+    const auto* dispatcher = device.getDispatcher();
 
-    auto queueFamilies = device.getQueueFamilyProperties();
-    for (std::uint32_t i = 0; i < queueFamilies.size(); ++i)
+    const std::pair<const char*, bool> entryPoints[] = {
+        {"vkWriteResourceDescriptorsEXT", dispatcher->vkWriteResourceDescriptorsEXT != nullptr},
+        {"vkWriteSamplerDescriptorsEXT", dispatcher->vkWriteSamplerDescriptorsEXT != nullptr},
+        {"vkCmdBindResourceHeapEXT", dispatcher->vkCmdBindResourceHeapEXT != nullptr},
+        {"vkCmdBindSamplerHeapEXT", dispatcher->vkCmdBindSamplerHeapEXT != nullptr},
+        {"vkCmdPushDataEXT", dispatcher->vkCmdPushDataEXT != nullptr},
+    };
+    for (const auto& [name, resolved] : entryPoints)
     {
-        const auto& queue = queueFamilies[i];
-        if ((queue.queueFlags & kGraphicsFamily) && (queue.queueFlags & kTransferOrComputeFamily))
+        if (!resolved)
         {
-            return {.graphics = {i, queue}, .transfer = {i, queue}};
+            throw std::runtime_error{std::format(
+                "The device has VK_EXT_descriptor_heap, but {} did not resolve. Check the Vulkan "
+                "loader and the layers (VK_LOADER_LAYERS_ENABLE, VK_ADD_LAYER_PATH) for one that "
+                "does not know the extension.",
+                name)};
         }
     }
-
-    std::uint32_t graphicsIndex = std::numeric_limits<std::uint32_t>::max();
-    std::uint32_t transferIndex = std::numeric_limits<std::uint32_t>::max();
-    for (std::uint32_t i = 0; i < queueFamilies.size(); ++i)
-    {
-        const auto& queue = queueFamilies[i];
-        if (graphicsIndex == std::numeric_limits<std::uint32_t>::max() &&
-            (queue.queueFlags & kGraphicsFamily))
-        {
-            graphicsIndex = i;
-        }
-
-        if (transferIndex == std::numeric_limits<std::uint32_t>::max() &&
-            (queue.queueFlags & kTransferOrComputeFamily))
-        {
-            transferIndex = i;
-        }
-
-        if (graphicsIndex != std::numeric_limits<std::uint32_t>::max() &&
-            transferIndex != std::numeric_limits<std::uint32_t>::max())
-        {
-            break;
-        }
-    }
-
-    if (graphicsIndex == std::numeric_limits<std::uint32_t>::max() ||
-        transferIndex == std::numeric_limits<std::uint32_t>::max())
-    {
-        throw std::runtime_error{"Could not find the Graphics and transfer queues"};
-    }
-
-    return {.graphics = {graphicsIndex, queueFamilies[graphicsIndex]},
-            .transfer = {transferIndex, queueFamilies[transferIndex]}};
 }
 
 vk::raii::Device
@@ -106,15 +96,81 @@ makeDevice(const vk::raii::PhysicalDevice& physicalDevice, const PhysicalDevice:
         .ppEnabledExtensionNames = extensions.data(),
     };
 
-    return {physicalDevice, createInfo};
+    vk::raii::Device device{physicalDevice, createInfo};
+    requireHeapEntryPoints(device);
+
+    return device;
 }
 } // namespace
 
 PhysicalDevice::PhysicalDevice(InstancePtr _instance, vk::raii::PhysicalDevice physicalDevice)
     : vk::raii::PhysicalDevice{std::move(physicalDevice)}
     , instance{std::move(_instance)}
-    , queueInfos{findGraphicsTransferQueues(*this)}
+    , queueInfos{selectQueueFamilies(getQueueFamilyProperties(), kDedicatedTransferFamily)}
+    , limits{getProperties().limits}
+    , descriptorHeapProperties{getProperties2<vk::PhysicalDeviceProperties2,
+                                              vk::PhysicalDeviceDescriptorHeapPropertiesEXT>()
+                                   .get<vk::PhysicalDeviceDescriptorHeapPropertiesEXT>()}
 {
+}
+
+std::uint32_t
+PhysicalDevice::selectPresentFamily(const QueueInfos& infos, std::span<const vk::Bool32> presents)
+{
+    for (const std::uint32_t family : {infos.graphics.familyIndex, infos.transfer.familyIndex})
+    {
+        if (family < presents.size() && presents[family] != 0u)
+        {
+            return family;
+        }
+    }
+
+    throw std::runtime_error{
+        "No queue family that the device created a queue for can present to the surface."};
+}
+
+PhysicalDevice::QueueInfos
+PhysicalDevice::selectQueueFamilies(std::span<const vk::QueueFamilyProperties> families,
+                                    bool                                       dedicatedTransfer)
+{
+    const auto info = [&families](std::ptrdiff_t index)
+    {
+        return QueueFamilyInfo{.familyIndex      = static_cast<std::uint32_t>(index),
+                               .familyProperties = families[static_cast<std::size_t>(index)]};
+    };
+
+    // Every graphics family also supports transfer operations, whether or not it reports the bit.
+    const auto graphics = std::ranges::find_if(
+        families,
+        [](const vk::QueueFamilyProperties& family)
+        {
+            return static_cast<bool>(family.queueFlags & vk::QueueFlagBits::eGraphics);
+        });
+    if (graphics == families.end())
+    {
+        throw std::runtime_error{"Could not find a graphics queue family"};
+    }
+
+    QueueInfos infos{.graphics = info(graphics - families.begin()),
+                     .transfer = info(graphics - families.begin())};
+    if (dedicatedTransfer)
+    {
+        // A DMA engine: transfer, and neither graphics nor compute. A compute family is skipped.
+        const auto dma =
+            std::ranges::find_if(families,
+                                 [](const vk::QueueFamilyProperties& family)
+                                 {
+                                     return (family.queueFlags & vk::QueueFlagBits::eTransfer) &&
+                                            !(family.queueFlags & (vk::QueueFlagBits::eGraphics |
+                                                                   vk::QueueFlagBits::eCompute));
+                                 });
+        if (dma != families.end())
+        {
+            infos.transfer = info(dma - families.begin());
+        }
+    }
+
+    return infos;
 }
 
 const vk::raii::PhysicalDevice&
@@ -132,8 +188,8 @@ Device::raii() const noexcept
 Device::Device(InstancePtr _instance, vk::raii::PhysicalDevice physicalDevice)
     : PhysicalDevice{std::move(_instance), std::move(physicalDevice)}
     , vk::raii::Device{makeDevice(raiiPhysicalDevice(), queueInfos)}
-    , mGraphicsQueue{*this, queueInfos.graphics.familyIndex, queueInfos.graphics.familyProperties}
-    , mTransferQueue{*this, queueInfos.transfer.familyIndex, queueInfos.transfer.familyProperties}
+    , mGraphicsQueue{*this, queueInfos.graphics.familyIndex}
+    , mTransferQueue{*this, queueInfos.transfer.familyIndex}
     , pipelineCache{*this, {}}
     , mMemoryAllocator{new MemoryAllocator{*this}}
 {
@@ -153,10 +209,10 @@ Device::createSemaphore()
     return SemaphorePtr{new Semaphore{shared_from_this()}};
 }
 
-TimelineSemaphore
+TimelineSemaphorePtr
 Device::createTimelineSemaphore()
 {
-    return TimelineSemaphore{shared_from_this()};
+    return TimelineSemaphorePtr{new TimelineSemaphore{shared_from_this()}};
 }
 
 std::shared_ptr<const Queue>
@@ -174,14 +230,20 @@ Device::getTransferQueue()
 std::shared_ptr<CommandBufferPool>
 Device::createCommandBufferPool()
 {
-    return std::shared_ptr<CommandBufferPool>(new CommandBufferPool{shared_from_this()});
+    return createCommandBufferPool(queueInfos.graphics.familyIndex);
 }
 
-std::unique_ptr<ShaderProgram>
-Device::createShaderProgram(ShaderProgram::ShadingStages stages)
+std::shared_ptr<CommandBufferPool>
+Device::createCommandBufferPool(std::uint32_t queueFamilyIndex)
 {
-    return std::unique_ptr<ShaderProgram>(new ShaderProgram{
-        shared_from_this(), ShaderProgram::ShadingStagesChecked{std::move(stages)}});
+    // The device made queues for these two families only; a pool of another family has no queue to
+    // submit to.
+    VOG_ASSERT_MSG(queueFamilyIndex == queueInfos.graphics.familyIndex ||
+                       queueFamilyIndex == queueInfos.transfer.familyIndex,
+                   "A command buffer pool needs the family of the graphics or the transfer queue.");
+
+    return std::shared_ptr<CommandBufferPool>(
+        new CommandBufferPool{shared_from_this(), queueFamilyIndex});
 }
 
 std::unique_ptr<GraphicsPipeline>
@@ -197,27 +259,49 @@ Device::createSwapchain(const Swapchain::SwapchainParameters& parameters)
     return std::unique_ptr<Swapchain>(new Swapchain{shared_from_this(), parameters});
 }
 
-std::unique_ptr<RenderBuffer>
-Device::createRenderBuffer(AttachmentUsage         usage,
-                           vk::Format              desiredFormat,
-                           vk::Extent2D            extent,
-                           SampleCount             sampleCount,
-                           std::uint32_t           mipLevels,
-                           std::uint32_t           arrayLevels,
-                           vk::ImageTiling         imageTiling,
-                           vk::ImageLayout         initialLayout,
-                           vk::MemoryPropertyFlags memoryProperties)
+std::unique_ptr<RenderTarget>
+Device::createRenderTarget(vk::Extent2D extent, vk::Format format, vk::ImageUsageFlags usage)
 {
-    return std::unique_ptr<RenderBuffer>(new RenderBuffer{shared_from_this(),
-                                                          usage,
-                                                          desiredFormat,
-                                                          extent,
-                                                          sampleCount,
-                                                          mipLevels,
-                                                          arrayLevels,
-                                                          imageTiling,
-                                                          initialLayout,
-                                                          memoryProperties});
+    if (extent.width == 0u || extent.height == 0u || extent.width > limits.maxImageDimension2D ||
+        extent.height > limits.maxImageDimension2D)
+    {
+        throw std::invalid_argument{std::format("A render target is 1x1 to {0}x{0}; got {1}x{2}.",
+                                                limits.maxImageDimension2D,
+                                                extent.width,
+                                                extent.height)};
+    }
+    if (!(usage & (vk::ImageUsageFlagBits::eColorAttachment |
+                   vk::ImageUsageFlagBits::eDepthStencilAttachment)))
+    {
+        throw std::invalid_argument{
+            "A render target needs the eColorAttachment or the eDepthStencilAttachment usage."};
+    }
+
+    // Nothing renders into a stencil aspect: the recorder takes depth-only depth attachments.
+    if (isStencilFormat(format))
+    {
+        throw std::invalid_argument{
+            std::format("A render target has no stencil aspect; the format {} has one.",
+                        vk::to_string(format))};
+    }
+
+    const vk::ImageAspectFlags aspects =
+        isDepthFormat(format) ? vk::ImageAspectFlagBits::eDepth : vk::ImageAspectFlagBits::eColor;
+
+    return mMemoryAllocator->makeRenderTarget(
+        {
+            .imageType     = vk::ImageType::e2D,
+            .format        = format,
+            .extent        = {.width = extent.width, .height = extent.height, .depth = 1u},
+            .mipLevels     = 1u,
+            .arrayLayers   = 1u,
+            .samples       = vk::SampleCountFlagBits::e1,
+            .tiling        = vk::ImageTiling::eOptimal,
+            .usage         = usage,
+            .sharingMode   = vk::SharingMode::eExclusive,
+            .initialLayout = vk::ImageLayout::eUndefined,
+        },
+        aspects);
 }
 
 std::unique_ptr<Buffer>
@@ -225,5 +309,101 @@ Device::createBuffer(const vk::BufferCreateInfo&                  createInfo,
                      const MemoryAllocator::AllocationParameters& allocationInfo)
 {
     return mMemoryAllocator->makeBuffer(createInfo, allocationInfo);
+}
+
+DescriptorHeapPtr
+Device::createDescriptorHeap(std::uint32_t                          resourceSlots,
+                             std::span<const vk::SamplerCreateInfo> samplers)
+{
+    return DescriptorHeapPtr{new DescriptorHeap{shared_from_this(), resourceSlots, samplers}};
+}
+
+std::unique_ptr<Texture>
+Device::createTexture(const DescriptorHeapPtr& heap, vk::Extent2D extent, vk::Format format)
+{
+    if (extent.width > limits.maxImageDimension2D || extent.height > limits.maxImageDimension2D)
+    {
+        throw std::invalid_argument{std::format("A texture is at most {0}x{0}; got {1}x{2}.",
+                                                limits.maxImageDimension2D,
+                                                extent.width,
+                                                extent.height)};
+    }
+
+    // The slot first: a full heap fails before any image exists.
+    DescriptorHeap::Slot slot = heap->allocate();
+
+    auto texture = mMemoryAllocator->makeTexture(
+        {
+            .imageType   = vk::ImageType::e2D,
+            .format      = format,
+            .extent      = {.width = extent.width, .height = extent.height, .depth = 1u},
+            .mipLevels   = 1u,
+            .arrayLayers = 1u,
+            .samples     = vk::SampleCountFlagBits::e1,
+            .tiling      = vk::ImageTiling::eOptimal,
+            .usage       = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
+            .sharingMode = vk::SharingMode::eExclusive,
+            .initialLayout = vk::ImageLayout::eUndefined,
+        },
+        std::move(slot));
+
+    // The view is only a description of the descriptor: no VkImageView object exists.
+    heap->writeImage(texture->mSlot,
+                     {.image            = **texture,
+                      .viewType         = vk::ImageViewType::e2D,
+                      .format           = format,
+                      .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                           .levelCount = 1u,
+                                           .layerCount = 1u}},
+                     vk::ImageLayout::eShaderReadOnlyOptimal);
+
+    return texture;
+}
+
+std::unique_ptr<HeapBuffer>
+Device::createHeapBuffer(const DescriptorHeapPtr& heap, std::size_t size)
+{
+    // Before the rounding: a size near the top of std::size_t would wrap to a small buffer.
+    if (size > limits.maxUniformBufferRange)
+    {
+        throw std::invalid_argument{std::format(
+            "A heap buffer takes at most {} bytes; got {}.", limits.maxUniformBufferRange, size)};
+    }
+
+    // A zero-sized buffer is invalid; rounding up to 16 keeps a shader's vec4 reads inside it.
+    constexpr std::size_t kBlockGranularity = 16u;
+    const std::size_t     rounded           = std::max(
+        kBlockGranularity, (size + kBlockGranularity - 1u) / kBlockGranularity * kBlockGranularity);
+    if (rounded > limits.maxUniformBufferRange)
+    {
+        throw std::invalid_argument{std::format(
+            "A heap buffer takes at most {} bytes; got {}, which is {} rounded up to 16.",
+            limits.maxUniformBufferRange,
+            size,
+            rounded)};
+    }
+
+    DescriptorHeap::Slot slot = heap->allocate();
+
+    const vk::DeviceSize alignment = limits.minUniformBufferOffsetAlignment;
+    BufferPtr            buffer =
+        createBuffer({.size  = rounded,
+                      .usage = vk::BufferUsageFlagBits::eUniformBuffer |
+                               vk::BufferUsageFlagBits::eShaderDeviceAddress},
+                     {.flags = AllocationFlag::eHostSequentialWrite, .alignment = alignment});
+    {
+        auto mapping = buffer->mapForWrite();
+        std::ranges::fill(mapping.bytes().first(rounded), std::byte{0});
+    }
+
+    const vk::DeviceAddress address = buffer->deviceAddress();
+    // Untested: a driver that places the buffer below its own offset alignment reaches it.
+    if (address % alignment != 0u)
+    {
+        throw std::runtime_error{"The heap buffer got an address that is not aligned."};
+    }
+    heap->writeUniformBuffer(slot, {.address = address, .size = rounded});
+
+    return std::unique_ptr<HeapBuffer>(new HeapBuffer{std::move(slot), std::move(buffer)});
 }
 } // namespace VOG::Graphics::Vulkan

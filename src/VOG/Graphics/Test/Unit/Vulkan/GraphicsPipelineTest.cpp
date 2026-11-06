@@ -4,6 +4,11 @@
 
 #include <gtest/gtest.h>
 
+#include <stdexcept>
+#include <string>
+#include <tuple>
+#include <vector>
+
 #include "VulkanFixture.hpp"
 
 namespace VOG::Tests
@@ -24,6 +29,35 @@ void main() {
 }
 )";
 
+/** Reads the color as signed integers, so only an integer format can feed location 1. */
+const std::string gIntegerColorVertexShaderString = R"(
+#version 450
+
+layout(location = 0) in vec4 inPosition;
+layout(location = 1) in ivec4 inColor;
+
+layout(location = 0) out vec4 fragColor;
+
+void main() {
+    gl_Position = inPosition;
+    fragColor = vec4(inColor);
+}
+)";
+
+/** An array input covers locations 0 and 1. */
+const std::string gArrayVertexShaderString = R"(
+#version 450
+
+layout(location = 0) in vec4 inPosition[2];
+
+layout(location = 0) out vec4 fragColor;
+
+void main() {
+    gl_Position = inPosition[0];
+    fragColor = inPosition[1];
+}
+)";
+
 const std::string gFragmentShaderGoodString = R"(
 #version 450
 
@@ -35,6 +69,34 @@ void main() {
 }
 )";
 } // namespace
+
+/** Every core value of every field of the rasterizer options reads back as it was set. */
+TEST(RasterizationOptionsTest, everyCoreValueOfEveryFieldReadsBackAsSet)
+{
+    using namespace VOG::Graphics::Vulkan;
+
+    // The topologies are the values 0 to 10, point list to patch list.
+    for (std::uint32_t value = 0u;
+         value <= static_cast<std::uint32_t>(PrimitiveTopology::ePatchList);
+         ++value)
+    {
+        const auto topology = static_cast<PrimitiveTopology>(value);
+        EXPECT_EQ((RasterizationOptions{.topology = topology}.topology), topology);
+    }
+    for (const auto polygonMode : {PolygonMode::eFill, PolygonMode::eLine, PolygonMode::ePoint})
+    {
+        EXPECT_EQ((RasterizationOptions{.polygonMode = polygonMode}.polygonMode), polygonMode);
+    }
+    for (const auto cullMode :
+         {CullMode::eNone, CullMode::eFront, CullMode::eBack, CullMode::eFrontAndBack})
+    {
+        EXPECT_EQ((RasterizationOptions{.cullMode = cullMode}.cullMode), cullMode);
+    }
+    for (const auto frontFace : {FrontFace::eCounterClockwise, FrontFace::eClockwise})
+    {
+        EXPECT_EQ((RasterizationOptions{.frontFace = frontFace}.frontFace), frontFace);
+    }
+}
 
 TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
 {
@@ -66,18 +128,69 @@ TEST_F(VulkanFixture, GraphicsPipeline_simpleTest)
         .dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor},
         .renderingDescription = {.colorAttachmentFormats = {vk::Format::eR32G32B32A32Sfloat}}};
 
-    {
-        SCOPED_TRACE("correct pipeline compiles");
-        auto vertexShader = createShader(Shader::ShadingStage::eVertex, gVertexShaderString);
-        auto fragmentShader =
-            createShader(Shader::ShadingStage::eFragment, gFragmentShaderGoodString);
+    auto fragmentShader = createShader(Shader::ShadingStage::eFragment, gFragmentShaderGoodString);
 
+    // The template with the given vertex shader and one attribute per format, at the location
+    // of its index.
+    const auto makeCreateInfo =
+        [&](const std::string& vertexSource, const std::vector<vk::Format>& formats)
+    {
         auto createInfo    = createInfoTemplate;
-        createInfo.shading = mDevice->createShaderProgram(
-            {.vertex   = {.shader = vertexShader, .entryPoint = "main"},
+        createInfo.shading = ShaderProgram::create(
+            {.vertex   = {.shader     = createShader(Shader::ShadingStage::eVertex, vertexSource),
+                          .entryPoint = "main"},
              .fragment = {.shader = fragmentShader, .entryPoint = "main"}});
 
-        EXPECT_NO_THROW(auto pipeline = mDevice->createGraphicsPipeline(createInfo););
+        createInfo.vertexLayout.attributeDescription.clear();
+        for (std::uint32_t location = 0u; location < formats.size(); ++location)
+        {
+            createInfo.vertexLayout.attributeDescription.push_back(
+                {.location = location, .binding = 0u, .format = formats[location], .offset = 0u});
+        }
+
+        return createInfo;
+    };
+
+    constexpr auto kFloat4 = vk::Format::eR32G32B32A32Sfloat;
+    constexpr auto kFloat2 = vk::Format::eR32G32Sfloat;
+
+    {
+        SCOPED_TRACE("correct pipeline compiles");
+        EXPECT_NO_THROW(auto pipeline = mDevice->createGraphicsPipeline(
+                            makeCreateInfo(gVertexShaderString, {kFloat4, kFloat4})););
+    }
+    {
+        SCOPED_TRACE("a location the shader reads has no attribute");
+        EXPECT_THROW(std::ignore = mDevice->createGraphicsPipeline(
+                         makeCreateInfo(gVertexShaderString, {kFloat4})),
+                     std::invalid_argument);
+    }
+    {
+        SCOPED_TRACE("a float format cannot feed an integer input");
+        EXPECT_THROW(std::ignore = mDevice->createGraphicsPipeline(
+                         makeCreateInfo(gIntegerColorVertexShaderString, {kFloat4, kFloat4})),
+                     std::invalid_argument);
+        EXPECT_NO_THROW(
+            auto pipeline = mDevice->createGraphicsPipeline(makeCreateInfo(
+                gIntegerColorVertexShaderString, {kFloat4, vk::Format::eR32G32B32A32Sint})););
+    }
+    {
+        SCOPED_TRACE("the component count is not compared");
+        EXPECT_NO_THROW(auto pipeline = mDevice->createGraphicsPipeline(
+                            makeCreateInfo(gVertexShaderString, {kFloat4, kFloat2})););
+    }
+    {
+        SCOPED_TRACE("an attribute the shader does not read is allowed");
+        EXPECT_NO_THROW(auto pipeline = mDevice->createGraphicsPipeline(
+                            makeCreateInfo(gVertexShaderString, {kFloat4, kFloat4, kFloat4})););
+    }
+    {
+        SCOPED_TRACE("every location of an array input needs an attribute");
+        EXPECT_THROW(std::ignore = mDevice->createGraphicsPipeline(
+                         makeCreateInfo(gArrayVertexShaderString, {kFloat4})),
+                     std::invalid_argument);
+        EXPECT_NO_THROW(auto pipeline = mDevice->createGraphicsPipeline(
+                            makeCreateInfo(gArrayVertexShaderString, {kFloat4, kFloat4})););
     }
 }
 } // namespace VOG::Tests

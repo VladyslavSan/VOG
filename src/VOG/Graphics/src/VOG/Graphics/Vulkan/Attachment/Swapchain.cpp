@@ -9,11 +9,14 @@
 #include <VOG/Graphics/Vulkan/InDestructor.hpp>
 
 #include <algorithm>
+#include <array>
 #include <exception>
 #include <format>
 #include <limits>
 #include <optional>
+#include <ranges>
 #include <stdexcept>
+#include <vector>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -22,25 +25,15 @@ namespace
 std::uint32_t
 findPresentQueueFamilyIndex(const Device& device, const vk::raii::SurfaceKHR& surface)
 {
-    {
+    const auto familyCount = static_cast<std::uint32_t>(device.getQueueFamilyProperties().size());
 
-        const std::uint32_t graphicsQueueIndex = device.queueInfos.graphics.familyIndex;
-        if (device.getSurfaceSupportKHR(graphicsQueueIndex, *surface) != 0u)
-        {
-            return graphicsQueueIndex;
-        }
+    std::vector<vk::Bool32> presents;
+    for (const std::uint32_t family : std::views::iota(0u, familyCount))
+    {
+        presents.push_back(device.getSurfaceSupportKHR(family, *surface));
     }
 
-    auto queueFamiliesProperty = device.getQueueFamilyProperties();
-    for (std::uint32_t i = 0; i < queueFamiliesProperty.size(); ++i)
-    {
-        if (device.getSurfaceSupportKHR(i, *surface) != 0u)
-        {
-            return i;
-        }
-    }
-
-    throw std::runtime_error("No present queue found.");
+    return PhysicalDevice::selectPresentFamily(device.queueInfos, presents);
 }
 
 /** The surface reports currentExtent as 0xFFFFFFFF when the application chooses the size. */
@@ -181,7 +174,13 @@ Swapchain::makeGeneration(vk::SwapchainKHR oldSwapchain, vk::Extent2D extent)
         .oldSwapchain          = oldSwapchain,
     };
 
-    return std::make_shared<SwapchainGeneration>(mDevice, mSurface, swapchainCreateInfo);
+    // Made before the generation, so that vkCreateSwapchainKHR is the first call here that can
+    // throw: the make_shared allocation, which could throw bad_alloc, comes after it. That is what
+    // makes mRetired exact in recreate().
+    vk::raii::SwapchainKHR swapchain{mDevice->raii(), swapchainCreateInfo};
+
+    return std::make_shared<SwapchainGeneration>(
+        mDevice, mSurface, std::move(swapchain), mSurfaceFormat.format, extent);
 }
 
 bool
@@ -196,9 +195,18 @@ Swapchain::recreate(vk::Extent2D requested)
     }
 
     // The old generation is not waited for. The presentations and command buffers that still use
-    // it keep it alive, and it is destroyed when the last of them lets go. Assigning after the
-    // build keeps the old generation in place if the build throws.
-    mGeneration = makeGeneration(*mGeneration->swapchain, *extent);
+    // it keep it alive, and it is destroyed when the last of them lets go.
+    //
+    // vkCreateSwapchainKHR retires oldSwapchain even when it fails, and the allocation of the
+    // generation, the images and the views can fail after it. If the build throws, mGeneration is
+    // assigned nothing and still holds the retired swapchain: mRetired says so, until a build
+    // succeeds. A retired swapchain can be neither acquired from nor passed as oldSwapchain
+    // again. The flag is set right before makeGeneration, whose first throwing call is
+    // vkCreateSwapchainKHR, so it is true exactly when the old swapchain may be retired.
+    const vk::SwapchainKHR oldSwapchain = mRetired ? vk::SwapchainKHR{} : *mGeneration->swapchain;
+    mRetired                            = true;
+    mGeneration                         = makeGeneration(oldSwapchain, *extent);
+    mRetired                            = false;
 
     return true;
 }
@@ -222,9 +230,24 @@ Swapchain::getFormat() const
 }
 
 Swapchain::ImageAcquireResult
-Swapchain::acquireNextImage(std::chrono::nanoseconds timeout)
+Swapchain::acquireNextImage(std::chrono::nanoseconds timeout, SemaphorePtr imageAvailable)
 {
-    auto [result, index, imageAvailable] = mGeneration->acquireNextImage(timeout);
+    VOG_ASSERT_MSG(imageAvailable, "Swapchain::acquireNextImage needs a semaphore to signal.");
+
+    if (mRetired)
+    {
+        // The swapchain is retired: the driver would take the acquire for invalid usage
+        // (VUID-vkAcquireNextImageKHR-swapchain-01285). The caller recreates it, as for any
+        // out-of-date swapchain.
+        return {.status = AcquireStatus::eOutOfDate, .acquired = nullptr};
+    }
+
+    const auto nanoseconds = static_cast<std::uint64_t>(std::max(timeout.count(), std::int64_t{0}));
+
+    // VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS makes eErrorOutOfDateKHR a returned result
+    // instead of a thrown vk::OutOfDateKHRError.
+    const auto [result, index] =
+        mGeneration->swapchain.acquireNextImage(nanoseconds, **imageAvailable, {});
 
     if (result == vk::Result::eErrorOutOfDateKHR)
     {

@@ -4,7 +4,13 @@
 #include <glslang/Public/ShaderLang.h>
 #include <glslang/SPIRV/GlslangToSpv.h>
 
+#include <algorithm>
 #include <format>
+#include <fstream>
+#include <iterator>
+#include <memory>
+#include <system_error>
+#include <vector>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -148,10 +154,103 @@ toEShLanguage(Shader::ShadingStage stage)
     }
 }
 
+/**
+ * Resolves the name of an include against the include directories, in order. Both kinds of include
+ * search the same directories. An include that is not found, is deeper than gMaxIncludeDepth, names
+ * a root path, or leaves its directory (a name that starts with ".." once "." and ".." are folded)
+ * gets nullptr, which glslang reports as an error that names the header.
+ */
+class DirectoryIncluder final : public glslang::TShader::Includer
+{
+public:
+    explicit DirectoryIncluder(std::span<const std::filesystem::path> directories)
+        : mDirectories{directories}
+    {
+    }
+
+    IncludeResult*
+    includeLocal(const char* headerName,
+                 const char* /*includerName*/,
+                 size_t inclusionDepth) override
+    {
+        return resolve(headerName, inclusionDepth);
+    }
+
+    IncludeResult*
+    includeSystem(const char* headerName,
+                  const char* /*includerName*/,
+                  size_t inclusionDepth) override
+    {
+        return resolve(headerName, inclusionDepth);
+    }
+
+    /** glslang also calls this with the nullptr of an include that failed. */
+    void
+    releaseInclude(IncludeResult* result) override
+    {
+        std::erase_if(mLive,
+                      [result](const std::unique_ptr<Included>& included)
+                      {
+                          return &included->result == result;
+                      });
+    }
+
+private:
+    /** The text of a file and the result that points into it. */
+    struct Included
+    {
+        Included(const std::filesystem::path& path, std::string content)
+            : text{std::move(content)}
+            , result{path.generic_string(), text.data(), text.size(), nullptr}
+        {
+        }
+
+        std::string   text;
+        IncludeResult result;
+    };
+
+    IncludeResult*
+    resolve(const char* headerName, size_t inclusionDepth)
+    {
+        const std::filesystem::path name = std::filesystem::path{headerName}.lexically_normal();
+        if (inclusionDepth > gMaxIncludeDepth || name.has_root_path() ||
+            (!name.empty() && *name.begin() == ".."))
+        {
+            return nullptr;
+        }
+
+        for (const std::filesystem::path& directory : mDirectories)
+        {
+            const std::filesystem::path path = directory / name;
+            std::error_code             error;
+            if (!std::filesystem::is_regular_file(path, error))
+            {
+                continue;
+            }
+
+            std::ifstream file{path, std::ios::binary};
+            if (!file)
+            {
+                continue;
+            }
+            std::string content{std::istreambuf_iterator<char>{file}, {}};
+
+            return &mLive.emplace_back(std::make_unique<Included>(path, std::move(content)))
+                        ->result;
+        }
+
+        return nullptr;
+    }
+
+    std::span<const std::filesystem::path> mDirectories;
+    std::vector<std::unique_ptr<Included>> mLive;
+};
 } // namespace
 
 std::vector<std::uint32_t>
-compileGLSL(Shader::ShadingStage stage, const std::string& glslCode)
+compileGLSL(Shader::ShadingStage                   stage,
+            const std::string&                     glslCode,
+            std::span<const std::filesystem::path> includeDirectories)
 {
     static GlslangProcess sGlslangProcess;
 
@@ -178,7 +277,7 @@ compileGLSL(Shader::ShadingStage stage, const std::string& glslCode)
     shader.setEnvTarget(glslang::EShTargetLanguage::EShTargetSpv,
                         glslang::EShTargetLanguageVersion::EShTargetSpv_1_5);
 
-    auto includer = glslang::TShader::ForbidIncluder{};
+    DirectoryIncluder includer{includeDirectories};
     if (!shader.parse(&gDefaultTBuiltInResource,
                       glslang::EShTargetClientVersion::EShTargetOpenGL_450,
                       false,

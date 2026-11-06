@@ -36,7 +36,19 @@ public:
      */
     ~FrameObjects() = default;
 
+    /** The position of the slot in its FrameObjectManager: below the number of slots, and the
+     *  same for the whole life of the slot. 0 for a slot that no manager made. */
+    [[nodiscard]] std::size_t index() const noexcept;
+
     const Vulkan::SemaphorePtr& getRenderFinishedSemaphore() const;
+
+    /**
+     * The semaphore the swapchain acquire of this slot's frame signals and the frame's submit
+     * waits. It is unsignaled with no pending operation once FrameObjectManager::prepareNextFrame
+     * returned this slot: the wait of the slot's previous submit is done, as its fence showed.
+     * An image dropped between acquire and submit leaves it signaled (SwapchainSync.md, known gap).
+     */
+    const Vulkan::SemaphorePtr& getAcquireSemaphore() const;
 
     /**
      * Keeps @p presentation until this frame slot starts again. The slot's render-finished
@@ -63,7 +75,7 @@ protected:
     /**
      * Frame cleanups from previous usage like resetting the command buffers and command pools, and
      * dropping the previous presentation of this slot, whose destructor waits for its present
-     * fence.
+     * fence. Calling it again before the slot is used changes nothing.
      */
     void onFrameStart();
 
@@ -74,6 +86,14 @@ protected:
 
     /** Vulkan device provider */
     Vulkan::DevicePtr mDevice;
+
+    /** Set by FrameObjectManager when it makes the slot. */
+    std::size_t mIndex = 0u;
+
+    /** Signaled by the swapchain acquire; waited by the graphics submit. The submit fence, which
+     *  onFrameStart() waits, shows that the wait is done, so the next acquire may signal it again.
+     */
+    Vulkan::SemaphorePtr mAcquireSemaphore;
 
     /** Signaled by the graphics submit; waited by vkQueuePresentKHR. The submit fence does not
      *  prove the presentation engine consumed the wait, so the semaphore is safe to signal again

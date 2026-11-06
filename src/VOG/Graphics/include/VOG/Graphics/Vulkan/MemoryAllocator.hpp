@@ -2,6 +2,7 @@
 
 #include <VOG/Graphics/Config/VulkanConfig.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
+#include <VOG/Graphics/Vulkan/DescriptorHeap.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -14,11 +15,16 @@ namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Buffer);
 VOG_DECLARE_PTR(Device);
+VOG_DECLARE_PTR(RenderTarget);
+VOG_DECLARE_PTR(Texture);
 
 enum class AllocationFlag : std::uint8_t
 {
     /** The CPU writes the memory in order and never reads it: map with Buffer::mapForWrite(). */
     eHostSequentialWrite = 1u << 0u,
+    /** The CPU reads the memory, in any order: map with Buffer::mapForRead(). VMA picks memory the
+     *  CPU can read quickly, host-cached where the device has it. */
+    eHostRandomAccess = 1u << 1u,
 };
 } // namespace VOG::Graphics::Vulkan
 
@@ -31,7 +37,8 @@ struct FlagTraits<VOG::Graphics::Vulkan::AllocationFlag>
     // NOLINTBEGIN(readability-identifier-naming)
     static constexpr bool                                             isBitmask = true;
     static constexpr vk::Flags<VOG::Graphics::Vulkan::AllocationFlag> allFlags =
-        VOG::Graphics::Vulkan::AllocationFlag::eHostSequentialWrite;
+        VOG::Graphics::Vulkan::AllocationFlag::eHostSequentialWrite |
+        VOG::Graphics::Vulkan::AllocationFlag::eHostRandomAccess;
     // NOLINTEND(readability-identifier-naming)
 };
 } // namespace vk
@@ -63,6 +70,15 @@ private:
     std::unique_ptr<Buffer> makeBuffer(const vk::BufferCreateInfo& createInfo,
                                        const AllocationParameters& allocationCreateInfo);
 
+    /** Image in memory that is preferably device-local; the texture owns @p slot, the descriptor of
+     * the image. */
+    std::unique_ptr<Texture> makeTexture(const vk::ImageCreateInfo& createInfo,
+                                         DescriptorHeap::Slot       slot);
+
+    /** Image in memory that is preferably device-local, with a view of @p aspects of it. */
+    std::unique_ptr<RenderTarget> makeRenderTarget(const vk::ImageCreateInfo& createInfo,
+                                                   vk::ImageAspectFlags       aspects);
+
     Device&         mDevice;
     VmaAllocator_T* mAllocator;
 };
@@ -71,6 +87,9 @@ struct MemoryAllocator::AllocationParameters
 {
     /** The memory type is always picked by VMA for the buffer's usage. */
     AllocationFlags flags;
+
+    /** Minimum address alignment of the buffer; 0 takes what the buffer's usage needs. */
+    vk::DeviceSize alignment = 0u;
 };
 
 class MemoryAllocator::Allocation

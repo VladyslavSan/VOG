@@ -3,6 +3,7 @@
 #include <VOG/Graphics/Vulkan/MemoryAllocator.hpp>
 
 #include <cstddef>
+#include <span>
 
 namespace VOG::Graphics::Vulkan
 {
@@ -15,34 +16,45 @@ class Buffer
 public:
     using vk::raii::Buffer::operator*;
 
-    /** Scope guard for a mapped buffer: the destructor flushes (if needed) and unmaps. */
-    struct MemoryMapping
+    /** Scope guard for a mapped buffer: the destructor flushes (if it was mapped for writing, and
+     *  the memory needs it) and unmaps. */
+    class MemoryMapping
     {
-        /** Pointer for writing. */
-        std::byte* data;
+        friend class Buffer;
 
-        /** Size that defines max number bytes that can be accessed by the @var data pointer. */
-        const std::size_t size;
-
-        /** Buffer pointer used to unmap and flush the allocation. */
-        const Buffer* buffer;
-
-        /** If true, the destructor flushes to commit the writes and make them visible to the GPU.
-         */
-        const bool shouldFlush;
-
-        MemoryMapping(std::byte* _data, std::size_t _size, const Buffer* _buffer, bool _shouldFlush)
-            : data{_data}
-            , size{_size}
-            , buffer{_buffer}
-            , shouldFlush{_shouldFlush}
+        MemoryMapping(std::span<std::byte> bytes, const Buffer& buffer, bool shouldFlush) noexcept
+            : mBytes{bytes}
+            , mBuffer{buffer}
+            , mShouldFlush{shouldFlush}
         {
         }
 
+    public:
         ~MemoryMapping();
 
-        MemoryMapping(const MemoryMapping&) = delete;
-        MemoryMapping(MemoryMapping&&)      = delete;
+        MemoryMapping(const MemoryMapping&)            = delete;
+        MemoryMapping(MemoryMapping&&)                 = delete;
+        MemoryMapping& operator=(const MemoryMapping&) = delete;
+        MemoryMapping& operator=(MemoryMapping&&)      = delete;
+
+        /**
+         * The mapped memory, for writing or, after mapForRead(), for reading: all the memory behind
+         * the buffer, which may be larger than Buffer::byteSize(). Use it only while the mapping
+         * is alive.
+         */
+        [[nodiscard]] std::span<std::byte>
+        bytes() const noexcept
+        {
+            return mBytes;
+        }
+
+    private:
+        std::span<std::byte> mBytes;
+        const Buffer&        mBuffer;
+
+        /** If true, the destructor flushes to commit the writes and make them visible to the GPU.
+         */
+        bool mShouldFlush;
     };
 
     /**
@@ -52,7 +64,52 @@ public:
      */
     [[nodiscard]] MemoryMapping mapForWrite();
 
+    /** A mapping for reading: the memory can be read and not written. */
+    class ReadMapping
+    {
+        friend class Buffer;
+
+        ReadMapping(std::span<std::byte> bytes, const Buffer& buffer) noexcept
+            : mMapping{bytes, buffer, false}
+        {
+        }
+
+    public:
+        [[nodiscard]] std::span<const std::byte>
+        bytes() const noexcept
+        {
+            return mMapping.bytes();
+        }
+
+    private:
+        MemoryMapping mMapping;
+    };
+
+    /**
+     * Maps the buffer for reading, after the GPU finished writing it and a barrier made the writes
+     * visible to the host (stage eHost, access eHostRead). Only for a buffer created with
+     * AllocationFlag::eHostRandomAccess. Where the memory is not host-coherent, the mapping
+     * invalidates the CPU's caches first, so the reads see what the GPU wrote.
+     *
+     * @throws std::runtime_error if the memory cannot be mapped or invalidated.
+     */
+    [[nodiscard]] ReadMapping mapForRead();
+
+    /** The size the buffer was created with; the memory behind it may be larger. */
+    vk::DeviceSize
+    byteSize() const noexcept
+    {
+        return mByteSize;
+    }
+
+    /** GPU address of the buffer. Only for a buffer created with eShaderDeviceAddress usage. */
+    [[nodiscard]] vk::DeviceAddress deviceAddress() const;
+
 private:
-    Buffer(MemoryAllocator::Allocation allocation, vk::raii::Buffer buffer);
+    Buffer(MemoryAllocator::Allocation allocation,
+           vk::raii::Buffer            buffer,
+           vk::DeviceSize              byteSize);
+
+    vk::DeviceSize mByteSize;
 };
 } // namespace VOG::Graphics::Vulkan

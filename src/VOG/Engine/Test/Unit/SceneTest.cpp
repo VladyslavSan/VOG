@@ -1,0 +1,1066 @@
+#include <VOG/Engine/Scene/Scene.hpp>
+#include <VOG/Graphics/Vulkan/Shader.hpp>
+
+#include <gtest/gtest.h>
+#include <spdlog/sinks/stdout_sinks.h>
+#include <spdlog/spdlog.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <new>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <tuple>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+#include "AllocationFailure.hpp"
+#include "HandleTestAccess.hpp"
+#include "RenderQueueTestAccess.hpp"
+
+using namespace VOG::Engine;
+
+namespace VOG::Engine
+{
+/** Test-only window into the scene, befriended by Scene. */
+struct SceneTestAccess
+{
+    /** The slot the registry hands out next. It keeps it: call it last. */
+    static std::uint32_t
+    nextEntityIndex(Scene& scene)
+    {
+        return scene.mRegistry.create().index;
+    }
+};
+} // namespace VOG::Engine
+
+using VOG::Math::Matrix4x4f;
+using VOG::Math::Vector3f;
+using VOG::Math::Vector4f;
+
+namespace VOG::Tests
+{
+// A copy of a behaviour would carry the state and the object of the original.
+static_assert(!std::is_copy_constructible_v<Behaviour> && !std::is_move_constructible_v<Behaviour>);
+static_assert(!std::is_copy_assignable_v<Behaviour> && !std::is_move_assignable_v<Behaviour>);
+
+// NOLINTBEGIN(readability-magic-numbers, readability-function-cognitive-complexity): the numbers
+// are test data; the score of a test comes from the gtest assertion macros.
+namespace
+{
+using Log = std::vector<std::string>;
+
+const FrameContext gFrame{};
+
+/**
+ * Logs its calls as "<name>.start", "<name>.update" and "<name>.destroy", then runs its hook.
+ * Declare the Log before the Scene: ~Scene() calls onDestroy().
+ */
+class Probe final : public Behaviour
+{
+public:
+    Probe(Log& log, std::string name)
+        : mLog{log}
+        , mName{std::move(name)}
+    {
+    }
+
+    std::function<void()> startHook;
+    std::function<void()> updateHook;
+    std::function<void()> destroyHook;
+
+    void
+    start() override
+    {
+        call(".start", startHook);
+    }
+
+    void
+    update(const FrameContext& /*frame*/) override
+    {
+        call(".update", updateHook);
+    }
+
+    void
+    onDestroy() override
+    {
+        call(".destroy", destroyHook);
+    }
+
+private:
+    void
+    call(const char* what, const std::function<void()>& hook)
+    {
+        mLog.push_back(mName + what);
+        if (hook)
+        {
+            hook();
+        }
+    }
+
+    Log&        mLog;
+    std::string mName;
+};
+
+/** An object with a Probe that has started. */
+GameObject
+startedObject(Scene& scene, Log& log, const std::string& name, Probe** probe = nullptr)
+{
+    GameObject object = scene.createGameObject();
+    Probe&     added  = object.addBehaviour<Probe>(log, name);
+    if (probe != nullptr)
+    {
+        *probe = &added;
+    }
+    scene.update(gFrame);
+    log.clear();
+
+    return object;
+}
+
+void
+expectNear(const Vector4f& actual, const Vector4f& expected)
+{
+    constexpr float kTolerance = 1e-5f;
+
+    EXPECT_NEAR(actual.x, expected.x, kTolerance);
+    EXPECT_NEAR(actual.y, expected.y, kTolerance);
+    EXPECT_NEAR(actual.z, expected.z, kTolerance);
+    EXPECT_NEAR(actual.w, expected.w, kTolerance);
+}
+} // namespace
+
+TEST(SceneTest, defaultTransformIsIdentity)
+{
+    Scene      scene;
+    Transform& transform = scene.createGameObject().getTransform();
+
+    EXPECT_EQ(transform.position, Vector3f(0.0f));
+    EXPECT_EQ(transform.rotation, glm::identity<VOG::Math::Quaternionf>());
+    EXPECT_EQ(transform.scale, Vector3f(1.0f));
+    EXPECT_EQ(transform.matrix(), Matrix4x4f(1.0f));
+}
+
+TEST(SceneTest, transformMatrixIsTranslateRotateScale)
+{
+    Transform transform;
+    transform.position = {1.0f, 2.0f, 3.0f};
+    transform.rotation = glm::angleAxis(glm::radians(90.0f), Vector3f{0.0f, 0.0f, 1.0f});
+    transform.scale    = {2.0f, 3.0f, 4.0f};
+
+    // Scale first, then rotate, then translate.
+    expectNear(transform.matrix() * Vector4f{1.0f, 0.0f, 0.0f, 1.0f}, {1.0f, 4.0f, 3.0f, 1.0f});
+    expectNear(transform.matrix() * Vector4f{0.0f, 1.0f, 0.0f, 1.0f}, {-2.0f, 2.0f, 3.0f, 1.0f});
+}
+
+TEST(SceneTest, startRunsOnceBeforeFirstUpdate)
+{
+    Log   log;
+    Scene scene;
+    scene.createGameObject().addBehaviour<Probe>(log, "a");
+    EXPECT_TRUE(log.empty());
+
+    scene.update(gFrame);
+    scene.update(gFrame);
+
+    EXPECT_EQ(log, (Log{"a.start", "a.update", "a.update"}));
+}
+
+TEST(SceneTest, addBehaviourInsideStart)
+{
+    Log        log;
+    Scene      scene;
+    GameObject object                              = scene.createGameObject();
+    object.addBehaviour<Probe>(log, "a").startHook = [&]
+    {
+        object.addBehaviour<Probe>(log, "b");
+    };
+
+    // The behaviour added by a start() starts in the next update.
+    scene.update(gFrame);
+    EXPECT_EQ(log, (Log{"a.start", "a.update"}));
+
+    log.clear();
+    scene.update(gFrame);
+    EXPECT_EQ(log, (Log{"b.start", "a.update", "b.update"}));
+}
+
+TEST(SceneTest, behaviourAddedDuringUpdateStartsNextFrame)
+{
+    Log        log;
+    Scene      scene;
+    GameObject object                               = scene.createGameObject();
+    bool       added                                = false;
+    object.addBehaviour<Probe>(log, "a").updateHook = [&]
+    {
+        if (!std::exchange(added, true))
+        {
+            object.addBehaviour<Probe>(log, "b");
+        }
+    };
+
+    scene.update(gFrame);
+    EXPECT_EQ(log, (Log{"a.start", "a.update"}));
+
+    log.clear();
+    scene.update(gFrame);
+    EXPECT_EQ(log, (Log{"b.start", "a.update", "b.update"}));
+}
+
+TEST(SceneTest, throwingStartIsNotRetried)
+{
+    Log   log;
+    Scene scene;
+    scene.createGameObject().addBehaviour<Probe>(log, "a").startHook = []
+    {
+        throw std::runtime_error{"start failed"};
+    };
+
+    EXPECT_THROW(scene.update(gFrame), std::runtime_error);
+    EXPECT_EQ(log, (Log{"a.start"}));
+
+    // A start() that threw counts as started: it gets update() and is not started again.
+    scene.update(gFrame);
+    EXPECT_EQ(log, (Log{"a.start", "a.update"}));
+
+    // And onDestroy().
+    scene.clear();
+    EXPECT_EQ(log, (Log{"a.start", "a.update", "a.destroy"}));
+}
+
+/**
+ * A start() that throws leaves the behaviours behind it on the same object pending: they have not
+ * started, and the next update() starts them, while the one that threw is not started again.
+ */
+TEST(SceneTest, throwingStartLeavesTheNextPendingBehaviourPending)
+{
+    Log        log;
+    Scene      scene;
+    GameObject object                              = scene.createGameObject();
+    object.addBehaviour<Probe>(log, "a").startHook = []
+    {
+        throw std::runtime_error{"start failed"};
+    };
+    object.addBehaviour<Probe>(log, "b");
+
+    EXPECT_THROW(scene.update(gFrame), std::runtime_error);
+    EXPECT_EQ(log, (Log{"a.start"}));
+
+    scene.update(gFrame);
+    EXPECT_EQ(log, (Log{"a.start", "b.start", "a.update", "b.update"}));
+}
+
+TEST(SceneTest, destroyIsDeferredToFlush)
+{
+    Log        log;
+    Scene      scene;
+    GameObject object = startedObject(scene, log, "a");
+
+    object.destroy();
+    object.destroy();
+    EXPECT_TRUE(object.isValid());
+    EXPECT_TRUE(log.empty());
+
+    // The behaviour of a dying object no longer updates; the flush ends it.
+    scene.update(gFrame);
+    EXPECT_EQ(log, (Log{"a.destroy"}));
+    EXPECT_FALSE(object.isValid());
+}
+
+TEST(SceneTest, destroyBeforeStart)
+{
+    Log        log;
+    Scene      scene;
+    GameObject object = scene.createGameObject();
+    object.addBehaviour<Probe>(log, "a");
+
+    object.destroy();
+    scene.update(gFrame);
+
+    // Never started, so no onDestroy().
+    EXPECT_TRUE(log.empty());
+    EXPECT_FALSE(object.isValid());
+}
+
+TEST(SceneTest, destroyFromOnDestroyFlushesSameUpdate)
+{
+    Log        log;
+    Scene      scene;
+    Probe*     probe   = nullptr;
+    GameObject first   = startedObject(scene, log, "a", &probe);
+    GameObject second  = startedObject(scene, log, "b");
+    probe->destroyHook = [&]
+    {
+        second.destroy();
+    };
+
+    first.destroy();
+    scene.update(gFrame);
+
+    // b was not dying when the update pass ran; a's onDestroy() marked it for the same flush.
+    EXPECT_EQ(log, (Log{"b.update", "a.destroy", "b.destroy"}));
+    EXPECT_FALSE(first.isValid());
+    EXPECT_FALSE(second.isValid());
+}
+
+TEST(SceneTest, addBehaviourInOnDestroyIsDropped)
+{
+    Log        log;
+    Scene      scene;
+    Probe*     probe   = nullptr;
+    GameObject object  = startedObject(scene, log, "a", &probe);
+    probe->destroyHook = [&]
+    {
+        object.addBehaviour<Probe>(log, "late");
+    };
+
+    object.destroy();
+    scene.update(gFrame);
+    scene.update(gFrame);
+
+    // It neither starts nor gets onDestroy().
+    EXPECT_EQ(log, (Log{"a.destroy"}));
+}
+
+TEST(SceneTest, queuedDestroyDrainsAfterThrowingUpdate)
+{
+    Log    log;
+    Scene  scene;
+    Probe* thrower = nullptr;
+    startedObject(scene, log, "a", &thrower);
+    GameObject victim   = startedObject(scene, log, "b");
+    thrower->updateHook = []
+    {
+        throw std::runtime_error{"update failed"};
+    };
+
+    victim.destroy();
+    EXPECT_THROW(scene.update(gFrame), std::runtime_error);
+
+    // The flush was skipped; the object waits, dying.
+    EXPECT_TRUE(victim.isValid());
+    EXPECT_EQ(log, (Log{"a.update"}));
+
+    thrower->updateHook = nullptr;
+    scene.update(gFrame);
+    EXPECT_FALSE(victim.isValid());
+    EXPECT_EQ(log, (Log{"a.update", "a.update", "b.destroy"}));
+}
+
+TEST(SceneTest, throwingOnDestroyStillDestroysObject)
+{
+    Log        log;
+    Scene      scene;
+    Probe*     probe  = nullptr;
+    GameObject object = startedObject(scene, log, "a", &probe);
+    object.addBehaviour<Probe>(log, "b");
+    scene.update(gFrame);
+    log.clear();
+    probe->destroyHook = []
+    {
+        throw std::runtime_error{"onDestroy failed"};
+    };
+
+    object.destroy();
+    EXPECT_NO_THROW(scene.update(gFrame));
+
+    // The failure is logged; the other behaviour and the object are not affected.
+    EXPECT_EQ(log, (Log{"a.destroy", "b.destroy"}));
+    EXPECT_FALSE(object.isValid());
+}
+
+TEST(SceneTest, clearContinuesAfterThrowingOnDestroy)
+{
+    Log        log;
+    Scene      scene;
+    Probe*     probe   = nullptr;
+    GameObject first   = startedObject(scene, log, "a", &probe);
+    GameObject second  = startedObject(scene, log, "b");
+    probe->destroyHook = []
+    {
+        throw std::runtime_error{"onDestroy failed"};
+    };
+
+    EXPECT_NO_THROW(scene.clear());
+
+    EXPECT_EQ(log, (Log{"a.destroy", "b.destroy"}));
+    EXPECT_FALSE(first.isValid());
+    EXPECT_FALSE(second.isValid());
+}
+
+TEST(SceneTest, nestedUpdateThrows)
+{
+    Log    log;
+    Scene  scene;
+    Probe* probe = nullptr;
+    startedObject(scene, log, "a", &probe);
+    bool entered      = false;
+    bool rejected     = false;
+    probe->updateHook = [&]
+    {
+        // Once: a scene that lets the nested update run would recurse without end.
+        if (std::exchange(entered, true))
+        {
+            return;
+        }
+        try
+        {
+            scene.update(gFrame);
+        }
+        catch (const std::logic_error&)
+        {
+            rejected = true;
+        }
+    };
+
+    scene.update(gFrame);
+    EXPECT_TRUE(rejected);
+
+    // The busy flag is released: the scene works again.
+    probe->updateHook = nullptr;
+    log.clear();
+    scene.update(gFrame);
+    EXPECT_EQ(log, (Log{"a.update"}));
+}
+
+TEST(SceneTest, clearDuringUpdateThrows)
+{
+    Log        log;
+    Scene      scene;
+    Probe*     probe    = nullptr;
+    GameObject object   = startedObject(scene, log, "a", &probe);
+    bool       rejected = false;
+    probe->updateHook   = [&]
+    {
+        try
+        {
+            scene.clear();
+        }
+        catch (const std::logic_error&)
+        {
+            rejected = true;
+        }
+    };
+
+    scene.update(gFrame);
+
+    EXPECT_TRUE(rejected);
+    EXPECT_TRUE(object.isValid());
+}
+
+TEST(SceneTest, clearOrUpdateFromOnDestroyDuringClearIsRejected)
+{
+    Log        log;
+    Scene      scene;
+    Probe*     probe    = nullptr;
+    GameObject object   = startedObject(scene, log, "a", &probe);
+    int        rejected = 0;
+    probe->destroyHook  = [&]
+    {
+        for (const auto& call : {std::function<void()>{[&]
+                                                       {
+                                                           scene.clear();
+                                                       }},
+                                 std::function<void()>{[&]
+                                                       {
+                                                           scene.update(gFrame);
+                                                       }}})
+        {
+            try
+            {
+                call();
+            }
+            catch (const std::logic_error&)
+            {
+                ++rejected;
+            }
+        }
+    };
+
+    scene.clear();
+
+    EXPECT_EQ(rejected, 2);
+    EXPECT_FALSE(object.isValid());
+    EXPECT_EQ(log, (Log{"a.destroy"}));
+}
+
+TEST(SceneTest, updateAndClearInsideEachRun)
+{
+    Log        log;
+    Scene      scene;
+    const Mesh mesh   = HandleTestAccess::makeMesh();
+    GameObject first  = startedObject(scene, log, "a");
+    GameObject second = scene.createGameObject();
+    second.addComponent<MeshRenderer>(MeshRenderer{.mesh = mesh});
+    first.destroy();
+
+    int visited = 0;
+    scene.each<Transform>(
+        [&](GameObject, Transform&)
+        {
+            ++visited;
+
+            scene.update(gFrame);
+            EXPECT_FALSE(first.isValid());
+            EXPECT_TRUE(second.isValid());
+            EXPECT_EQ(log, (Log{"a.destroy"}));
+
+            // The objects are gone at once, their components when the each() returns.
+            scene.clear();
+            EXPECT_FALSE(second.isValid());
+            EXPECT_EQ(HandleTestAccess::useCount(mesh), 2);
+        });
+
+    // clear() destroyed the second object before the walk reached it.
+    EXPECT_EQ(visited, 1);
+    EXPECT_EQ(HandleTestAccess::useCount(mesh), 1);
+}
+
+/**
+ * An allocation that fails inside createGameObject() leaves no object behind: not one with a
+ * Transform, and not an entity that only the registry knows. The sweep fails each allocation of
+ * the call in turn, up to the first that lets it succeed. The entity is seen through its slot: a
+ * leaked one is not reused, so the next entity would get the slot after it.
+ */
+TEST(SceneTest, createGameObjectThatRunsOutOfMemoryChangesNothing)
+{
+    constexpr std::int64_t kSweepLimit = 64;
+
+    std::int64_t failures = 0;
+    for (std::int64_t allocations = 0; allocations < kSweepLimit; ++allocations, ++failures)
+    {
+        Scene scene;
+        bool  threw = false;
+        {
+            const FailAllocation fail{allocations};
+            try
+            {
+                std::ignore = scene.createGameObject();
+            }
+            catch (const std::bad_alloc&)
+            {
+                threw = true;
+            }
+        }
+        if (!threw)
+        {
+            break;
+        }
+
+        std::size_t transforms = 0u;
+        scene.each<Transform>(
+            [&transforms](GameObject, Transform&)
+            {
+                ++transforms;
+            });
+        EXPECT_EQ(transforms, 0u) << "failing allocation " << allocations;
+        EXPECT_EQ(SceneTestAccess::nextEntityIndex(scene), 0u)
+            << "failing allocation " << allocations;
+    }
+
+    EXPECT_GT(failures, 0);
+    EXPECT_LT(failures, kSweepLimit);
+}
+
+/**
+ * An allocation that fails inside destroy() changes nothing: the object is not marked, so a second
+ * destroy() still takes effect and the next update() ends the object. A marker set before the
+ * failing queue push would turn every later destroy() into a no-op.
+ */
+TEST(SceneTest, destroyThatRunsOutOfMemoryChangesNothing)
+{
+    constexpr std::int64_t kSweepLimit = 64;
+
+    std::int64_t failures = 0;
+    for (std::int64_t allocations = 0; allocations < kSweepLimit; ++allocations, ++failures)
+    {
+        Scene      scene;
+        GameObject object = scene.createGameObject();
+        bool       threw  = false;
+        {
+            const FailAllocation fail{allocations};
+            try
+            {
+                object.destroy();
+            }
+            catch (const std::bad_alloc&)
+            {
+                threw = true;
+            }
+        }
+        if (!threw)
+        {
+            break;
+        }
+
+        EXPECT_TRUE(object.isValid()) << "failing allocation " << allocations;
+        std::size_t transforms = 0u;
+        scene.each<Transform>(
+            [&transforms](GameObject, Transform&)
+            {
+                ++transforms;
+            });
+        EXPECT_EQ(transforms, 1u) << "failing allocation " << allocations;
+
+        object.destroy();
+        scene.update(gFrame);
+        EXPECT_FALSE(object.isValid()) << "failing allocation " << allocations;
+    }
+
+    EXPECT_GT(failures, 0);
+    EXPECT_LT(failures, kSweepLimit);
+}
+
+TEST(SceneTest, createGameObjectInsideEach)
+{
+    Scene scene;
+    for (int i = 0; i < 3; ++i)
+    {
+        scene.createGameObject();
+    }
+
+    int                     visited = 0;
+    std::vector<GameObject> created;
+    scene.each<Transform>(
+        [&](GameObject, Transform&)
+        {
+            ++visited;
+            created.push_back(scene.createGameObject());
+        });
+
+    // The each() does not visit what it creates.
+    EXPECT_EQ(visited, 3);
+    ASSERT_EQ(created.size(), 3u);
+    for (GameObject object : created)
+    {
+        EXPECT_TRUE(object.isValid());
+        EXPECT_TRUE(object.hasComponent<Transform>());
+    }
+}
+
+TEST(SceneTest, removeComponentInsideEachKeepsReference)
+{
+    Scene      scene;
+    const Mesh mesh   = HandleTestAccess::makeMesh();
+    GameObject object = scene.createGameObject();
+    object.addComponent<MeshRenderer>(MeshRenderer{.mesh = mesh});
+
+    scene.each<MeshRenderer>(
+        [&](GameObject visited, MeshRenderer& renderer)
+        {
+            visited.removeComponent<MeshRenderer>();
+
+            EXPECT_FALSE(visited.hasComponent<MeshRenderer>());
+            EXPECT_EQ(renderer.mesh, mesh);
+            EXPECT_EQ(HandleTestAccess::useCount(mesh), 2);
+        });
+
+    EXPECT_EQ(HandleTestAccess::useCount(mesh), 1);
+}
+
+TEST(SceneTest, destroyInsideEachIsDeferred)
+{
+    // Nothing was destroyed yet, so the pool of the destroy marker is created inside each().
+    Scene      scene;
+    GameObject first  = scene.createGameObject();
+    GameObject second = scene.createGameObject();
+
+    int visited = 0;
+    scene.each<Transform>(
+        [&](GameObject object, Transform&)
+        {
+            ++visited;
+            object.destroy();
+            EXPECT_TRUE(object.isValid());
+        });
+
+    EXPECT_EQ(visited, 2);
+    EXPECT_TRUE(first.isValid());
+    EXPECT_TRUE(second.isValid());
+    scene.update(gFrame);
+    EXPECT_FALSE(first.isValid());
+    EXPECT_FALSE(second.isValid());
+}
+
+TEST(SceneTest, deadObjectOperations)
+{
+    Log        log;
+    Scene      scene;
+    GameObject flushed = scene.createGameObject();
+    flushed.destroy();
+    scene.update(gFrame);
+    GameObject cleared = scene.createGameObject();
+    scene.clear();
+
+    GameObject neverCreated;
+    for (GameObject* object : {&flushed, &cleared, &neverCreated})
+    {
+        EXPECT_FALSE(object->isValid());
+        EXPECT_FALSE(object->hasComponent<MeshRenderer>());
+        EXPECT_FALSE(object->hasComponent<Transform>());
+        EXPECT_THROW(object->getComponent<Transform>(), std::logic_error);
+        EXPECT_NO_THROW(object->removeComponent<MeshRenderer>());
+        EXPECT_NO_THROW(object->destroy());
+        EXPECT_THROW(object->getTransform(), std::logic_error);
+        EXPECT_THROW(object->addComponent<MeshRenderer>(), std::logic_error);
+        EXPECT_THROW(object->addBehaviour<Probe>(log, "a"), std::logic_error);
+    }
+
+    // A new object in the slot of a dead one is not the dead one.
+    GameObject fresh = scene.createGameObject();
+    EXPECT_TRUE(fresh.isValid());
+    EXPECT_FALSE(flushed.isValid());
+    EXPECT_NE(fresh, flushed);
+}
+
+TEST(SceneTest, secondCameraThrowsAtAddComponent)
+{
+    Scene      scene;
+    GameObject first  = scene.createGameObject();
+    GameObject second = scene.createGameObject();
+    first.addComponent<Camera>();
+
+    EXPECT_THROW(second.addComponent<Camera>(), std::logic_error);
+    EXPECT_FALSE(second.hasComponent<Camera>());
+
+    // The old camera has to go first.
+    first.removeComponent<Camera>();
+    EXPECT_NO_THROW(second.addComponent<Camera>());
+}
+
+TEST(SceneTest, meshRendererSubmitsTransformMatrix)
+{
+    Scene          scene;
+    const Mesh     mesh     = HandleTestAccess::makeMesh();
+    const Material material = HandleTestAccess::makeMaterial();
+
+    GameObject object              = scene.createGameObject();
+    object.getTransform().position = {1.0f, 2.0f, 3.0f};
+    object.getTransform().scale    = {2.0f, 2.0f, 2.0f};
+    object.addComponent<MeshRenderer>(MeshRenderer{.mesh = mesh, .material = material});
+
+    Detail::DrawCheck check;
+    RenderQueue       queue = RenderQueueTestAccess::make(check);
+    scene.onDraw(gFrame, queue);
+
+    const auto& draws = RenderQueueTestAccess::draws(queue);
+    ASSERT_EQ(draws.size(), 1u);
+    EXPECT_EQ(draws[0].mesh, mesh);
+    EXPECT_EQ(draws[0].material, material);
+    EXPECT_EQ(draws[0].world, object.getTransform().matrix());
+}
+
+TEST(SceneTest, objectWithoutMeshRendererDrawsNothing)
+{
+    Scene scene;
+    scene.createGameObject();
+    scene.createGameObject().addComponent<Camera>();
+
+    Detail::DrawCheck check;
+    RenderQueue       queue = RenderQueueTestAccess::make(check);
+    scene.onDraw(gFrame, queue);
+
+    EXPECT_TRUE(RenderQueueTestAccess::draws(queue).empty());
+}
+
+TEST(SceneTest, cameraComponentSetsFrameView)
+{
+    constexpr float kTolerance = 1e-5f;
+
+    Scene      scene;
+    GameObject object              = scene.createGameObject();
+    object.getTransform().position = {3.0f, 4.0f, 5.0f};
+    object.getTransform().rotation =
+        glm::angleAxis(glm::radians(90.0f), Vector3f{0.0f, 1.0f, 0.0f});
+    const Perspective perspective{
+        .verticalFovRadians = 1.0f, .nearPlane = 2.0f, .farPlane = 300.0f};
+    object.addComponent<Camera>(
+        Camera{.projection = perspective, .clearColor = {0.25f, 0.5f, 0.75f, 1.0f}});
+
+    Detail::DrawCheck check;
+    RenderQueue       queue = RenderQueueTestAccess::make(check);
+    scene.onDraw(gFrame, queue);
+
+    const CameraView& view = RenderQueueTestAccess::camera(queue);
+    EXPECT_EQ(view.position, (Vector3f{3.0f, 4.0f, 5.0f}));
+    EXPECT_NEAR(view.direction.x, 1.0f, kTolerance);
+    EXPECT_NEAR(view.direction.y, 0.0f, kTolerance);
+    EXPECT_NEAR(view.direction.z, 0.0f, kTolerance);
+    EXPECT_NEAR(view.up.x, 0.0f, kTolerance);
+    EXPECT_NEAR(view.up.y, 1.0f, kTolerance);
+    EXPECT_NEAR(view.up.z, 0.0f, kTolerance);
+    EXPECT_EQ(view.projection, Projection{perspective});
+    EXPECT_EQ(view.clearColor, (Vector4f{0.25f, 0.5f, 0.75f, 1.0f}));
+}
+
+TEST(SceneTest, noCameraLeavesDefaultView)
+{
+    Scene scene;
+    scene.createGameObject();
+
+    // A view the queue already has survives: the scene sets none without a Camera.
+    Detail::DrawCheck check;
+    RenderQueue       queue = RenderQueueTestAccess::make(check);
+    queue.setCamera(CameraView{.clearColor = {7.0f, 0.0f, 0.0f, 1.0f}});
+    scene.onDraw(gFrame, queue);
+
+    EXPECT_EQ(RenderQueueTestAccess::camera(queue).clearColor.x, 7.0f);
+}
+
+/** A behaviour that asks for its Scene in its constructor or in start(). */
+class SceneReader final : public Behaviour
+{
+public:
+    explicit SceneReader(bool inConstructor)
+    {
+        if (inConstructor)
+        {
+            std::ignore = getScene();
+        }
+    }
+
+    void
+    start() override
+    {
+        scene = &getScene();
+        found = scene->find("target").has_value();
+    }
+
+    Scene* scene = nullptr;
+    bool   found = false;
+};
+
+/** A behaviour has no Scene yet in its constructor; from start() on it has one, and finds the
+ *  other objects with it. */
+TEST(SceneTest, getSceneThrowsInTheConstructorAndWorksInStart)
+{
+    Scene      scene;
+    GameObject object = scene.createGameObject("reader");
+    scene.createGameObject("target");
+
+    EXPECT_THROW(object.addBehaviour<SceneReader>(true), std::logic_error);
+
+    SceneReader& reader = object.addBehaviour<SceneReader>(false);
+    scene.update(gFrame);
+    EXPECT_EQ(reader.scene, &scene);
+    EXPECT_TRUE(reader.found);
+}
+
+/**
+ * The behaviours of an object are its own: destroying one object calls onDestroy() of its three
+ * started behaviours, in the order they started, and of no behaviour of the object next to it,
+ * which goes on updating. Objects that are flushed together are retired one after the other, each
+ * with all its behaviours.
+ */
+TEST(SceneTest, flushingAnObjectRetiresItsOwnBehavioursAndNoOtherObjectsOnes)
+{
+    Log        log;
+    Scene      scene;
+    GameObject first  = scene.createGameObject("first");
+    GameObject second = scene.createGameObject("second");
+    GameObject other  = scene.createGameObject("other");
+    for (const char* name : {"a0", "a1", "a2"})
+    {
+        first.addBehaviour<Probe>(log, name);
+    }
+    for (const char* name : {"b0", "b1"})
+    {
+        second.addBehaviour<Probe>(log, name);
+    }
+    other.addBehaviour<Probe>(log, "o");
+    scene.update(gFrame);
+
+    first.destroy();
+    log.clear();
+    scene.update(gFrame);
+    // The destroyed object stopped before this update; its onDestroy() comes at the flush.
+    EXPECT_EQ(
+        log, (Log{"b0.update", "b1.update", "o.update", "a0.destroy", "a1.destroy", "a2.destroy"}));
+
+    log.clear();
+    scene.update(gFrame);
+    EXPECT_EQ(log, (Log{"b0.update", "b1.update", "o.update"}));
+
+    // Two objects in one flush: all the behaviours of the first, then those of the second.
+    second.destroy();
+    other.destroy();
+    log.clear();
+    scene.update(gFrame);
+    EXPECT_EQ(log, (Log{"b0.destroy", "b1.destroy", "o.destroy"}));
+}
+
+TEST(SceneTest, getComponentThrowsWhenAbsentAndHasComponentSaysSo)
+{
+    Scene      scene;
+    GameObject object = scene.createGameObject("thing");
+    object.addComponent<MeshRenderer>();
+
+    EXPECT_TRUE(object.hasComponent<Transform>());
+    EXPECT_TRUE(object.hasComponent<Name>());
+    EXPECT_TRUE(object.hasComponent<MeshRenderer>());
+    EXPECT_FALSE(object.hasComponent<Camera>());
+    EXPECT_THROW(std::ignore = object.getComponent<Camera>(), std::logic_error);
+
+    EXPECT_EQ(object.getComponent<Name>().value, "thing");
+    object.getComponent<MeshRenderer>() = {};
+    object.removeComponent<MeshRenderer>();
+    EXPECT_FALSE(object.hasComponent<MeshRenderer>());
+    EXPECT_THROW(std::ignore = object.getComponent<MeshRenderer>(), std::logic_error);
+}
+
+/** find() gives the first object of the name, in the order of each(), and nothing for an unknown
+ *  name; an object that destroy() marked is not found any more, while it is valid. */
+TEST(SceneTest, findReturnsTheFirstMatchAndNothingOtherwise)
+{
+    Scene      scene;
+    GameObject first    = scene.createGameObject("ball");
+    GameObject other    = scene.createGameObject("wall");
+    GameObject second   = scene.createGameObject("ball");
+    GameObject nameless = scene.createGameObject();
+
+    EXPECT_EQ(scene.find("ball"), first);
+    EXPECT_EQ(scene.find("wall"), other);
+    EXPECT_EQ(scene.find(""), nameless);
+    EXPECT_EQ(scene.find("missing"), std::nullopt);
+
+    first.destroy();
+    EXPECT_TRUE(first.isValid());
+    EXPECT_EQ(scene.find("ball"), second);
+
+    scene.update(gFrame);
+    EXPECT_EQ(scene.find("ball"), second);
+    second.destroy();
+    scene.update(gFrame);
+    EXPECT_EQ(scene.find("ball"), std::nullopt);
+}
+
+/**
+ * A draw that cannot go on names the object it came from. The check keeps its verdict for the
+ * pair of mesh and material, so the second object hits the same kept failure as the first, and its
+ * error still starts with its own name.
+ */
+TEST(SceneTest, aDrawErrorNamesTheGameObject)
+{
+    const Mesh mesh = HandleTestAccess::makeMesh();
+    using BaseType  = VOG::Graphics::Vulkan::Shader::Reflection::BaseType;
+    // The material reads a vec3 at location 0, which the mesh, with no attributes, lacks.
+    const Material material = HandleTestAccess::makeMaterial(
+        {{.location      = 0u,
+          .locationCount = 1u,
+          .name          = "inPosition",
+          .type = BaseType{.type = BaseType::Type::eFloat, .components = 3u, .columns = 1u}}});
+
+    Detail::DrawCheck check;
+    RenderQueue       queue = RenderQueueTestAccess::make(check);
+    for (const std::string name : {"ball", "wall"})
+    {
+        Scene scene;
+        scene.createGameObject(name).addComponent<MeshRenderer>(
+            MeshRenderer{.mesh = mesh, .material = material});
+
+        try
+        {
+            scene.onDraw(gFrame, queue);
+            FAIL() << "onDraw() did not throw for " << name << ".";
+        }
+        catch (const DrawError& error)
+        {
+            EXPECT_TRUE(
+                std::string_view{error.what()}.starts_with("GameObject \"" + name + "\": mesh "))
+                << error.what();
+        }
+    }
+}
+
+TEST(SceneTest, requestQuitIsRememberedUntilItIsCleared)
+{
+    Scene scene;
+    EXPECT_FALSE(scene.quitRequested());
+
+    scene.requestQuit();
+    scene.requestQuit();
+    EXPECT_TRUE(scene.quitRequested());
+
+    scene.clearQuitRequest();
+    EXPECT_FALSE(scene.quitRequested());
+}
+
+#ifndef NDEBUG
+/** Makes a Scene and an object on this thread, and runs @p touch on another one. */
+void
+touchFromAnotherThread(const std::function<void(Scene&, GameObject)>& touch)
+{
+    // The default logger writes to stdout; a death test reads stderr.
+    spdlog::set_default_logger(spdlog::stderr_logger_mt("assert"));
+    Scene       scene;
+    GameObject  object = scene.createGameObject("object");
+    std::thread other{[&]
+                      {
+                          touch(scene, object);
+                      }};
+    other.join();
+}
+
+/** A Scene belongs to the thread that made it: another thread that touches it aborts, in a debug
+ *  build, whichever member it calls. The death runs in a fresh process, because the process that
+ *  runs the threads has them. */
+TEST(SceneDeathTest, anotherThreadThatTouchesTheSceneAborts)
+{
+    GTEST_FLAG_SET(death_test_style, "threadsafe");
+    constexpr const char* kMessage = "belongs to the thread that made it";
+
+    EXPECT_DEATH(touchFromAnotherThread(
+                     [](Scene& scene, GameObject /*object*/)
+                     {
+                         std::ignore = scene.createGameObject("importer");
+                     }),
+                 kMessage);
+    EXPECT_DEATH(touchFromAnotherThread(
+                     [](Scene& scene, GameObject /*object*/)
+                     {
+                         scene.each<Name>(
+                             [](GameObject /*object*/, Name& /*name*/)
+                             {
+                             });
+                     }),
+                 kMessage);
+    EXPECT_DEATH(touchFromAnotherThread(
+                     [](Scene& scene, GameObject /*object*/)
+                     {
+                         scene.requestQuit();
+                     }),
+                 kMessage);
+    EXPECT_DEATH(touchFromAnotherThread(
+                     [](Scene& scene, GameObject /*object*/)
+                     {
+                         scene.clearQuitRequest();
+                     }),
+                 kMessage);
+    EXPECT_DEATH(touchFromAnotherThread(
+                     [](Scene& scene, GameObject /*object*/)
+                     {
+                         std::ignore = scene.quitRequested();
+                     }),
+                 kMessage);
+    EXPECT_DEATH(touchFromAnotherThread(
+                     [](Scene& /*scene*/, GameObject object)
+                     {
+                         std::ignore = object.isValid();
+                     }),
+                 kMessage);
+    EXPECT_DEATH(touchFromAnotherThread(
+                     [](Scene& /*scene*/, GameObject object)
+                     {
+                         std::ignore = object.hasComponent<MeshRenderer>();
+                     }),
+                 kMessage);
+}
+#endif
+
+// NOLINTEND(readability-magic-numbers, readability-function-cognitive-complexity)
+} // namespace VOG::Tests

@@ -32,7 +32,7 @@ public:
     FencePool(FencePool&&)      = delete;
 
     /** The pool hands out handles that call shared_from_this(), so it exists only as shared_ptr. */
-    static FencePoolPtr
+    [[nodiscard]] static FencePoolPtr
     create(DevicePtr device)
     {
         return std::shared_ptr<FencePool>(new FencePool{std::move(device)});
@@ -88,7 +88,7 @@ public:
 
     using FenceHandlePtr = std::shared_ptr<FenceHandle>;
 
-    FenceHandlePtr take();
+    [[nodiscard]] FenceHandlePtr take();
 
 private:
     friend class FenceHandle;

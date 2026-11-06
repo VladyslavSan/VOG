@@ -14,12 +14,19 @@
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 #include <VOG/Graphics/Vulkan/TimelineSemaphore.hpp>
 
+#include <cstddef>
+#include <memory>
+#include <span>
+
 namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(Buffer);
 VOG_DECLARE_PTR(CommandBufferPool);
-VOG_DECLARE_PTR(RenderBuffer);
+VOG_DECLARE_PTR(DescriptorHeap);
+VOG_DECLARE_PTR(HeapBuffer);
 VOG_DECLARE_PTR(Instance);
+VOG_DECLARE_PTR(RenderTarget);
+VOG_DECLARE_PTR(Texture);
 
 class PhysicalDevice : private vk::raii::PhysicalDevice
 {
@@ -38,7 +45,42 @@ public:
 
     PhysicalDevice(InstancePtr instance, vk::raii::PhysicalDevice physicalDevice);
 
-    using vk::raii::PhysicalDevice::getMemoryProperties;
+    /**
+     * Whether the transfer queue is taken from a family of its own when the device has one.
+     * Off until an upload has run on a device with such a family (an NVIDIA or AMD GPU): the
+     * cross-family path of CommandBufferRecorder::copyBuffer() and copyBufferToTexture() is only
+     * checked by value (UploadBarriers.hpp), because no driver the tests run on has two families.
+     * Then the transfer queue is the graphics family's queue.
+     */
+    static constexpr bool kDedicatedTransferFamily = false;
+
+    /**
+     * Picks the queue families from @p families, indexed as
+     * vkGetPhysicalDeviceQueueFamilyProperties returns them. Graphics is the first family with the
+     * graphics bit. Transfer is that same family, or with @p dedicatedTransfer the first family
+     * that has the transfer bit and neither the graphics nor the compute bit (a DMA engine), if
+     * there is one. A compute family is never picked for transfer.
+     *
+     * @throws std::runtime_error if no family has the graphics bit.
+     */
+    static QueueInfos selectQueueFamilies(std::span<const vk::QueueFamilyProperties> families,
+                                          bool dedicatedTransfer);
+
+    /**
+     * Picks the family to present from: the graphics family if it presents, else the transfer
+     * family. These are the only families that makeDevice creates a queue for; presenting from any
+     * other would ask the device for a queue it does not have.
+     *
+     * @param infos     The families that have a queue.
+     * @param presents  Per family, indexed as vkGetPhysicalDeviceQueueFamilyProperties returns
+     *                  them, whether it presents to the surface
+     *                  (vkGetPhysicalDeviceSurfaceSupportKHR).
+     *
+     * @throws std::runtime_error if neither family presents.
+     */
+    static std::uint32_t selectPresentFamily(const QueueInfos&           infos,
+                                             std::span<const vk::Bool32> presents);
+
     using vk::raii::PhysicalDevice::getQueueFamilyProperties;
     using vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR;
     using vk::raii::PhysicalDevice::getSurfaceFormatsKHR;
@@ -56,6 +98,12 @@ public:
     const InstancePtr instance;
 
     const QueueInfos queueInfos;
+
+    /** The limits of the physical device, read once. */
+    const vk::PhysicalDeviceLimits limits;
+
+    /** The limits of VK_EXT_descriptor_heap, read once. */
+    const vk::PhysicalDeviceDescriptorHeapPropertiesEXT descriptorHeapProperties;
 };
 
 class Device
@@ -73,12 +121,12 @@ public:
 
     ~Device(); // NOLINT(bugprone-derived-method-shadowing-base-method)
 
+    using vk::raii::Device::getBufferAddress;
     using vk::raii::Device::getDispatcher;
     using vk::raii::Device::operator*;
     using vk::raii::Device::releaseSwapchainImagesEXT;
     using vk::raii::Device::resetFences;
     using vk::raii::Device::waitForFences;
-    using vk::raii::Device::waitSemaphores;
 
     /** For the raii objects that take a device; the base itself stays private. */
     const vk::raii::Device& raii() const noexcept;
@@ -91,38 +139,36 @@ public:
      *
      * @return Compiled shader object.
      */
-    std::unique_ptr<Shader> createShader(Shader::ShadingStage           stage,
-                                         std::span<const std::uint32_t> binary);
-
-    /**
-     * Links vertex and fragment shaders into a shader program.
-     * Descriptor set layouts and push constant ranges are derived through shader reflection.
-     *
-     * @param stages  Vertex and fragment shader stage descriptors.
-     *
-     * @return Linked shader program with a reflected pipeline layout.
-     */
-    std::unique_ptr<ShaderProgram> createShaderProgram(ShaderProgram::ShadingStages stages);
+    [[nodiscard]] std::unique_ptr<Shader> createShader(Shader::ShadingStage           stage,
+                                                       std::span<const std::uint32_t> binary);
 
     /**
      * Creates a graphics pipeline for dynamic rendering into the attachments that
      * Parameters::renderingDescription describes.
      *
-     * @param createInfo  Pipeline parameters; the pipeline layout comes from `shading`.
+     * @param createInfo  Pipeline parameters.
      *
      * @return Compiled graphics pipeline.
      */
-    std::unique_ptr<GraphicsPipeline>
+    [[nodiscard]] std::unique_ptr<GraphicsPipeline>
     createGraphicsPipeline(GraphicsPipeline::Parameters createInfo);
 
     /**
-     * Creates a command buffer pool for recording GPU commands.
+     * Creates a command buffer pool for recording GPU commands for the graphics queue.
      *
      * @note Each pool should be used from a single thread at a time.
      *
      * @return Command buffer pool.
      */
-    std::shared_ptr<CommandBufferPool> createCommandBufferPool();
+    [[nodiscard]] std::shared_ptr<CommandBufferPool> createCommandBufferPool();
+
+    /**
+     * Like createCommandBufferPool(), for the queue family @p queueFamilyIndex, which must be the
+     * family of the graphics or of the transfer queue. Queue::submit takes only command buffers
+     * of its own family.
+     */
+    [[nodiscard]] std::shared_ptr<CommandBufferPool>
+    createCommandBufferPool(std::uint32_t queueFamilyIndex);
 
     /**
      * Creates a swapchain for presenting rendered frames to a window surface.
@@ -131,32 +177,30 @@ public:
      *
      * @return Swapchain object.
      */
-    std::unique_ptr<Swapchain> createSwapchain(const Swapchain::SwapchainParameters& parameters);
+    [[nodiscard]] std::unique_ptr<Swapchain>
+    createSwapchain(const Swapchain::SwapchainParameters& parameters);
 
     /**
-     * Creates an image-backed render attachment (color or depth/stencil).
+     * Creates a 2D, single-mip, single-sample image that command buffers render into, in memory
+     * that is preferably device-local. The image is undefined until a barrier moves it to the
+     * layout of its first use.
      *
-     * @param usage             Intended attachment usage.
-     * @param desiredFormat     Requested image format.
-     * @param extent            Width and height in pixels.
-     * @param sampleCount       MSAA sample count.
-     * @param mipLevels         Number of mip levels.
-     * @param arrayLevels       Number of array layers.
-     * @param imageTiling       Tiling mode (optimal or linear).
-     * @param initialLayout     Initial image layout.
-     * @param memoryProperties  Required memory property flags.
+     * @param extent  Width and height in pixels.
+     * @param format  Image format. A depth format gets a depth view, any other a color view. A
+     *                format with a stencil aspect is refused: the recorder renders depth-only
+     *                depth attachments. Whether the device renders into the format with this
+     *                @p usage is not checked.
+     * @param usage   How the image is used. Needs eColorAttachment or eDepthStencilAttachment;
+     *                add eTransferSrc to copy a color target out with
+     *                CommandBufferRecorder::copyImageToBuffer(). The target has no heap slot, so
+     *                no shader samples it.
      *
-     * @return Render buffer object.
+     * @throws std::invalid_argument if a side of @p extent is zero or exceeds maxImageDimension2D
+     *         of the device, @p usage names no attachment, or @p format has a stencil aspect.
+     * @throws std::runtime_error if the image cannot be created.
      */
-    std::unique_ptr<RenderBuffer> createRenderBuffer(AttachmentUsage         usage,
-                                                     vk::Format              desiredFormat,
-                                                     vk::Extent2D            extent,
-                                                     SampleCount             sampleCount,
-                                                     std::uint32_t           mipLevels,
-                                                     std::uint32_t           arrayLevels,
-                                                     vk::ImageTiling         imageTiling,
-                                                     vk::ImageLayout         initialLayout,
-                                                     vk::MemoryPropertyFlags memoryProperties);
+    [[nodiscard]] std::unique_ptr<RenderTarget>
+    createRenderTarget(vk::Extent2D extent, vk::Format format, vk::ImageUsageFlags usage);
 
     /**
      * Allocates a GPU buffer. The allocator picks the memory type for the buffer's usage.
@@ -167,9 +211,48 @@ public:
      *
      * @return Allocated buffer.
      */
-    std::unique_ptr<Buffer>
+    [[nodiscard]] std::unique_ptr<Buffer>
     createBuffer(const vk::BufferCreateInfo&                  createInfo,
                  const MemoryAllocator::AllocationParameters& allocationInfo);
+
+    /**
+     * Creates the descriptor heaps that textures and heap buffers take their slots from.
+     *
+     * @param resourceSlots  Number of images and heap buffers the heap holds at once.
+     * @param samplers       Samplers to write into the sampler heap; shaders read them by their
+     *                       position in the span.
+     *
+     * @throws std::invalid_argument if @p resourceSlots is zero or @p samplers is empty.
+     * @throws std::runtime_error if the device limits do not allow the heap.
+     */
+    [[nodiscard]] DescriptorHeapPtr
+    createDescriptorHeap(std::uint32_t                          resourceSlots,
+                         std::span<const vk::SamplerCreateInfo> samplers);
+
+    /**
+     * Creates a 2D, single-mip texture and writes its descriptor into a slot of @p heap. The
+     * contents are undefined until CommandBufferRecorder::copyBufferToTexture() filled it.
+     *
+     * @throws std::invalid_argument if a side of @p extent exceeds maxImageDimension2D of the
+     *         device. This is a bound on the extent only: the format must be one that the
+     *         device samples and copies into, which nothing here checks.
+     * @throws std::runtime_error if @p heap is full or the image cannot be created.
+     */
+    [[nodiscard]] std::unique_ptr<Texture>
+    createTexture(const DescriptorHeapPtr& heap, vk::Extent2D extent, vk::Format format);
+
+    /**
+     * Creates a host-written buffer of @p size bytes and writes its uniform-buffer descriptor into
+     * a slot of @p heap. The buffer is at least 16 bytes and zero until written, through
+     * HeapBuffer::mapForWrite(); the descriptor is written once, here.
+     *
+     * @throws std::invalid_argument if @p size, or @p size rounded up to 16 bytes, exceeds
+     *         maxUniformBufferRange of the device.
+     * @throws std::runtime_error if @p heap is full, or the allocator places the buffer at an
+     *         address off the device's uniform buffer offset alignment.
+     */
+    [[nodiscard]] std::unique_ptr<HeapBuffer> createHeapBuffer(const DescriptorHeapPtr& heap,
+                                                               std::size_t              size);
 
     /**
      * Creates a binary semaphore. Pass it to Queue::submit and Swapchain::present: the command
@@ -177,15 +260,15 @@ public:
      *
      * @return Binary semaphore.
      */
-    SemaphorePtr createSemaphore();
+    [[nodiscard]] SemaphorePtr createSemaphore();
 
     /**
-     * Creates a timeline semaphore for ordered multi-stage GPU synchronization.
-     * The counter starts at zero and increments on each signal operation.
+     * Creates a timeline semaphore at value zero. Pass it to Queue::submit as a Queue::TimelineWait
+     * or Queue::TimelineSignal: the command buffers retain it until the GPU is done with it.
      *
      * @return Timeline semaphore.
      */
-    TimelineSemaphore createTimelineSemaphore();
+    [[nodiscard]] TimelineSemaphorePtr createTimelineSemaphore();
 
     /**
      * Hands out the graphics queue. The returned pointer shares ownership of this Device, so the
@@ -193,7 +276,7 @@ public:
      *
      * @return Graphics queue.
      */
-    std::shared_ptr<const Queue> getGraphicsQueue();
+    [[nodiscard]] std::shared_ptr<const Queue> getGraphicsQueue();
 
     /**
      * Hands out the transfer queue. The returned pointer shares ownership of this Device, like
@@ -201,7 +284,7 @@ public:
      *
      * @return Transfer queue.
      */
-    std::shared_ptr<const Queue> getTransferQueue();
+    [[nodiscard]] std::shared_ptr<const Queue> getTransferQueue();
 
 private:
     /** Handed out through getGraphicsQueue() / getTransferQueue(). */

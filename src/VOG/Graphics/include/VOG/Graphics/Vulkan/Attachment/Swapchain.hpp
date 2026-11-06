@@ -117,7 +117,7 @@ private:
     Swapchain(DevicePtr device, const SwapchainParameters& parameters);
 
     /**
-     * Creates a swapchain, its image views and acquire semaphores for the given extent.
+     * Creates a swapchain and its image views for the given extent.
      *
      * @param oldSwapchain  Previous swapchain handle for driver resource reuse (may be null).
      */
@@ -125,10 +125,21 @@ private:
 
 public:
     /**
-     * @param timeout  How long to wait for a free image; negative values count as zero. A timeout
-     *                 gives eSkip, so a hidden window does not block the caller for good.
+     * Gives eOutOfDate at once after a recreate() that threw once it had called
+     * vkCreateSwapchainKHR, until one succeeds.
+     *
+     * @param timeout         How long to wait for a free image; negative values count as zero. A
+     *                        timeout gives eSkip, so a hidden window does not block the caller for
+     *                        good.
+     * @param imageAvailable  Signaled by the acquire when the image is free; the submit that
+     *                        renders it waits it. It must be unsignaled and have no operation
+     *                        pending, which is why the caller has to know that the wait of its
+     *                        last use is done: a fence of the submit that waited it signaled
+     *                        (VUID-vkAcquireNextImageKHR-semaphore-01779). It stays unaffected
+     *                        unless the status is eReady. The result keeps it.
      */
-    ImageAcquireResult acquireNextImage(std::chrono::nanoseconds timeout);
+    ImageAcquireResult acquireNextImage(std::chrono::nanoseconds timeout,
+                                        SemaphorePtr             imageAvailable);
 
     /**
      * Presents @p acquired, which releases its acquisition. The presentation waits
@@ -146,6 +157,10 @@ public:
      * Recreates the swapchain to match the current surface size. The old swapchain is not
      * waited for: it dies once the last presentation and the last command buffer that use it
      * are done (see SwapchainGeneration).
+     *
+     * If it throws after vkCreateSwapchainKHR was called, the old swapchain is retired anyway
+     * (the call retires it even when it fails). Then acquireNextImage() gives eOutOfDate without a
+     * driver call until a recreate() succeeds, which builds without an old swapchain.
      *
      * @param requested  Size in pixels, used only where the surface leaves the image size to the
      *                application, like SwapchainParameters::extent.
@@ -181,5 +196,11 @@ private:
 
     /** Replaced by recreate(); acquired images and presentations keep the old one alive. */
     SwapchainGenerationPtr mGeneration;
+
+    /**
+     * True from the call of vkCreateSwapchainKHR in recreate() until a recreate() succeeds: if
+     * one threw, the swapchain of mGeneration is retired.
+     */
+    bool mRetired = false;
 };
 } // namespace VOG::Graphics::Vulkan

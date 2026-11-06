@@ -22,15 +22,25 @@ inputs:
 runs:
   using: composite
   steps:
+    # The runner image changes the compiler, so it belongs in the key; ImageOS is a machine
+    # variable, not in the `env` context.
+    - name: Name the runner image
+      id: image
+      shell: bash
+      run: echo "name=${ImageOS:-${{ runner.os }}-unknown-image}" >> "$GITHUB_OUTPUT"
+
+    # Only the package store: p/ holds the packages, the build folders and cache.sqlite3. The rest
+    # of ~/.conan2 (profiles, settings.yml, global.conf, remotes, plugins) is made by Conan and by
+    # setup-conan on every run, and restoring it would bring back an old profile.
     - name: Restore Conan cache
       id: conan-cache
       uses: actions/cache/restore@v4
       with:
-        path: ~/.conan2
-        key: conan-${{ runner.os }}-${{ inputs.build-type }}-${{ hashFiles(inputs.lockfile) }}
+        path: ~/.conan2/p
+        key: conan-${{ steps.image.outputs.name }}-${{ inputs.build-type }}-${{ hashFiles(inputs.lockfile) }}
         restore-keys: |
-          conan-${{ runner.os }}-${{ inputs.build-type }}-
-          conan-${{ runner.os }}-
+          conan-${{ steps.image.outputs.name }}-${{ inputs.build-type }}-
+          conan-${{ steps.image.outputs.name }}-
 
     - name: Install dependencies (Linux)
       if: inputs.warm == 'true' && runner.os == 'Linux'
@@ -53,5 +63,5 @@ runs:
       if: inputs.warm == 'true' && steps.conan-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4
       with:
-        path: ~/.conan2
-        key: conan-${{ runner.os }}-${{ inputs.build-type }}-${{ hashFiles(inputs.lockfile) }}
+        path: ~/.conan2/p
+        key: conan-${{ steps.image.outputs.name }}-${{ inputs.build-type }}-${{ hashFiles(inputs.lockfile) }}

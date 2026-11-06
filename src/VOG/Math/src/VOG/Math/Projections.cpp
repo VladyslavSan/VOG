@@ -1,29 +1,44 @@
 #include "VOG/Math/Projections.hpp"
 
+#include <cmath>
+
 namespace VOG::Math
 {
 Matrix4x4f
-calculateCameraMatrix(const Vector3f& position, const Vector3f& direction, const Vector3f& upVec)
+calculateCameraMatrix(const CameraPose& pose)
 {
-    constexpr auto isNormalized = [](const Vector3f& vector)
+    // A length check: a unit quaternion rotates +Z to a vector a few ULP off, per component.
+    constexpr float kLengthTolerance = 1e-5f;
+    constexpr auto  isNormalized     = [](const Vector3f& vector)
     {
-        const auto normalized = glm::normalize(vector);
-
-        return glm::all(glm::epsilonEqual(vector, normalized, glm::epsilon<float>()));
+        return std::abs(glm::length(vector) - 1.0f) <= kLengthTolerance;
     };
 
-    VOG_ASSERT(isNormalized(direction));
-    VOG_ASSERT(isNormalized(upVec));
+    VOG_ASSERT(isNormalized(pose.direction));
+    VOG_ASSERT(isNormalized(pose.up));
 
     // Uninitialized constructor, we fill all the values afterward.
     Matrix4x4f result;
 
-    result[0] = {glm::cross(upVec, direction), 0.0f};
-    result[1] = {upVec, 0.0f};
-    result[2] = {direction, 0.0f};
-    result[3] = {position, 1.0f};
+    result[0] = {glm::cross(pose.up, pose.direction), 0.0f};
+    result[1] = {pose.up, 0.0f};
+    result[2] = {pose.direction, 0.0f};
+    result[3] = {pose.position, 1.0f};
 
     return result;
+}
+
+Quaternionf
+identityQuaternion()
+{
+    return glm::identity<Quaternionf>();
+}
+
+Matrix4x4f
+trs(const Vector3f& position, const Quaternionf& rotation, const Vector3f& scale)
+{
+    return glm::translate(Matrix4x4f{1.0f}, position) * glm::mat4_cast(rotation) *
+           glm::scale(Matrix4x4f{1.0f}, scale);
 }
 
 Matrix4x4f

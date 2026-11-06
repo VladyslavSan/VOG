@@ -16,6 +16,9 @@ namespace VOG::Graphics::Vulkan
 {
 VOG_DECLARE_PTR(GraphicsPipeline);
 VOG_DECLARE_PTR(Buffer);
+VOG_DECLARE_PTR(DescriptorHeap);
+VOG_DECLARE_PTR(HeapBuffer);
+VOG_DECLARE_PTR(Texture);
 
 /**
  * Only supported recording surface, and the only way to retain a resource in a command buffer:
@@ -78,24 +81,39 @@ public:
                                StaticVectorStrict<CommandBuffer::BufferBinding,
                                                   CommandBuffer::kMaxNumVertexBufferBind> bindings);
 
+        void
+        bindIndexBuffer(std::shared_ptr<Buffer> buffer, vk::DeviceSize offset, vk::IndexType type);
+
         void setViewport(std::uint32_t firstViewport, vk::ArrayProxy<const vk::Viewport> viewports);
 
         void setScissor(std::uint32_t firstScissor, vk::ArrayProxy<const vk::Rect2D> scissors);
 
-        template <typename T>
-        void
-        pushConstants(vk::PipelineLayout      layout,
-                      vk::ShaderStageFlags    stageFlags,
-                      std::uint32_t           offset,
-                      vk::ArrayProxy<const T> values)
-        {
-            mRecorder.mCommandBuffer->pushConstants(layout, stageFlags, offset, values);
-        }
+        /**
+         * Pushes @p data to byte @p offset of the push data every shader stage reads. The bytes are
+         * copied while recording.
+         */
+        void pushData(std::uint32_t offset, std::span<const std::byte> data);
+
+        /**
+         * Retains a texture that the draws of this command buffer read by its heap index, until the
+         * command buffer's fence has signaled; its heap slot is not reused before. Metal's
+         * useResource.
+         */
+        void useResource(std::shared_ptr<const Texture> texture);
+
+        /** As for a texture, for a heap buffer. */
+        void useResource(std::shared_ptr<const HeapBuffer> buffer);
 
         void draw(std::uint32_t vertexCount,
                   std::uint32_t instanceCount,
                   std::uint32_t firstVertex,
                   std::uint32_t firstInstance);
+
+        void drawIndexed(std::uint32_t indexCount,
+                         std::uint32_t instanceCount,
+                         std::uint32_t firstIndex,
+                         std::int32_t  vertexOffset,
+                         std::uint32_t firstInstance);
 
     private:
         CommandBufferRecorder& mRecorder;
@@ -120,6 +138,7 @@ public:
     /**
      * Starts a dynamic-rendering scope covering the full extent of the attachments.
      * All attachments must share their extent and are retained for the command buffer's lifetime.
+     * The pool needs a graphics family; the draw commands exist only on the scope.
      *
      * @param colorAttachments  Color targets with their load/store ops and clear values.
      * @param depthAttachment   Optional depth-only target.
@@ -129,6 +148,65 @@ public:
     [[nodiscard]] RenderingPass
     beginRendering(const ColorAttachments&               colorAttachments,
                    const std::optional<DepthAttachment>& depthAttachment = {});
+
+    /**
+     * Binds both heaps of @p heap, which every draw after it reads its resources from, and retains
+     * it. Outside a rendering pass. The pool needs a graphics or compute family.
+     */
+    void bindDescriptorHeap(DescriptorHeapPtr heap);
+
+    /**
+     * Copies all of @p staging to offset 0 of @p destination, for the queue family @p usageFamily
+     * to read as vertices and indices. Retains both. The destination is undefined before: this is
+     * its one initial upload. @p destination needs the transfer-dst usage and at least the size of
+     * @p staging. Outside a rendering pass.
+     *
+     * With a @p usageFamily other than the family of this recorder's pool, the copy ends with the
+     * release half of a queue family ownership transfer, and the recorder of the usage family must
+     * acquire() the destination before it reads it (UploadBarriers.hpp). With equal families the
+     * copy records no barrier: a reader needs a later submit that waits for the submit of the copy
+     * on a semaphore.
+     */
+    void
+    copyBuffer(const BufferPtr& staging, const BufferPtr& destination, std::uint32_t usageFamily);
+
+    /**
+     * Copies @p staging, tightly packed rows of the texture's format, into mip 0 of @p texture and
+     * leaves the texture ready for shaders of the queue family @p usageFamily to sample. Retains
+     * both. The texture is undefined before: this is its one initial upload, which overwrites it
+     * whole. Uploading again would race the draws that sample it, because the first barrier waits
+     * for nothing. Outside a rendering pass.
+     *
+     * Ownership transfer as for copyBuffer(). With equal families the copy records a barrier that
+     * makes the texture ready for the shaders.
+     */
+    void copyBufferToTexture(const BufferPtr&  staging,
+                             const TexturePtr& texture,
+                             std::uint32_t     usageFamily);
+
+    /**
+     * Copies mip 0 of the color image @p image, tightly packed rows of its format, to offset 0 of
+     * @p destination, and retains both. @p image must be in the layout
+     * vk::ImageLayout::eTransferSrcOptimal with its earlier writes visible to the copy, which a
+     * setImageBarrier() before this call arranges. @p destination needs the transfer-dst usage
+     * and room for the image. Nothing makes the copy visible to the host or to later commands:
+     * add a setBufferBarrier() for that. Outside a rendering pass.
+     */
+    void copyImageToBuffer(const AttachmentInterfacePtr& image, const BufferPtr& destination);
+
+    /**
+     * The acquire half of the ownership transfer that copyBuffer() or copyBufferToTexture()
+     * released from the family @p uploadFamily: records it, and retains the resource. Records
+     * nothing when @p uploadFamily is the family of this recorder's pool. A texture is then ready
+     * because its copy recorded the barrier that made it so; a buffer is ready because this submit
+     * waits for the submit of the copy. In both cases the copy must be in another command buffer,
+     * and the submit of this command buffer must wait for the submit of the copy at the
+     * all-commands stage. Outside a rendering pass.
+     */
+    void acquire(const BufferPtr& buffer, std::uint32_t uploadFamily);
+
+    /** As for a buffer. */
+    void acquire(const TexturePtr& texture, std::uint32_t uploadFamily);
 
     /**
      * Image barrier that retains @p attachment until the command buffer's fence fires. Fills

@@ -33,7 +33,7 @@ public:
 
     /**
      * Signaled by the presentation engine once the image is free; the submit that renders into the
-     * image waits it. Kept by value from the acquire: the swapchain rotates its own list.
+     * image waits it. It is the semaphore the caller passed to Swapchain::acquireNextImage.
      */
     const SemaphorePtr& imageAvailableSemaphore() const;
 

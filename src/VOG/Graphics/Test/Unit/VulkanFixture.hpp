@@ -1,18 +1,34 @@
 #pragma once
 
 #include <VOG/Common/JSONContainer.hpp>
+#include <VOG/Graphics/Vulkan/Attachment/RenderTarget.hpp>
+#include <VOG/Graphics/Vulkan/Buffer.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
 #include <VOG/Graphics/Vulkan/CommandBufferRecorder.hpp>
+#include <VOG/Graphics/Vulkan/DescriptorHeap.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 #include <VOG/Graphics/Vulkan/DeviceRequirements.hpp>
+#include <VOG/Graphics/Vulkan/HeapBuffer.hpp>
 #include <VOG/Graphics/Vulkan/Instance.hpp>
+#include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
+#include <VOG/Graphics/Vulkan/Texture.hpp>
 
 #include <gtest/gtest.h>
+#include <vulkan/vulkan_format_traits.hpp>
 
+#include <algorithm>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <mutex>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "SyncValidationSetting.hpp"
 #include "TestShaderCompiler.hpp"
 
 namespace VOG::Tests
@@ -23,6 +39,61 @@ recordEmpty(const Graphics::Vulkan::CommandBufferPoolPtr& pool)
 {
     auto recorder = pool->record();
     return recorder.finish();
+}
+
+/** A square color target of @p size pixels that can be read back with recordReadback(). */
+inline Graphics::Vulkan::RenderTargetPtr
+createColorTarget(Graphics::Vulkan::Device& device,
+                  std::uint32_t             size,
+                  vk::Format                format = vk::Format::eR8G8B8A8Unorm)
+{
+    return device.createRenderTarget({.width = size, .height = size},
+                                     format,
+                                     vk::ImageUsageFlagBits::eColorAttachment |
+                                         vk::ImageUsageFlagBits::eTransferSrc);
+}
+
+/**
+ * Records the copy of @p target, which a pass has just drawn into, to a new host buffer: the
+ * barrier from color attachment to transfer source, the copy, and the barrier that makes the copy
+ * visible to the host. The target is left in the transfer-source layout. Read the buffer through
+ * mapForRead() once the submit has finished. No production code needs a readback.
+ */
+inline Graphics::Vulkan::BufferPtr
+recordReadback(Graphics::Vulkan::Device&                       device,
+               Graphics::Vulkan::CommandBufferRecorder&        recorder,
+               const Graphics::Vulkan::AttachmentInterfacePtr& target)
+{
+    const vk::DeviceSize size = vk::DeviceSize{target->getExtent().width} *
+                                target->getExtent().height * vk::blockSize(target->getFormat());
+    Graphics::Vulkan::BufferPtr readback =
+        device.createBuffer({.size = size, .usage = vk::BufferUsageFlagBits::eTransferDst},
+                            {.flags = Graphics::Vulkan::AllocationFlag::eHostRandomAccess});
+
+    recorder.setImageBarrier(target,
+                             {.srcStageMask  = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                              .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+                              .dstStageMask  = vk::PipelineStageFlagBits2::eCopy,
+                              .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+                              .oldLayout     = vk::ImageLayout::eColorAttachmentOptimal,
+                              .newLayout     = vk::ImageLayout::eTransferSrcOptimal,
+                              .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                              .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                              .subresourceRange    = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                                      .levelCount = 1u,
+                                                      .layerCount = 1u}});
+    recorder.copyImageToBuffer(target, readback);
+    recorder.setBufferBarrier(readback,
+                              {.srcStageMask        = vk::PipelineStageFlagBits2::eCopy,
+                               .srcAccessMask       = vk::AccessFlagBits2::eTransferWrite,
+                               .dstStageMask        = vk::PipelineStageFlagBits2::eHost,
+                               .dstAccessMask       = vk::AccessFlagBits2::eHostRead,
+                               .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                               .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                               .offset              = 0u,
+                               .size                = VK_WHOLE_SIZE});
+
+    return readback;
 }
 
 /**
@@ -41,6 +112,12 @@ public:
         /** Enable VK_EXT_headless_surface so tests can build a Swapchain without a window. Falls
          *  back to off when the instance does not offer it; check headlessSurfaceActive(). */
         bool headlessSurface = false;
+
+        /** Turn on the synchronization validation of the layer, which reports a missing
+         *  dependency between two accesses (core validation cannot see one). Needs validation. The
+         *  setting reaches the layer through an environment variable that only the layer's
+         *  version may know, so a negative control must show that it works. */
+        bool syncValidation = false;
     };
 
     VulkanFixture()
@@ -54,20 +131,66 @@ public:
         return mDevice->createShader(stage, compileGLSL(stage, glslCode));
     }
 
+    /**
+     * The program of `src/<name>.vert.glsl` and `src/<name>.frag.glsl` of the test shader
+     * directory, which the test target names in VOG_TEST_SHADER_PATH.
+     */
+    Graphics::Vulkan::ShaderProgramPtr
+    createProgramFromFiles(const std::string& name)
+    {
+        const auto read = [&name](std::string_view suffix)
+        {
+            std::ifstream file{std::filesystem::path{VOG_TEST_SHADER_PATH} / "src" /
+                                   (name + std::string{suffix}),
+                               std::ios::binary};
+
+            return std::string{std::istreambuf_iterator<char>{file}, {}};
+        };
+
+        return Graphics::Vulkan::ShaderProgram::create(
+            {.vertex   = {.shader = createShader(Graphics::Vulkan::Shader::ShadingStage::eVertex,
+                                                 read(".vert.glsl"))},
+             .fragment = {.shader = createShader(Graphics::Vulkan::Shader::ShadingStage::eFragment,
+                                                 read(".frag.glsl"))}});
+    }
+
+    /** A descriptor heap of @p slots resource slots and one linear sampler. */
+    Graphics::Vulkan::DescriptorHeapPtr
+    createHeap(std::uint32_t slots = 8u)
+    {
+        const vk::SamplerCreateInfo sampler{.magFilter = vk::Filter::eLinear,
+                                            .minFilter = vk::Filter::eLinear};
+        return mDevice->createDescriptorHeap(slots, {&sampler, 1u});
+    }
+
+    /** A host-written buffer holding @p bytes, to copy from. */
+    Graphics::Vulkan::BufferPtr
+    createStaging(std::span<const std::byte> bytes)
+    {
+        Graphics::Vulkan::BufferPtr staging = mDevice->createBuffer(
+            {.size = bytes.size(), .usage = vk::BufferUsageFlagBits::eTransferSrc},
+            {.flags = Graphics::Vulkan::AllocationFlag::eHostSequentialWrite});
+        auto mapping = staging->mapForWrite();
+        std::ranges::copy(bytes, mapping.bytes().begin());
+
+        return staging;
+    }
+
 protected:
     explicit VulkanFixture(Options options)
         : mValidationActive{options.validation && validationInstalled()}
         , mHeadlessSurfaceActive{options.headlessSurface &&
                                  instanceExtensionInstalled(kHeadlessSurfaceExtension)}
-        , mInstance{Graphics::Vulkan::Instance::create({
-              .appName    = "VOG Test",
-              .engineName = "Test",
-              .layers     = mValidationActive ? std::vector<std::string>{kValidationLayer}
-                                              : std::vector<std::string>{},
-              .extensions = enabledExtensions(),
-          })}
-        , mMessenger{mValidationActive ? makeMessenger()
-                                       : vk::raii::DebugUtilsMessengerEXT{nullptr}}
+        , mInstance{createInstance(
+              options.syncValidation && mValidationActive,
+              {
+                  .appName     = "VOG Test",
+                  .engineName  = "Test",
+                  .layers      = mValidationActive ? std::vector<std::string>{kValidationLayer}
+                                                   : std::vector<std::string>{},
+                  .extensions  = enabledExtensions(),
+                  .messageSink = mValidationActive ? makeSink() : Graphics::Vulkan::MessageSink{},
+              })}
         , mDevice{mInstance->makeDevice()}
     {
     }
@@ -115,36 +238,31 @@ protected:
     };
 
     /**
-     * Drops the fixture's own references to the Device and, as far as tests can tell, the
-     * Instance. The device lives on only if an object created from it still holds it. The
-     * fixture keeps the Instance alive in secret until expectDeviceReleased(), because the
-     * validation messenger must be destroyed before its Instance.
+     * Drops the fixture's own references to the Device and the Instance. The device lives on only
+     * if an object created from it still holds it, and the instance as long as the device does.
      */
     Released
     releaseDevice()
     {
         Released released{.instance = mInstance, .device = mDevice};
-        mInstanceKeeper = std::move(mInstance);
+        mInstance.reset();
         mDevice.reset();
         return released;
     }
 
     /**
-     * Call once nothing but the fixture can still hold the Device: it must have expired, the
-     * validation layer must have raised no error while it went away (a child object destroyed
-     * after its device is reported by vkDestroyDevice, VUID-vkDestroyDevice-device-05137), and
-     * the Instance must expire as soon as the fixture lets go of it.
+     * Call once nothing but the fixture can still hold the Device: the Device and the Instance
+     * must have expired, and the validation layer must have raised no error while they went away
+     * (a child object destroyed after its device is reported by vkDestroyDevice,
+     * VUID-vkDestroyDevice-device-05137, and one that outlives the instance by vkDestroyInstance).
      */
     void
     expectDeviceReleased(const Released& released)
     {
         EXPECT_TRUE(released.device.expired());
+        EXPECT_TRUE(released.instance.expired());
         EXPECT_TRUE(mValidationErrors.empty())
             << (mValidationErrors.empty() ? "" : mValidationErrors.front());
-
-        mMessenger = vk::raii::DebugUtilsMessengerEXT{nullptr};
-        mInstanceKeeper.reset();
-        EXPECT_TRUE(released.instance.expired());
     }
 
     /**
@@ -177,7 +295,10 @@ protected:
                                    });
     }
 
-    // Declared first, destroyed last: the messenger can still report while the device goes away.
+    // Declared first, destroyed last: the sink can still report while the device goes away. The
+    // mutex guards the writes of the sink. The reads in the tests are unlocked: the Graphics tests
+    // start no thread of their own, so no Vulkan call runs on another thread while they read.
+    std::mutex               mValidationErrorsMutex;
     std::vector<std::string> mValidationErrors;
 
 private:
@@ -185,15 +306,27 @@ private:
     const bool mHeadlessSurfaceActive;
 
 protected:
-    Graphics::Vulkan::InstancePtr    mInstance;
-    Graphics::Vulkan::InstancePtr    mInstanceKeeper;
-    vk::raii::DebugUtilsMessengerEXT mMessenger;
-    Graphics::Vulkan::DevicePtr      mDevice;
+    Graphics::Vulkan::InstancePtr mInstance;
+    Graphics::Vulkan::DevicePtr   mDevice;
 
 private:
     static constexpr const char* kValidationLayer          = "VK_LAYER_KHRONOS_validation";
     static constexpr const char* kDebugUtilsExtension      = "VK_EXT_debug_utils";
     static constexpr const char* kHeadlessSurfaceExtension = "VK_EXT_headless_surface";
+
+    /** The layer reads its settings in vkCreateInstance: the setting is on for that call only. */
+    static Graphics::Vulkan::InstancePtr
+    createInstance(bool                                                  syncValidation,
+                   const Graphics::Vulkan::Instance::InstanceParameters& parameters)
+    {
+        std::optional<SyncValidationSetting> setting;
+        if (syncValidation)
+        {
+            setting.emplace();
+        }
+
+        return Graphics::Vulkan::Instance::create(parameters);
+    }
 
     static bool
     instanceExtensionInstalled(std::string_view name)
@@ -214,10 +347,6 @@ private:
     enabledExtensions() const
     {
         std::vector<std::string> extensions;
-        if (mValidationActive)
-        {
-            extensions.emplace_back(kDebugUtilsExtension);
-        }
         if (mHeadlessSurfaceActive)
         {
             extensions.emplace_back(kHeadlessSurfaceExtension);
@@ -225,28 +354,16 @@ private:
         return extensions;
     }
 
-    static vk::Bool32
-    onMessage(vk::DebugUtilsMessageSeverityFlagBitsEXT /*severity*/,
-              vk::DebugUtilsMessageTypeFlagsEXT /*types*/,
-              const vk::DebugUtilsMessengerCallbackDataEXT* pData,
-              void*                                         pUserData)
+    /** Records the ERROR messages of the Instance. */
+    Graphics::Vulkan::MessageSink
+    makeSink()
     {
-        if (pData->pMessage != nullptr)
+        return
+            [&mutex = mValidationErrorsMutex, &errors = mValidationErrors](std::string_view message)
         {
-            static_cast<std::vector<std::string>*>(pUserData)->emplace_back(pData->pMessage);
-        }
-        return VK_FALSE;
-    }
-
-    vk::raii::DebugUtilsMessengerEXT
-    makeMessenger()
-    {
-        return mInstance->createDebugUtilsMessengerEXT(vk::DebugUtilsMessengerCreateInfoEXT{
-            .messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
-            .messageType     = vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation,
-            .pfnUserCallback = VulkanFixture::onMessage,
-            .pUserData       = &mValidationErrors,
-        });
+            const std::scoped_lock lock{mutex};
+            errors.emplace_back(message);
+        };
     }
 };
 } // namespace VOG::Tests

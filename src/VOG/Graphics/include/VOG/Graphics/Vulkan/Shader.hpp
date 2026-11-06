@@ -7,6 +7,7 @@
 
 #include <compare>
 #include <memory>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -41,8 +42,27 @@ public:
      * Structure that holds shader reflection information.
      *
      * #inAttributes and #outAttributes sorted by StageInOutAttribute::location ascending.
-     * #pushConstants.variables sorted by StructMember::offset ascending.
-     * #uniformBuffers sorted by UniformBuffer::location (set, then binding) ascending.
+     * #pushConstants sorted by BlockMember::offset ascending. #heapBlocks sorted by
+     * HeapBlock::name; the members of a heap block are in declaration order.
+     *
+     * A stage input or output that is an interface block has one StageInOutAttribute per member,
+     * named "Block.member": the name of the block, a dot, the name of the member. A struct
+     * variable that is no block is named after the variable instead. A member has the location of
+     * its own Location decoration, else the location after the member before it; the first member
+     * has the location of the block. A member that is itself a struct, and an array of either, are
+     * a ShaderError.
+     *
+     * A shader reaches its resources through the descriptor heap (`layout(descriptor_heap)`), by an
+     * index it reads from the push constants. SPIRV-Cross lists none of them as a resource, so the
+     * blocks are found from the instructions that reach them: a block that no instruction of the
+     * stage reaches is not in the SPIR-V and not in #heapBlocks. Only blocks are reflected; a heap
+     * array of images or samplers is not. Any atomic on a heap block, and any
+     * length() of an unsized array in one, is a ShaderError, whatever else the stage reads of the
+     * block: such an access is one the reflection cannot follow. A member that is a
+     * buffer_reference is a ShaderError too. SPIRV-Cross itself overflows its stack in its
+     * constructor when the stage dereferences such a pointer to a struct that points to itself
+     * (measured with the pinned version, in a heap block: `head.value` with `Node head` is
+     * enough); VOG code is not reached then.
      */
     struct Reflection
     {
@@ -68,51 +88,86 @@ public:
             std::uint8_t location;
             std::string  name;
             BaseType     format;
+            /**
+             * Consecutive locations the input or output covers, from #location: the array sizes
+             * multiplied, times one location per matrix column, times two for a 64-bit vector of
+             * three or four components.
+             */
+            std::uint32_t locationCount = 1u;
         };
 
-        struct StructMember
+        /** A member of a push block or of a block that is read through the descriptor heap. */
+        struct BlockMember
         {
-            std::uint16_t offset;
-            std::uint16_t size;
             std::string   name;
-            BaseType      type;
+            std::uint32_t offset = 0u;
+            /** Bytes the member takes in its block, as declared: all elements of an array. */
+            std::uint32_t size = 0u;
+            /** Numeric type of a scalar, vector or matrix member; zero components for a struct. */
+            BaseType type{};
+            /** Elements of an array, all dimensions multiplied; 0 for no array or an unsized one.
+             */
+            std::uint32_t arraySize = 0u;
+            /**
+             * Bytes between two elements of the outermost dimension of an array; 0 for no array.
+             * The inner dimensions of a multi-dimensional array have strides of their own, which
+             * are not reflected.
+             */
+            std::uint32_t arrayStride = 0u;
+            /** Bytes between the columns of a matrix; 0 for no matrix. */
+            std::uint32_t matrixStride = 0u;
+            bool          rowMajor     = false;
+            /** Name of the struct type of a struct member (or of an array of them); else empty. */
+            std::string structName;
+            /** The members of a struct member, in declaration order. */
+            std::vector<BlockMember> members;
 
-            std::strong_ordering operator<=>(const StructMember&) const = default;
+            bool operator==(const BlockMember&) const = default;
         };
 
-        struct PushConstants
+        enum class HeapBlockStorage : std::uint8_t
         {
-            std::vector<StructMember> variables;
+            /** A `uniform` block. */
+            eUniform,
+            /** A `buffer` block. */
+            eStorageBuffer,
         };
 
-        struct ResourceLocation
+        /** A block that a stage reads through the descriptor heap. */
+        struct HeapBlock
         {
-            std::uint32_t set;
-            std::uint32_t binding;
+            std::string      name;
+            HeapBlockStorage storage = HeapBlockStorage::eUniform;
+            /** Bytes the block takes: the end of its last member, as declared. */
+            std::uint32_t size = 0u;
+            /**
+             * The `descriptor_stride` of the heap array that holds the block: the bytes between
+             * two elements. 0 when the shader declares none (the stride is then the size of a
+             * descriptor), or the stride is not a constant.
+             */
+            std::uint32_t strideDecoration = 0u;
+            /** In declaration order. */
+            std::vector<BlockMember> members;
 
-            std::strong_ordering operator<=>(const ResourceLocation&) const noexcept = default;
-        };
-
-        struct UniformBuffer
-        {
-            ResourceLocation          location;
-            std::size_t               size;
-            std::vector<StructMember> members;
-
-            std::strong_ordering operator<=>(const UniformBuffer&) const noexcept = default;
+            bool operator==(const HeapBlock&) const = default;
         };
 
         using StageAttributes = std::vector<StageInOutAttribute>;
 
-        StageAttributes            inAttributes;
-        StageAttributes            outAttributes;
-        PushConstants              pushConstants;
-        std::vector<UniformBuffer> uniformBuffers;
+        StageAttributes          inAttributes;
+        StageAttributes          outAttributes;
+        std::vector<BlockMember> pushConstants;
+        std::vector<HeapBlock>   heapBlocks;
     };
+
+    /** "vec3", "ivec4", "mat4", "float": how a shader declares a value of type @p type. */
+    [[nodiscard]] static std::string describe(Reflection::BaseType type);
 
     /**
      * Utility function used for validation whether @p provided vertex format is compatible with
-     * @p shaderVertexFormat.
+     * @p shaderVertexFormat. Only the numeric type is compared (float, signed or unsigned
+     * integer); the component counts may differ. 64-bit types are never compatible: VOG binds
+     * no 64-bit vertex formats, and they take two locations.
      *
      * @param shaderVertexFormat Vertex attribute format in the shader.
      * @param provided Vertex attribute bound from vertex buffer.

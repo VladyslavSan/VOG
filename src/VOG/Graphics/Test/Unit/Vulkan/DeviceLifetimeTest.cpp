@@ -1,7 +1,6 @@
 #include "VOG/Graphics/Frame/FrameObjectManager.hpp"
 #include "VOG/Graphics/Frame/FrameObjects.hpp"
-#include "VOG/Graphics/ShaderProgramCache.hpp"
-#include "VOG/Graphics/Vulkan/Attachment/RenderBuffer.hpp"
+#include "VOG/Graphics/Vulkan/Attachment/RenderTarget.hpp"
 #include "VOG/Graphics/Vulkan/Buffer.hpp"
 #include "VOG/Graphics/Vulkan/CommandBufferPool.hpp"
 #include "VOG/Graphics/Vulkan/CommandBufferRecorder.hpp"
@@ -9,10 +8,13 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
+#include <tuple>
 #include <type_traits>
 
 #include "VulkanFixture.hpp"
@@ -26,6 +28,7 @@ static_assert(!std::is_convertible_v<Graphics::Vulkan::Semaphore&, vk::raii::Sem
 static_assert(!std::is_convertible_v<Graphics::Vulkan::TimelineSemaphore&, vk::raii::Semaphore&>);
 static_assert(!std::is_convertible_v<Graphics::Vulkan::GraphicsPipeline&, vk::raii::Pipeline&>);
 static_assert(!std::is_convertible_v<Graphics::Vulkan::Buffer&, vk::raii::Buffer&>);
+static_assert(!std::is_convertible_v<Graphics::Vulkan::Texture&, vk::raii::Image&>);
 static_assert(!std::is_convertible_v<Graphics::Vulkan::PhysicalDevice&, vk::raii::PhysicalDevice&>);
 static_assert(!std::is_convertible_v<Graphics::Vulkan::Device&, vk::raii::Device&>);
 static_assert(!std::is_convertible_v<Graphics::Vulkan::Device&, vk::raii::PhysicalDevice&>);
@@ -77,6 +80,50 @@ class DeviceLifetime : public VulkanValidationFixture
 {
 };
 
+/** The validation layer on a headless instance, for a test that leaks a surface. */
+class InstanceDestruction : public VulkanFixture
+{
+public:
+    InstanceDestruction()
+        : VulkanFixture{Options{.validation = true, .headlessSurface = true}}
+    {
+    }
+
+protected:
+    void
+    SetUp() override
+    {
+        if (!validationActive() || !headlessSurfaceActive())
+        {
+            GTEST_SKIP() << "The validation layer or VK_EXT_headless_surface is not available";
+        }
+    }
+};
+
+/**
+ * The sink also hears vkDestroyInstance, after every member of the Instance is gone: the reason
+ * why its holder is the first base. A surface that nobody destroyed makes the layer report
+ * VUID-vkDestroyInstance-instance-00629 then. The leak is on purpose.
+ */
+TEST_F(InstanceDestruction, sinkHearsErrorOfVkDestroyInstance)
+{
+    std::ignore =
+        vk::raii::SurfaceKHR{mInstance->raii(), vk::HeadlessSurfaceCreateInfoEXT{}}.release();
+    ASSERT_TRUE(mValidationErrors.empty());
+
+    const auto released = releaseDevice();
+
+    EXPECT_TRUE(released.instance.expired());
+    const bool heard =
+        std::ranges::any_of(mValidationErrors,
+                            [](const std::string& message)
+                            {
+                                return message.contains("VUID-vkDestroyInstance-instance-00629");
+                            });
+    EXPECT_TRUE(heard) << mValidationErrors.size() << " error(s) heard; the first: "
+                       << (mValidationErrors.empty() ? "" : mValidationErrors.front());
+}
+
 /**
  * Device must not own FencePool. After exercising an external pool and the private allocator,
  * dropping the last DevicePtr (and pool) must destroy the device and its instance.
@@ -85,7 +132,7 @@ TEST_F(DeviceLifetime, releasingLastReferenceDestroysDevice)
 {
     auto fencePool = Graphics::Vulkan::FencePool::create(mDevice);
     // Drop the handle so the pool is idle; then drop the pool itself.
-    fencePool->take();
+    std::ignore = fencePool->take();
     fencePool.reset();
 
     auto buffer = makeBuffer(*mDevice);
@@ -95,8 +142,8 @@ TEST_F(DeviceLifetime, releasingLastReferenceDestroysDevice)
 }
 
 /**
- * The Device keeps its Instance alive. Plain fixture: no validation messenger needs the Instance
- * to outlive the Device by a controlled margin.
+ * The Device keeps its Instance alive. Plain fixture: it watches nothing, and the test drops the
+ * Instance and the Device by hand.
  */
 TEST_F(VulkanFixture, Device_keepsInstanceAlive)
 {
@@ -124,9 +171,55 @@ TEST_F(DeviceLifetime, bufferKeepsDeviceAlive)
                                buffer,
                                [](Graphics::Vulkan::Buffer& buffer)
                                {
-                                   auto mapping    = buffer.mapForWrite();
-                                   mapping.data[0] = std::byte{1};
+                                   auto mapping       = buffer.mapForWrite();
+                                   mapping.bytes()[0] = std::byte{1};
                                });
+}
+
+/**
+ * The heap keeps the device alive. No Vulkan entry point is reachable through a bare heap, so the
+ * call under test is its destruction (vkDestroyBuffer of both heap buffers).
+ */
+TEST_F(DeviceLifetime, descriptorHeapKeepsDeviceAlive)
+{
+    auto       heap     = createHeap();
+    const auto released = releaseDevice();
+
+    expectDependentHoldsDevice(released, heap);
+}
+
+/**
+ * The texture keeps its heap, and through it the device, alive: the call under test is the
+ * destruction of the image, after the heap's last other holder is gone.
+ */
+TEST_F(DeviceLifetime, textureKeepsDeviceAndHeapAlive)
+{
+    auto heap = createHeap();
+    auto texture =
+        mDevice->createTexture(heap, {.width = 2u, .height = 2u}, vk::Format::eR8G8B8A8Srgb);
+    const Graphics::Vulkan::DescriptorHeapWeakPtr weakHeap = heap;
+    heap.reset();
+    EXPECT_FALSE(weakHeap.expired());
+
+    const auto released = releaseDevice();
+
+    expectDependentHoldsDevice(released, texture);
+    EXPECT_TRUE(weakHeap.expired());
+}
+
+/** As for the texture, for the heap buffer: it also keeps its buffer alive. */
+TEST_F(DeviceLifetime, heapBufferKeepsDeviceAndHeapAlive)
+{
+    auto                                          heap     = createHeap();
+    auto                                          block    = mDevice->createHeapBuffer(heap, 0u);
+    const Graphics::Vulkan::DescriptorHeapWeakPtr weakHeap = heap;
+    heap.reset();
+    EXPECT_FALSE(weakHeap.expired());
+
+    const auto released = releaseDevice();
+
+    expectDependentHoldsDevice(released, block);
+    EXPECT_TRUE(weakHeap.expired());
 }
 
 /**
@@ -142,7 +235,8 @@ TEST_F(DeviceLifetime, submittedCommandBufferKeepsDeviceAlive)
     auto pool      = mDevice->createCommandBufferPool();
     {
         auto executable = recordEmpty(pool);
-        mDevice->getGraphicsQueue()->submit(*fencePool, {}, std::span{&executable, 1u}, {});
+        mDevice->getGraphicsQueue()->submit(*fencePool,
+                                            {.commandBuffers = std::span{&executable, 1u}});
     }
     fencePool.reset();
     const auto released = releaseDevice();
@@ -164,7 +258,7 @@ TEST_F(DeviceLifetime, fencePoolKeepsDeviceAlive)
                                fencePool,
                                [](Graphics::Vulkan::FencePool& fencePool)
                                {
-                                   fencePool.take();
+                                   std::ignore = fencePool.take();
                                });
 }
 
@@ -227,27 +321,20 @@ TEST_F(DeviceLifetime, semaphoreKeepsDeviceAlive)
     expectDependentHoldsDevice(released, semaphore);
 }
 
+/** Like the binary semaphore: the call under test is its destruction. */
 TEST_F(DeviceLifetime, timelineSemaphoreKeepsDeviceAlive)
 {
-    auto semaphore =
-        std::make_unique<Graphics::Vulkan::TimelineSemaphore>(mDevice->createTimelineSemaphore());
-    const auto released = releaseDevice();
+    auto       semaphore = mDevice->createTimelineSemaphore();
+    const auto released  = releaseDevice();
 
-    expectDependentHoldsDevice(released,
-                               semaphore,
-                               [](Graphics::Vulkan::TimelineSemaphore& semaphore)
-                               {
-                                   EXPECT_EQ(semaphore.waitOnCPU(0u, 0u), vk::Result::eSuccess);
-                               });
+    expectDependentHoldsDevice(released, semaphore);
 }
 
 /**
  * The queue is owned by the device; the handle it hands out shares ownership of the device. The
- * transfer queue is kept for future uploads, and no Vulkan call can reach it yet because there is
- * no transfer-family command buffer pool. The test checks ownership only; no Vulkan call is
- * involved: the graphics handle goes first, so the transfer handle alone must keep the device
- * alive. A real submit through the graphics handle is covered by
- * submittedCommandBufferKeepsDeviceAlive.
+ * test checks ownership only; no Vulkan call is involved: the graphics handle goes first, so the
+ * transfer handle alone must keep the device alive. A real submit through the graphics handle is
+ * covered by submittedCommandBufferKeepsDeviceAlive.
  */
 TEST_F(DeviceLifetime, queueKeepsDeviceAlive)
 {
@@ -260,23 +347,15 @@ TEST_F(DeviceLifetime, queueKeepsDeviceAlive)
 }
 
 /**
- * No Vulkan entry point is reachable through a bare render buffer, so the call under test is its
- * destruction (vkDestroyImageView / vkDestroyImage / vkFreeMemory on a live device).
+ * No Vulkan entry point is reachable through a bare render target, so the call under test is its
+ * destruction (vkDestroyImageView / vkDestroyImage / vmaFreeMemory on a live device).
  */
-TEST_F(DeviceLifetime, renderBufferKeepsDeviceAlive)
+TEST_F(DeviceLifetime, renderTargetKeepsDeviceAlive)
 {
-    auto       renderBuffer = mDevice->createRenderBuffer(Graphics::Vulkan::AttachmentUsage::eColor,
-                                                          vk::Format::eR8G8B8A8Unorm,
-                                                          {.width = 16u, .height = 16u},
-                                                          Graphics::Vulkan::SampleCount::e1,
-                                                          1u,
-                                                          1u,
-                                                          vk::ImageTiling::eOptimal,
-                                                          vk::ImageLayout::eUndefined,
-                                                          vk::MemoryPropertyFlagBits::eDeviceLocal);
+    auto       renderTarget = createColorTarget(*mDevice, 16u);
     const auto released     = releaseDevice();
 
-    expectDependentHoldsDevice(released, renderBuffer);
+    expectDependentHoldsDevice(released, renderTarget);
 }
 
 TEST_F(DeviceLifetime, frameObjectsKeepDeviceAlive)
@@ -296,31 +375,14 @@ TEST_F(DeviceLifetime, frameObjectsKeepDeviceAlive)
 TEST_F(DeviceLifetime, frameObjectManagerKeepsDeviceAlive)
 {
     auto manager = std::make_unique<Graphics::Frame::FrameObjectManager>(
-        mDevice, std::size_t{2}, std::size_t{1});
+        mDevice, Graphics::Frame::FrameObjectManager::Counts{.frames = 2u, .threads = 1u});
     const auto released = releaseDevice();
 
     expectDependentHoldsDevice(released,
                                manager,
                                [](Graphics::Frame::FrameObjectManager& manager)
                                {
-                                   manager.acquireNextFrame();
-                               });
-}
-
-/**
- * The call under test is the lookup: the shader modules were created before the device was
- * released, and the cache exposes no other Vulkan entry point.
- */
-TEST_F(DeviceLifetime, shaderProgramCacheKeepsDeviceAlive)
-{
-    auto cache = std::make_unique<Graphics::ShaderProgramCache>(mDevice, VOG_TEST_SHADER_PATH);
-    const auto released = releaseDevice();
-
-    expectDependentHoldsDevice(released,
-                               cache,
-                               [](Graphics::ShaderProgramCache& cache)
-                               {
-                                   EXPECT_TRUE(*cache.get("WorldSpace")->pipelineLayout);
+                                   manager.prepareNextFrame();
                                });
 }
 

@@ -9,6 +9,8 @@ set_target_properties(VOG.Graphics.Unit
 target_include_directories(VOG.Graphics.Unit
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/VOG/Graphics/Test/Support
 )
 
 target_sources(VOG.Graphics.Unit
@@ -17,12 +19,18 @@ target_sources(VOG.Graphics.Unit
         Vulkan/GraphicsPipelineTest.cpp
         Vulkan/ShaderProgramTest.cpp
         Vulkan/CommandBufferRecorderTest.cpp
+        Vulkan/DescriptorHeapTest.cpp
         Vulkan/DeviceLifetimeTest.cpp
         Vulkan/DeviceRequirementsTest.cpp
+        Vulkan/GLSLCompilerTest.cpp
         Vulkan/InDestructorTest.cpp
+        Vulkan/InstanceTest.cpp
+        Vulkan/QueueFamiliesTest.cpp
         Vulkan/SwapchainTest.cpp
+        Vulkan/UploadBarriersTest.cpp
         VulkanFixture.hpp
         VulkanValidationFixture.hpp
+        HeapShaderSources.hpp
         TestShaderCompiler.hpp
 )
 
@@ -61,6 +69,7 @@ target_link_libraries(VOG.Graphics.Unit
         VOG.Graphics
         GTest::gtest
         GTest::gtest_main
+        spdlog::spdlog
 )
 
 include(GoogleTest)

@@ -4,7 +4,6 @@ find_package(spirv-cross REQUIRED)
 find_package(glslang REQUIRED)
 
 find_package(Boost COMPONENTS container REQUIRED)
-find_package(nlohmann_json REQUIRED)
 find_package(spdlog REQUIRED)
 
 add_library(VOG.Graphics)
@@ -33,20 +32,23 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Frame/FrameObjects.hpp
             include/VOG/Graphics/Vulkan/Attachment/AttachmentInterface.hpp
             include/VOG/Graphics/Vulkan/Attachment/AcquiredSwapchainImage.hpp
-            include/VOG/Graphics/Vulkan/Attachment/RenderBuffer.hpp
+            include/VOG/Graphics/Vulkan/Attachment/RenderTarget.hpp
             include/VOG/Graphics/Vulkan/Attachment/Swapchain.hpp
+            include/VOG/Graphics/Vulkan/BlockLayout.hpp
             include/VOG/Graphics/Vulkan/Buffer.hpp
             include/VOG/Graphics/Vulkan/CommandBuffer.hpp
             include/VOG/Graphics/Vulkan/CommandBufferPool.hpp
             include/VOG/Graphics/Vulkan/CommandBufferRecorder.hpp
             include/VOG/Graphics/Vulkan/Common.hpp
             include/VOG/Graphics/Vulkan/Containers.hpp
+            include/VOG/Graphics/Vulkan/DescriptorHeap.hpp
             include/VOG/Graphics/Vulkan/Device.hpp
             include/VOG/Graphics/Vulkan/DeviceChild.hpp
             include/VOG/Graphics/Vulkan/DeviceRequirements.hpp
             include/VOG/Graphics/Vulkan/Fence.hpp
             include/VOG/Graphics/Vulkan/FencePool.hpp
             include/VOG/Graphics/Vulkan/GraphicsPipeline.hpp
+            include/VOG/Graphics/Vulkan/HeapBuffer.hpp
             include/VOG/Graphics/Vulkan/InDestructor.hpp
             include/VOG/Graphics/Vulkan/Instance.hpp
             include/VOG/Graphics/Vulkan/Limits.hpp
@@ -56,18 +58,18 @@ target_sources(VOG.Graphics
             include/VOG/Graphics/Vulkan/GLSLCompiler.hpp
             include/VOG/Graphics/Vulkan/Shader.hpp
             include/VOG/Graphics/Vulkan/ShaderProgram.hpp
+            include/VOG/Graphics/Vulkan/Texture.hpp
             include/VOG/Graphics/Vulkan/TimelineSemaphore.hpp
-            include/VOG/Graphics/ShaderProgramCache.hpp
+            include/VOG/Graphics/Vulkan/UploadBarriers.hpp
             include/VOG/Graphics/Typedefs.hpp
 
     PRIVATE
         src/VOG/Graphics/Frame/FrameObjectManager.cpp
         src/VOG/Graphics/Frame/FrameObjects.cpp
-        src/VOG/Graphics/Vulkan/Attachment/Converters.hpp
         src/VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.hpp
         src/VOG/Graphics/Vulkan/Attachment/CreateRenderSurface.cpp
         src/VOG/Graphics/Vulkan/Attachment/AcquiredSwapchainImage.cpp
-        src/VOG/Graphics/Vulkan/Attachment/RenderBuffer.cpp
+        src/VOG/Graphics/Vulkan/Attachment/RenderTarget.cpp
         src/VOG/Graphics/Vulkan/Attachment/Swapchain.cpp
         src/VOG/Graphics/Vulkan/Attachment/SwapchainGeneration.cpp
         src/VOG/Graphics/Vulkan/Attachment/SwapchainGeneration.hpp
@@ -76,11 +78,13 @@ target_sources(VOG.Graphics
         src/VOG/Graphics/Vulkan/CommandBufferPool.cpp
         src/VOG/Graphics/Vulkan/CommandBufferRecorder.cpp
         src/VOG/Graphics/Vulkan/Common.cpp
+        src/VOG/Graphics/Vulkan/DescriptorHeap.cpp
         src/VOG/Graphics/Vulkan/Device.cpp
         src/VOG/Graphics/Vulkan/DeviceRequirements.cpp
         src/VOG/Graphics/Vulkan/Fence.cpp
         src/VOG/Graphics/Vulkan/FencePool.cpp
         src/VOG/Graphics/Vulkan/GraphicsPipeline.cpp
+        src/VOG/Graphics/Vulkan/HeapBuffer.cpp
         src/VOG/Graphics/Vulkan/InDestructor.cpp
         src/VOG/Graphics/Vulkan/Instance.cpp
         src/VOG/Graphics/Vulkan/MemoryAllocator.cpp
@@ -90,9 +94,10 @@ target_sources(VOG.Graphics
         src/VOG/Graphics/Vulkan/GLSLCompiler.cpp
         src/VOG/Graphics/Vulkan/Shader.cpp
         src/VOG/Graphics/Vulkan/ShaderProgram.cpp
+        src/VOG/Graphics/Vulkan/Texture.cpp
         src/VOG/Graphics/Vulkan/TimelineSemaphore.cpp
+        src/VOG/Graphics/Vulkan/UploadBarriers.cpp
         src/VOG/Graphics/Vulkan/VmaConfig.hpp
-        src/VOG/Graphics/ShaderProgramCache.cpp
 )
 
 # Every header under include/ must be in the public header set: PublicHeadersTest is generated from
@@ -115,7 +120,6 @@ target_link_libraries(VOG.Graphics
         Boost::container
     PRIVATE
         GPUOpen::VulkanMemoryAllocator
-        nlohmann_json::nlohmann_json                                                                                
         spirv-cross::spirv-cross
         spdlog::spdlog
         glslang::glslang
