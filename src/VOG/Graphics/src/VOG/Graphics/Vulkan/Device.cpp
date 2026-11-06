@@ -19,6 +19,7 @@
 #include <format>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace VOG::Graphics::Vulkan
 {

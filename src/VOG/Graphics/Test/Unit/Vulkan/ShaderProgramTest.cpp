@@ -164,6 +164,7 @@ struct Matrix
     std::array<Column, Columns> columns;
 };
 
+using Vec2 = Vector<2>;
 using Vec3 = Vector<3>;
 using Vec4 = Vector<4>;
 using Mat4 = Matrix<Vec4, 4>;
@@ -472,7 +473,8 @@ TEST_F(VulkanFixture, ShaderProgram_heapBlockStrideOtherThanSlotSizeIsRejected)
 /**
  * requireHeapBlock accepts the struct that has the block's layout, and reports the first
  * difference in offset order with the name of the block and of the member. Every kind of
- * difference is a test case: an offset, a type, a matrix stride, a member the struct lacks, a
+ * difference is a test case: an offset, a type (also the columns and components of a matrix that
+ * is not square), a matrix stride, a member the struct lacks, a
  * member the block lacks, an array, and a block the program does not read.
  */
 // The score comes from the gtest assertion macros.
@@ -580,6 +582,35 @@ TEST_F(VulkanFixture, ShaderProgram_requireHeapBlockReportsTheFirstMismatch)
         });
     EXPECT_TRUE(contains(columns, "\"basis\"")) << columns;
     EXPECT_TRUE(contains(columns, "16 bytes apart in the shader and 12 in C++")) << columns;
+
+    // A matrix that is not square: mat2x4 is two columns of four components. A C++ type of two
+    // columns of four matches it, and one of four columns of two does not: columns and components
+    // are not the same number, and not interchangeable.
+    const auto wideProgram = makeMaterialProgram(*this,
+                                                 materialBlock("uniform", kStride, "mat2x4 wide;"),
+                                                 "gMaterials[pushData.index].wide[0]");
+
+    struct Wide
+    {
+        Matrix<Vec4, 2> wide;
+    };
+
+    struct Tall
+    {
+        Matrix<Vec2, 4> wide;
+    };
+
+    EXPECT_NO_THROW(
+        wideProgram->requireHeapBlock("Material", BlockLayout::of<Wide>({{"wide", &Wide::wide}})));
+
+    const auto tall = invalidArgumentOf(
+        [&]
+        {
+            wideProgram->requireHeapBlock("Material",
+                                          BlockLayout::of<Tall>({{"wide", &Tall::wide}}));
+        });
+    EXPECT_TRUE(contains(tall, "\"wide\"")) << tall;
+    EXPECT_TRUE(contains(tall, "has the type mat2x4 in the shader and mat4x2 in C++")) << tall;
 
     // An array is not described by a layout: a float in its place is a difference, not a match.
     const auto arrayProgram = makeMaterialProgram(

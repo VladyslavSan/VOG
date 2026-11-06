@@ -43,7 +43,7 @@ concept BlockScalar = std::same_as<S, float> || std::same_as<S, double> ||
                       std::same_as<S, std::int32_t> || std::same_as<S, std::uint32_t>;
 
 template <BlockScalar S>
-consteval Shader::Reflection::BaseType::Type
+constexpr Shader::Reflection::BaseType::Type
 scalarType()
 {
     using Type = Shader::Reflection::BaseType::Type;
@@ -82,15 +82,24 @@ concept BlockMemberCompatible =
  * length() times the size of its element. A type that matches none of these, such as bool, fails
  * the BlockMemberCompatible constraint. A column of a glm::mat3 is 12 bytes and a GLSL one is 16,
  * which ShaderProgram::requireHeapBlock() reports as a matrix stride mismatch.
+ *
+ * constexpr, not consteval, and the result is filled by assignment, not by braces: GCC 15 rejected
+ * `return {...}` with unnamed braces for BaseType, whose first member is a scoped-enum bit-field;
+ * the cause is not proven. Nothing needs the result as a constant; the static_asserts below fire
+ * at instantiation either way.
  */
 template <BlockMemberCompatible M>
-consteval BlockMemberType
+constexpr BlockMemberType
 blockMemberType()
 {
+    BlockMemberType result{};
+
     if constexpr (Detail::BlockScalar<M>)
     {
-        return {.type         = {.type = Detail::scalarType<M>(), .components = 1u, .columns = 1u},
-                .matrixStride = 0u};
+        result.type.type       = Detail::scalarType<M>();
+        result.type.components = 1u;
+        result.type.columns    = 1u;
+        result.matrixStride    = 0u;
     }
     else if constexpr (Detail::BlockMatrix<M>)
     {
@@ -101,10 +110,10 @@ blockMemberType()
         static_assert(sizeof(M) == M::length() * sizeof(Column),
                       "A matrix must be its columns and nothing else.");
 
-        return {.type         = {.type       = Detail::scalarType<typename Column::value_type>(),
-                                 .components = static_cast<std::uint8_t>(Column::length()),
-                                 .columns    = static_cast<std::uint8_t>(M::length())},
-                .matrixStride = sizeof(Column)};
+        result.type.type       = Detail::scalarType<typename Column::value_type>();
+        result.type.components = static_cast<std::uint8_t>(Column::length());
+        result.type.columns    = static_cast<std::uint8_t>(M::length());
+        result.matrixStride    = sizeof(Column);
     }
     else
     {
@@ -113,11 +122,13 @@ blockMemberType()
         static_assert(sizeof(M) == M::length() * sizeof(typename M::value_type),
                       "A vector must be its components and nothing else.");
 
-        return {.type         = {.type       = Detail::scalarType<typename M::value_type>(),
-                                 .components = static_cast<std::uint8_t>(M::length()),
-                                 .columns    = 1u},
-                .matrixStride = 0u};
+        result.type.type       = Detail::scalarType<typename M::value_type>();
+        result.type.components = static_cast<std::uint8_t>(M::length());
+        result.type.columns    = 1u;
+        result.matrixStride    = 0u;
     }
+
+    return result;
 }
 
 /**

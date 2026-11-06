@@ -4,6 +4,7 @@
 #include <VOG/Graphics/Frame/FrameObjects.hpp>
 #include <VOG/Graphics/Typedefs.hpp>
 
+#include <memory>
 #include <vector>
 
 namespace VOG::Graphics::Vulkan

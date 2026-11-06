@@ -9,6 +9,7 @@
 #include <VOG/Graphics/Vulkan/InDestructor.hpp>
 
 #include <algorithm>
+#include <array>
 #include <exception>
 #include <format>
 #include <limits>

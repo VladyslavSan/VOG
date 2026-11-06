@@ -5,6 +5,7 @@
 #include <VOG/Engine/Renderer/Renderable.hpp>
 
 #include <utility>
+#include <vector>
 
 namespace VOG::Engine
 {

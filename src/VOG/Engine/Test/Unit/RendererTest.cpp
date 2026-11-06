@@ -24,6 +24,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -43,6 +45,7 @@
 #include <set>
 #include <span>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <thread>

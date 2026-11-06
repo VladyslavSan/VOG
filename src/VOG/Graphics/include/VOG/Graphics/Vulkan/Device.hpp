@@ -15,6 +15,7 @@
 #include <VOG/Graphics/Vulkan/TimelineSemaphore.hpp>
 
 #include <cstddef>
+#include <memory>
 #include <span>
 
 namespace VOG::Graphics::Vulkan

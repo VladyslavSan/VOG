@@ -38,7 +38,7 @@ using BaseType = Shader::Reflection::BaseType;
 constexpr BaseType
 floatVector(std::uint8_t components)
 {
-    return {.type = BaseType::Type::eFloat, .components = components, .columns = 1u};
+    return BaseType{.type = BaseType::Type::eFloat, .components = components, .columns = 1u};
 }
 
 /** The layout of the quad that most tests draw: two floats of position, two of uv. */
@@ -133,7 +133,7 @@ TEST(RenderQueueTest, drawErrorNamesTheLocationOfAMatrixAndTheTypeOfAWrongAttrib
         {{.location      = 1u,
           .locationCount = 3u,
           .name          = "inBasis",
-          .type          = {.type = BaseType::Type::eFloat, .components = 3u, .columns = 3u}}});
+          .type = BaseType{.type = BaseType::Type::eFloat, .components = 3u, .columns = 3u}}});
     try
     {
         queue.submit(quad(), matrix, Math::Matrix4x4f{1.0f});
@@ -151,7 +151,7 @@ TEST(RenderQueueTest, drawErrorNamesTheLocationOfAMatrixAndTheTypeOfAWrongAttrib
         {{.location      = 1u,
           .locationCount = 1u,
           .name          = "inId",
-          .type          = {.type = BaseType::Type::eInt, .components = 2u, .columns = 1u}}},
+          .type = BaseType{.type = BaseType::Type::eInt, .components = 2u, .columns = 1u}}},
         2u);
     try
     {

@@ -9,6 +9,7 @@
 #include <atomic>
 #include <exception>
 #include <format>
+#include <mutex>
 #include <ranges>
 #include <stdexcept>
 #include <string>

@@ -9,6 +9,7 @@
 
 #include <exception>
 #include <iterator>
+#include <mutex>
 #include <utility>
 
 namespace VOG::Engine

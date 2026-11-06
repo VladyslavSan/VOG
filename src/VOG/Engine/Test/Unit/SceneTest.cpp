@@ -947,14 +947,13 @@ TEST(SceneTest, findReturnsTheFirstMatchAndNothingOtherwise)
 TEST(SceneTest, aDrawErrorNamesTheGameObject)
 {
     const Mesh mesh = HandleTestAccess::makeMesh();
+    using BaseType  = VOG::Graphics::Vulkan::Shader::Reflection::BaseType;
     // The material reads a vec3 at location 0, which the mesh, with no attributes, lacks.
     const Material material = HandleTestAccess::makeMaterial(
         {{.location      = 0u,
           .locationCount = 1u,
           .name          = "inPosition",
-          .type = {.type       = VOG::Graphics::Vulkan::Shader::Reflection::BaseType::Type::eFloat,
-                   .components = 3u,
-                   .columns    = 1u}}});
+          .type = BaseType{.type = BaseType::Type::eFloat, .components = 3u, .columns = 1u}}});
 
     Detail::DrawCheck check;
     RenderQueue       queue = RenderQueueTestAccess::make(check);

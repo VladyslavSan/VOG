@@ -5,6 +5,7 @@
 #include <VOG/Graphics/Vulkan/ShaderProgram.hpp>
 
 #include <algorithm>
+#include <array>
 #include <format>
 #include <stdexcept>
 #include <string>

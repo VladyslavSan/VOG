@@ -11,6 +11,7 @@
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <tuple>
 
 #include "TestShaders.hpp"
 

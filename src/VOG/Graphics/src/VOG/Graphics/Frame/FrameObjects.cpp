@@ -4,6 +4,7 @@
 #include <VOG/Graphics/Vulkan/CommandBufferPool.hpp>
 #include <VOG/Graphics/Vulkan/Device.hpp>
 
+#include <algorithm>
 #include <ranges>
 #include <vector>
 
