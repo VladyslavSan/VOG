@@ -1,4 +1,4 @@
-#include "VOG/Engine/Scene/Registry.hpp"
+#include "VOG/Engine/Scene/Detail/Registry.hpp"
 
 #include <limits>
 

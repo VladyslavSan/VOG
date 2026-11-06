@@ -229,16 +229,15 @@ protected:
     makeConfig(const std::filesystem::path& shaderPath = sharedTestShaderPath())
     {
         Renderer::Config config{
-            .appName          = "VOG Renderer Test",
-            .engineName       = "Test",
-            .extensions       = {"VK_EXT_headless_surface"},
-            .framesInFlight   = 2u,
-            .shaderSourcePath = shaderPath,
-            .extent           = gStartExtent,
+            .appName        = "VOG Renderer Test",
+            .engineName     = "Test",
+            .framesInFlight = 2u,
+            .shaderPath     = shaderPath,
+            .extent         = gStartExtent,
         };
         if (mValidationInstalled)
         {
-            config.layers              = {"VK_LAYER_KHRONOS_validation"};
+            config.validation          = true;
             config.onValidationMessage = [&errors = mErrors](std::string_view message)
             {
                 const std::scoped_lock lock{errors.mutex};
@@ -319,24 +318,6 @@ TEST_F(RendererTest, validationErrorOnTheRendererDeviceIsRecorded)
 
     EXPECT_TRUE(takeError("VUID-VkBufferCreateInfo-size-00912"))
         << (refused ? "The driver refused the buffer." : "The driver took the buffer.");
-}
-
-/**
- * The sink sees the construction: the loader reports an extension it does not know, while
- * vkCreateInstance runs, which is before the Instance's persistent messenger exists. Only the
- * messenger that the sink puts on the pNext chain of the instance can catch it.
- */
-TEST_F(RendererTest, errorDuringConstructionIsRecorded)
-{
-    ASSERT_TRUE(mValidationInstalled)
-        << "VK_LAYER_KHRONOS_validation or VK_EXT_debug_utils is missing, so no RendererTest can "
-           "see a validation error.";
-    Renderer::Config config = makeConfig();
-    config.extensions.emplace_back("VK_FAKE_extension");
-
-    EXPECT_THROW(std::ignore = makeRenderer(config), vk::ExtensionNotPresentError);
-
-    EXPECT_TRUE(takeError("VK_FAKE_extension"));
 }
 
 /** Runs a function for every frame; the tests' stand-in for a game object. */
@@ -502,7 +483,7 @@ makeTexture(Renderer& renderer)
 {
     const std::vector<std::byte> pixels(std::size_t{2u} * 2u * gPixelSize);
 
-    return renderer.createTexture({.pixels = pixels, .width = 2u, .height = 2u});
+    return renderer.createTexture({.pixels = pixels, .extent = {.width = 2u, .height = 2u}});
 }
 
 /** The Textured shader with a white tint and @p texture. */
@@ -542,13 +523,13 @@ void releaseTheUploadRing(Renderer& renderer);
 
 /** A renderable that draws @p mesh with @p material in every frame. */
 std::shared_ptr<Renderable>
-drawing(Mesh mesh, Material material, std::string_view debugName = {})
+drawing(Mesh mesh, Material material)
 {
     return std::make_shared<LambdaRenderable>(
-        [mesh = std::move(mesh), material = std::move(material), name = std::string{debugName}](
-            const FrameContext& /*context*/, RenderQueue& queue)
+        [mesh = std::move(mesh), material = std::move(material)](const FrameContext& /*context*/,
+                                                                 RenderQueue& queue)
         {
-            queue.submit(mesh, material, Math::Matrix4x4f{1.0f}, name);
+            queue.submit(mesh, material, Math::Matrix4x4f{1.0f});
         });
 }
 
@@ -1044,7 +1025,7 @@ TEST_F(RendererTest, incompatibleDrawThrowsDrawErrorFromSubmitFrameAndTheRendere
     renderer->addRenderable(std::make_shared<LambdaRenderable>(
         [&](const FrameContext& /*context*/, RenderQueue& queue)
         {
-            queue.submit(first ? bad : good, material, Math::Matrix4x4f{1.0f}, "ball");
+            queue.submit(first ? bad : good, material, Math::Matrix4x4f{1.0f});
         }));
 
     try
@@ -1055,7 +1036,7 @@ TEST_F(RendererTest, incompatibleDrawThrowsDrawErrorFromSubmitFrameAndTheRendere
     catch (const DrawError& error)
     {
         EXPECT_EQ(std::string_view{error.what()},
-                  "ball: mesh \"quad\" (float2 @0) does not provide location 1 (vec4 inColor) of "
+                  "mesh \"quad\" (float2 @0) does not provide location 1 (vec4 inColor) of "
                   "shader \"WorldSpace\"");
     }
     EXPECT_EQ(renderer->getState(), Renderer::State::eRunning);
@@ -1578,29 +1559,31 @@ TEST_F(RendererTest, createTextureRejectsMalformedDescription)
     // The handles are kept: a texture that nobody holds is dropped from the queue.
     const std::vector<std::byte> pixels(std::size_t{2u} * 3u * gPixelSize);
     std::vector<Texture>         valid;
+    EXPECT_NO_THROW(valid.push_back(
+        renderer->createTexture({.pixels = pixels, .extent = {.width = 2u, .height = 3u}})));
     EXPECT_NO_THROW(
-        valid.push_back(renderer->createTexture({.pixels = pixels, .width = 2u, .height = 3u})));
-    EXPECT_NO_THROW(valid.push_back(renderer->createTexture(
-        {.pixels = pixels, .width = 2u, .height = 3u, .format = TextureFormat::eRGBA8Unorm})));
+        valid.push_back(renderer->createTexture({.pixels = pixels,
+                                                 .extent = {.width = 2u, .height = 3u},
+                                                 .format = TextureFormat::eRGBA8Unorm})));
 
-    EXPECT_THROW(std::ignore = renderer->createTexture({.width = 2u, .height = 3u}),
+    EXPECT_THROW(std::ignore = renderer->createTexture({.extent = {.width = 2u, .height = 3u}}),
                  std::invalid_argument);
     // No pixels for no extent are still no texture.
     EXPECT_THROW(std::ignore = renderer->createTexture({}), std::invalid_argument);
-    EXPECT_THROW(std::ignore =
-                     renderer->createTexture({.pixels = pixels, .width = 0u, .height = 3u}),
+    EXPECT_THROW(std::ignore = renderer->createTexture(
+                     {.pixels = pixels, .extent = {.width = 0u, .height = 3u}}),
                  std::invalid_argument);
-    EXPECT_THROW(std::ignore =
-                     renderer->createTexture({.pixels = pixels, .width = 2u, .height = 0u}),
+    EXPECT_THROW(std::ignore = renderer->createTexture(
+                     {.pixels = pixels, .extent = {.width = 2u, .height = 0u}}),
                  std::invalid_argument);
     // One past the device limit: the pixels fit the byte count, the image does not exist.
     const std::uint32_t tooWide = RendererTestAccess::limits(*renderer).maxImageDimension2D + 1u;
     const std::vector<std::byte> tooWidePixels(std::size_t{tooWide} * gPixelSize);
     EXPECT_THROW(std::ignore = renderer->createTexture(
-                     {.pixels = tooWidePixels, .width = tooWide, .height = 1u}),
+                     {.pixels = tooWidePixels, .extent = {.width = tooWide, .height = 1u}}),
                  std::invalid_argument);
     EXPECT_THROW(std::ignore = renderer->createTexture(
-                     {.pixels = tooWidePixels, .width = 1u, .height = tooWide}),
+                     {.pixels = tooWidePixels, .extent = {.width = 1u, .height = tooWide}}),
                  std::invalid_argument);
 #ifndef _WIN32
     // A square over the limit whose pixels have the exact byte count (4 GiB and a bit). The extent
@@ -1612,22 +1595,35 @@ TEST_F(RendererTest, createTextureRejectsMalformedDescription)
     {
         const InaccessibleBytes huge{std::size_t{kHugeSide} * kHugeSide * gPixelSize};
         ASSERT_NE(huge.data(), nullptr);
-        EXPECT_THROW(std::ignore = renderer->createTexture(
-                         {.pixels = huge.bytes(), .width = kHugeSide, .height = kHugeSide}),
-                     std::invalid_argument);
+        EXPECT_THROW(
+            std::ignore = renderer->createTexture(
+                {.pixels = huge.bytes(), .extent = {.width = kHugeSide, .height = kHugeSide}}),
+            std::invalid_argument);
     }
 #endif
     // One byte too few, one byte too many, and the right size for the other extent.
-    EXPECT_THROW(
+    EXPECT_THROW(std::ignore =
+                     renderer->createTexture({.pixels = std::span{pixels}.first(pixels.size() - 1u),
+                                              .extent = {.width = 2u, .height = 3u}}),
+                 std::invalid_argument);
+    EXPECT_THROW(std::ignore = renderer->createTexture(
+                     {.pixels = pixels, .extent = {.width = 2u, .height = 2u}}),
+                 std::invalid_argument);
+    EXPECT_THROW(std::ignore = renderer->createTexture(
+                     {.pixels = pixels, .extent = {.width = 6u, .height = 6u}}),
+                 std::invalid_argument);
+
+    // The name of the description starts the message.
+    try
+    {
         std::ignore = renderer->createTexture(
-            {.pixels = std::span{pixels}.first(pixels.size() - 1u), .width = 2u, .height = 3u}),
-        std::invalid_argument);
-    EXPECT_THROW(std::ignore =
-                     renderer->createTexture({.pixels = pixels, .width = 2u, .height = 2u}),
-                 std::invalid_argument);
-    EXPECT_THROW(std::ignore =
-                     renderer->createTexture({.pixels = pixels, .width = 6u, .height = 6u}),
-                 std::invalid_argument);
+            {.name = "court.png", .pixels = pixels, .extent = {.width = 2u, .height = 2u}});
+        FAIL() << "createTexture() did not throw.";
+    }
+    catch (const std::invalid_argument& error)
+    {
+        EXPECT_TRUE(std::string_view{error.what()}.starts_with("Texture \"court.png\": "));
+    }
 
     // Only the two valid calls left an upload.
     EXPECT_EQ(renderer->uploads().pendingCount, 2u);
@@ -2015,6 +2011,9 @@ TEST_F(RendererTest, uploadsCountDownAndADroppedMeshIsNeverCopied)
 TEST_F(RendererTest, framesInFlightStayTwoWhileBackgroundUploadsTrickle)
 {
     constexpr int kRounds = 8;
+
+    // The default of the config is the two slots that this test relies on.
+    EXPECT_EQ(Renderer::Config{}.framesInFlight, 2u);
 
     auto     renderer = makeRenderer();
     QueueSpy spy{RendererTestAccess::dispatcher(*renderer)};
@@ -2470,8 +2469,7 @@ TEST_F(RendererTest, textureFilterSelectsTheSamplerOfTheDraw)
     {
         const Texture texture =
             renderer->createTexture({.pixels = std::as_bytes(std::span{checkerboard}),
-                                     .width  = 2u,
-                                     .height = 2u,
+                                     .extent = {.width = 2u, .height = 2u},
                                      .filter = filter});
         FramePacket packet{.camera = cameraBeforeThePlane(2.0f * kHalf)};
         RenderQueueTestAccess::addDraw(packet,
@@ -2762,8 +2760,7 @@ TEST_F(RendererTest, plusYIsUpAndTheFirstTextureRowIsAtTheTop)
         255, 0, 0, 255, 255, 0, 0, 255, 0, 0, 255, 255, 0, 0, 255, 255};
     const Texture texture =
         renderer->createTexture({.pixels = std::as_bytes(std::span{pixelsOfTexture}),
-                                 .width  = 2u,
-                                 .height = 2u,
+                                 .extent = {.width = 2u, .height = 2u},
                                  .format = TextureFormat::eRGBA8Unorm,
                                  .filter = Filter::eNearest});
 
@@ -2794,8 +2791,7 @@ TEST_F(RendererTest, backFaceCullingKeepsTheClockwiseQuadAndDiscardsTheOtherWay)
 
     const std::array<std::uint8_t, 4> white{255, 255, 255, 255};
     const Texture texture = renderer->createTexture({.pixels = std::as_bytes(std::span{white}),
-                                                     .width  = 1u,
-                                                     .height = 1u,
+                                                     .extent = {.width = 1u, .height = 1u},
                                                      .format = TextureFormat::eRGBA8Unorm});
     const auto    center  = [&](bool reversed, CullMode cull)
     {
@@ -2844,6 +2840,48 @@ TEST_F(RendererTest, anObjectAtTheDefaultTransformUnderTheDefaultCameraIsVisible
         drawToPixels(*renderer, RenderQueueTestAccess::packet(std::move(queue)), gReadbackSize);
 
     EXPECT_EQ(pixelAt(pixels, gReadbackSize, gReadbackSize / 2u, gReadbackSize / 2u), gGreenPixel);
+}
+
+/**
+ * A Camera component with a perspective projection shows a distant object small: a quad of half 2
+ * at the distance of 20, under a right angle of view, fills a tenth of the half height, so the
+ * pixels around the middle of the image are the clear color of the camera, where the default
+ * orthographic projection (10 units high) would have drawn the quad over them.
+ */
+// The score comes from the gtest assertion macros.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+TEST_F(RendererTest, aPerspectiveCameraComponentShowsADistantObjectSmall)
+{
+    auto renderer = makeRenderer();
+
+    const auto pixelsOf = [&](const Camera& camera)
+    {
+        Scene scene;
+        scene.createGameObject("camera").addComponent<Camera>(camera);
+        GameObject quad                = scene.createGameObject("quad");
+        quad.getTransform().position.z = 20.0f;
+        quad.addComponent<MeshRenderer>(MeshRenderer{
+            .mesh     = makeColoredQuad(*renderer, {.half = 2.0f, .depth = 0.0f, .color = gGreen}),
+            .material = makeMaterial(*renderer, "WorldSpace")});
+        scene.update({});
+
+        Detail::DrawCheck check;
+        RenderQueue       queue = RenderQueueTestAccess::make(check);
+        scene.onDraw({}, queue);
+
+        return drawToPixels(
+            *renderer, RenderQueueTestAccess::packet(std::move(queue)), gReadbackSize);
+    };
+
+    constexpr std::uint32_t kMiddle     = gReadbackSize / 2u;
+    const auto              perspective = pixelsOf(
+        Camera{.projection = Perspective{.verticalFovRadians = std::numbers::pi_v<float> / 2.0f},
+               .clearColor = gBlue});
+    EXPECT_EQ(pixelAt(perspective, gReadbackSize, kMiddle, kMiddle), gGreenPixel);
+    EXPECT_EQ(pixelAt(perspective, gReadbackSize, kMiddle + 10u, kMiddle), gBluePixel);
+
+    const auto orthographic = pixelsOf(Camera{.clearColor = gBlue});
+    EXPECT_EQ(pixelAt(orthographic, gReadbackSize, kMiddle + 10u, kMiddle), gGreenPixel);
 }
 
 /**

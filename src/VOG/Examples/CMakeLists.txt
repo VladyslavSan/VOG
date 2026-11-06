@@ -1,1 +1,1 @@
-add_subdirectory(ApplicationExample)
+add_subdirectory(RallyExample)

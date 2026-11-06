@@ -1,14 +1,19 @@
 #pragma once
 
+#include <VOG/Common/Assert.hpp>
 #include <VOG/Engine/Renderer/FrameContext.hpp>
 #include <VOG/Engine/Renderer/Renderable.hpp>
 #include <VOG/Engine/Scene/Components.hpp>
-#include <VOG/Engine/Scene/Registry.hpp>
+#include <VOG/Engine/Scene/Detail/Registry.hpp>
 
 #include <concepts>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <stdexcept>
+#include <string>
+#include <string_view>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -17,14 +22,23 @@ namespace VOG::Engine
 {
 class Scene;
 
+class Behaviour;
+
+/**
+ * What a type has to be to be a component: an object type that is not const and does not throw
+ * when it is destroyed (the Scene destroys components in the middle of its own changes).
+ */
+template <class T>
+concept Component = std::is_object_v<T> && !std::is_const_v<T> && std::is_nothrow_destructible_v<T>;
+
 /**
  * A handle to an object of a Scene. It owns nothing and must not outlive the Scene. An object is
  * valid from Scene::createGameObject() until the flush that ends the Scene::update() after
  * destroy(), or until Scene::clear(); after destroy() and before the flush it is still valid.
  *
- * On an invalid object, calls that can report absence do (isValid() is false, getComponent()
- * returns nullptr, removeComponent() and destroy() do nothing); calls that must return or create
- * something throw std::logic_error. A default-constructed object is invalid.
+ * On an invalid object, calls that can report absence do (isValid() is false, hasComponent() is
+ * false, removeComponent() and destroy() do nothing); calls that must return or create something
+ * throw std::logic_error. A default-constructed object is invalid.
  *
  * A component reference stays valid until that component is removed or its object is flushed.
  * Inside Scene::each(), a component that removeComponent() removes, and the components of objects
@@ -35,6 +49,7 @@ class GameObject final
 public:
     GameObject() = default;
 
+    /** Whether the object exists in its Scene. Main thread, like the Scene. */
     bool isValid() const;
 
     /**
@@ -52,15 +67,19 @@ public:
      * @throws std::logic_error if the object is invalid or has a T; for a Camera, also if the
      *         Scene has one already.
      */
-    template <class T, class... Args>
+    template <Component T, class... Args>
     T& addComponent(Args&&... args);
 
-    /** The T of this object, or nullptr if it has none. */
-    template <class T>
-    T* getComponent();
+    /** Whether the object has a T. False for an invalid object. */
+    template <Component T>
+    bool hasComponent() const noexcept;
 
-    /** Not for Transform: every object has one. */
-    template <class T>
+    /** @throws std::logic_error if the object is invalid or has no T: ask hasComponent() first. */
+    template <Component T>
+    T& getComponent();
+
+    /** Not for Transform or Name: every object has them. */
+    template <Component T>
     void removeComponent();
 
     /**
@@ -68,7 +87,7 @@ public:
      * before then, it never starts and gets no onDestroy().
      * @throws std::logic_error if the object is invalid.
      */
-    template <class T, class... Args>
+    template <std::derived_from<Behaviour> T, class... Args>
     T& addBehaviour(Args&&... args);
 
     bool operator==(const GameObject&) const = default;
@@ -83,7 +102,8 @@ private:
 };
 
 /**
- * A script on a GameObject. Its functions run on the main thread inside Application::run(),
+ * A script on a GameObject. Its constructor cannot reach its object or its Scene; start() can.
+ * Its functions run on the main thread inside Application::run(),
  * possibly inside the event watch of a live resize: they must not call Renderer::submitFrame() or
  * Renderer::trySubmitFrame(), and must not wait for a thread that pushes SDL events.
  *
@@ -128,24 +148,28 @@ public:
         return mGameObject;
     }
 
+    /** The Scene of the object, to find and create objects. Main thread.
+     *  @throws std::logic_error in the constructor, where the behaviour has no object yet. */
+    Scene& getScene() const;
+
 private:
     friend class Scene;
 
-    enum class State : std::uint8_t
-    {
-        ePending,
-        eStarted,
-        eRemoved
-    };
-
     GameObject mGameObject;
-    State      mState = State::ePending;
+    Scene*     mScene = nullptr;
+    /** Orders the behaviours of a Scene by the time they were added. */
+    std::uint64_t mBirth = 0u;
 };
 
 /**
- * The objects of a world. Main thread only. The destructors of its components and behaviours must
- * not call into the Scene. Application calls update(), then submits a frame,
- * whose onDraw() extracts the draws and the camera.
+ * The objects of a world. Main thread only: the thread that made the Scene is its thread, and in a
+ * debug build a call from another one aborts. That holds for every public member of the Scene and
+ * of GameObject that reads or writes the state of the Scene, isValid(), hasComponent(), each() and
+ * the quit requests included. It does not hold for copying and comparing a GameObject, or for its
+ * destructor, which read the handle and nothing else, nor for getGameObject() and getScene() of a
+ * Behaviour, which read the Behaviour. The destructors of its components and behaviours must not
+ * call into the Scene. Application calls update(), then submits a frame, whose onDraw() extracts
+ * the draws and the camera.
  */
 class Scene final : public Renderable
 {
@@ -159,10 +183,46 @@ public:
     Scene& operator=(const Scene&) = delete;
 
     /**
-     * An object with a Transform.
+     * An object with a Transform and a Name. The name is for find() and for the error that names a
+     * draw; it need not be unique.
      * @throws std::bad_alloc if memory runs out. Nothing has changed then: no object was made.
      */
-    GameObject createGameObject();
+    GameObject createGameObject(std::string name = {});
+
+    /**
+     * The first object with this name, or nothing. "First" is the order of each(): that of
+     * creation, until objects are destroyed and their places are used again. An object that
+     * destroy() marked is not found.
+     */
+    [[nodiscard]] std::optional<GameObject> find(std::string_view name);
+
+    /**
+     * Asks Application::run() to return after the frame that called it. Main thread, from a
+     * Behaviour or a posted task.
+     */
+    void
+    requestQuit() noexcept
+    {
+        requireOwnerThread();
+        mQuitRequested = true;
+    }
+
+    [[nodiscard]] bool
+    quitRequested() const noexcept
+    {
+        requireOwnerThread();
+
+        return mQuitRequested;
+    }
+
+    /** Forgets a request: Application::run() does it when it returns, so that the next run() runs.
+     */
+    void
+    clearQuitRequest() noexcept
+    {
+        requireOwnerThread();
+        mQuitRequested = false;
+    }
 
     /**
      * Starts the behaviours added since the last update, updates the started ones, then destroys
@@ -190,6 +250,7 @@ public:
     void
     each(F&& visitor)
     {
+        requireOwnerThread();
         mRegistry.each<First, Rest...>(
             [&](Detail::Entity entity, First& first, Rest&... rest)
             {
@@ -212,26 +273,39 @@ private:
     {
     };
 
-    /** Binds @p behaviour to @p object and appends it; it starts at the next update(). */
+    /** Binds @p behaviour to @p object and appends it to the scripts of the object; it starts at
+     *  the next update(). */
     void adopt(GameObject object, std::unique_ptr<Behaviour> behaviour);
 
     void markDestroyed(Detail::Entity entity);
 
-    bool isDying(const Behaviour& behaviour);
+    bool isDying(Detail::Entity entity);
 
-    /** Stops @p behaviour and calls onDestroy() if it had started; the exception is logged. */
+    /** Calls onDestroy() of a behaviour that started; the exception is logged. */
     static void retire(Behaviour& behaviour);
 
     void flush();
 
-    Detail::Registry                        mRegistry;
-    std::vector<std::unique_ptr<Behaviour>> mBehaviours;
-    std::vector<Detail::Entity>             mDestroyQueue;
+    /** Aborts, in a debug build, when the calling thread is not the one that made the Scene. */
+    void
+    requireOwnerThread() const
+    {
+        VOG_ASSERT_MSG(std::this_thread::get_id() == mOwner,
+                       "A Scene belongs to the thread that made it.");
+    }
+
+    Detail::Registry            mRegistry;
+    std::vector<Detail::Entity> mDestroyQueue;
+    /** The birth of the next behaviour. */
+    std::uint64_t mNextBirth = 0u;
     /** Inside update() or clear(). */
-    bool mBusy = false;
+    bool mBusy          = false;
+    bool mQuitRequested = false;
+
+    const std::thread::id mOwner = std::this_thread::get_id();
 };
 
-template <class T, class... Args>
+template <Component T, class... Args>
 T&
 GameObject::addComponent(Args&&... args)
 {
@@ -250,29 +324,52 @@ GameObject::addComponent(Args&&... args)
     return mScene->mRegistry.emplace<T>(mEntity, std::forward<Args>(args)...);
 }
 
-template <class T>
-T*
-GameObject::getComponent()
+template <Component T>
+bool
+GameObject::hasComponent() const noexcept
 {
-    return mScene != nullptr ? mScene->mRegistry.tryGet<T>(mEntity) : nullptr;
+    if (mScene == nullptr)
+    {
+        return false;
+    }
+    mScene->requireOwnerThread();
+
+    return mScene->mRegistry.tryGet<T>(mEntity) != nullptr;
 }
 
-template <class T>
+template <Component T>
+T&
+GameObject::getComponent()
+{
+    if (!isValid())
+    {
+        throw std::logic_error{"An invalid GameObject has no components."};
+    }
+    T* component = mScene->mRegistry.tryGet<T>(mEntity);
+    if (component == nullptr)
+    {
+        throw std::logic_error{"The GameObject has no such component; ask hasComponent() first."};
+    }
+
+    return *component;
+}
+
+template <Component T>
 void
 GameObject::removeComponent()
 {
-    static_assert(!std::is_same_v<T, Transform>, "Every GameObject keeps its Transform.");
+    static_assert(!std::is_same_v<T, Transform> && !std::is_same_v<T, Name>,
+                  "Every GameObject keeps its Transform and its Name.");
     if (isValid())
     {
         mScene->mRegistry.remove<T>(mEntity);
     }
 }
 
-template <class T, class... Args>
+template <std::derived_from<Behaviour> T, class... Args>
 T&
 GameObject::addBehaviour(Args&&... args)
 {
-    static_assert(std::derived_from<T, Behaviour>);
     if (!isValid())
     {
         throw std::logic_error{"Cannot add a behaviour to an invalid GameObject."};

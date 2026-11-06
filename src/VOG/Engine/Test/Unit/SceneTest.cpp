@@ -1,6 +1,9 @@
 #include <VOG/Engine/Scene/Scene.hpp>
+#include <VOG/Graphics/Vulkan/Shader.hpp>
 
 #include <gtest/gtest.h>
+#include <spdlog/sinks/stdout_sinks.h>
+#include <spdlog/spdlog.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -9,6 +12,8 @@
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <thread>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -226,6 +231,28 @@ TEST(SceneTest, throwingStartIsNotRetried)
     // And onDestroy().
     scene.clear();
     EXPECT_EQ(log, (Log{"a.start", "a.update", "a.destroy"}));
+}
+
+/**
+ * A start() that throws leaves the behaviours behind it on the same object pending: they have not
+ * started, and the next update() starts them, while the one that threw is not started again.
+ */
+TEST(SceneTest, throwingStartLeavesTheNextPendingBehaviourPending)
+{
+    Log        log;
+    Scene      scene;
+    GameObject object                              = scene.createGameObject();
+    object.addBehaviour<Probe>(log, "a").startHook = []
+    {
+        throw std::runtime_error{"start failed"};
+    };
+    object.addBehaviour<Probe>(log, "b");
+
+    EXPECT_THROW(scene.update(gFrame), std::runtime_error);
+    EXPECT_EQ(log, (Log{"a.start"}));
+
+    scene.update(gFrame);
+    EXPECT_EQ(log, (Log{"a.start", "b.start", "a.update", "b.update"}));
 }
 
 TEST(SceneTest, destroyIsDeferredToFlush)
@@ -612,7 +639,7 @@ TEST(SceneTest, createGameObjectInsideEach)
     for (GameObject object : created)
     {
         EXPECT_TRUE(object.isValid());
-        EXPECT_NE(object.getComponent<Transform>(), nullptr);
+        EXPECT_TRUE(object.hasComponent<Transform>());
     }
 }
 
@@ -628,7 +655,7 @@ TEST(SceneTest, removeComponentInsideEachKeepsReference)
         {
             visited.removeComponent<MeshRenderer>();
 
-            EXPECT_EQ(visited.getComponent<MeshRenderer>(), nullptr);
+            EXPECT_FALSE(visited.hasComponent<MeshRenderer>());
             EXPECT_EQ(renderer.mesh, mesh);
             EXPECT_EQ(HandleTestAccess::useCount(mesh), 2);
         });
@@ -674,8 +701,9 @@ TEST(SceneTest, deadObjectOperations)
     for (GameObject* object : {&flushed, &cleared, &neverCreated})
     {
         EXPECT_FALSE(object->isValid());
-        EXPECT_EQ(object->getComponent<MeshRenderer>(), nullptr);
-        EXPECT_EQ(object->getComponent<Transform>(), nullptr);
+        EXPECT_FALSE(object->hasComponent<MeshRenderer>());
+        EXPECT_FALSE(object->hasComponent<Transform>());
+        EXPECT_THROW(object->getComponent<Transform>(), std::logic_error);
         EXPECT_NO_THROW(object->removeComponent<MeshRenderer>());
         EXPECT_NO_THROW(object->destroy());
         EXPECT_THROW(object->getTransform(), std::logic_error);
@@ -698,7 +726,7 @@ TEST(SceneTest, secondCameraThrowsAtAddComponent)
     first.addComponent<Camera>();
 
     EXPECT_THROW(second.addComponent<Camera>(), std::logic_error);
-    EXPECT_EQ(second.getComponent<Camera>(), nullptr);
+    EXPECT_FALSE(second.hasComponent<Camera>());
 
     // The old camera has to go first.
     first.removeComponent<Camera>();
@@ -783,6 +811,257 @@ TEST(SceneTest, noCameraLeavesDefaultView)
 
     EXPECT_EQ(RenderQueueTestAccess::camera(queue).clearColor.x, 7.0f);
 }
+
+/** A behaviour that asks for its Scene in its constructor or in start(). */
+class SceneReader final : public Behaviour
+{
+public:
+    explicit SceneReader(bool inConstructor)
+    {
+        if (inConstructor)
+        {
+            std::ignore = getScene();
+        }
+    }
+
+    void
+    start() override
+    {
+        scene = &getScene();
+        found = scene->find("target").has_value();
+    }
+
+    Scene* scene = nullptr;
+    bool   found = false;
+};
+
+/** A behaviour has no Scene yet in its constructor; from start() on it has one, and finds the
+ *  other objects with it. */
+TEST(SceneTest, getSceneThrowsInTheConstructorAndWorksInStart)
+{
+    Scene      scene;
+    GameObject object = scene.createGameObject("reader");
+    scene.createGameObject("target");
+
+    EXPECT_THROW(object.addBehaviour<SceneReader>(true), std::logic_error);
+
+    SceneReader& reader = object.addBehaviour<SceneReader>(false);
+    scene.update(gFrame);
+    EXPECT_EQ(reader.scene, &scene);
+    EXPECT_TRUE(reader.found);
+}
+
+/**
+ * The behaviours of an object are its own: destroying one object calls onDestroy() of its three
+ * started behaviours, in the order they started, and of no behaviour of the object next to it,
+ * which goes on updating. Objects that are flushed together are retired one after the other, each
+ * with all its behaviours.
+ */
+TEST(SceneTest, flushingAnObjectRetiresItsOwnBehavioursAndNoOtherObjectsOnes)
+{
+    Log        log;
+    Scene      scene;
+    GameObject first  = scene.createGameObject("first");
+    GameObject second = scene.createGameObject("second");
+    GameObject other  = scene.createGameObject("other");
+    for (const char* name : {"a0", "a1", "a2"})
+    {
+        first.addBehaviour<Probe>(log, name);
+    }
+    for (const char* name : {"b0", "b1"})
+    {
+        second.addBehaviour<Probe>(log, name);
+    }
+    other.addBehaviour<Probe>(log, "o");
+    scene.update(gFrame);
+
+    first.destroy();
+    log.clear();
+    scene.update(gFrame);
+    // The destroyed object stopped before this update; its onDestroy() comes at the flush.
+    EXPECT_EQ(
+        log, (Log{"b0.update", "b1.update", "o.update", "a0.destroy", "a1.destroy", "a2.destroy"}));
+
+    log.clear();
+    scene.update(gFrame);
+    EXPECT_EQ(log, (Log{"b0.update", "b1.update", "o.update"}));
+
+    // Two objects in one flush: all the behaviours of the first, then those of the second.
+    second.destroy();
+    other.destroy();
+    log.clear();
+    scene.update(gFrame);
+    EXPECT_EQ(log, (Log{"b0.destroy", "b1.destroy", "o.destroy"}));
+}
+
+TEST(SceneTest, getComponentThrowsWhenAbsentAndHasComponentSaysSo)
+{
+    Scene      scene;
+    GameObject object = scene.createGameObject("thing");
+    object.addComponent<MeshRenderer>();
+
+    EXPECT_TRUE(object.hasComponent<Transform>());
+    EXPECT_TRUE(object.hasComponent<Name>());
+    EXPECT_TRUE(object.hasComponent<MeshRenderer>());
+    EXPECT_FALSE(object.hasComponent<Camera>());
+    EXPECT_THROW(std::ignore = object.getComponent<Camera>(), std::logic_error);
+
+    EXPECT_EQ(object.getComponent<Name>().value, "thing");
+    object.getComponent<MeshRenderer>() = {};
+    object.removeComponent<MeshRenderer>();
+    EXPECT_FALSE(object.hasComponent<MeshRenderer>());
+    EXPECT_THROW(std::ignore = object.getComponent<MeshRenderer>(), std::logic_error);
+}
+
+/** find() gives the first object of the name, in the order of each(), and nothing for an unknown
+ *  name; an object that destroy() marked is not found any more, while it is valid. */
+TEST(SceneTest, findReturnsTheFirstMatchAndNothingOtherwise)
+{
+    Scene      scene;
+    GameObject first    = scene.createGameObject("ball");
+    GameObject other    = scene.createGameObject("wall");
+    GameObject second   = scene.createGameObject("ball");
+    GameObject nameless = scene.createGameObject();
+
+    EXPECT_EQ(scene.find("ball"), first);
+    EXPECT_EQ(scene.find("wall"), other);
+    EXPECT_EQ(scene.find(""), nameless);
+    EXPECT_EQ(scene.find("missing"), std::nullopt);
+
+    first.destroy();
+    EXPECT_TRUE(first.isValid());
+    EXPECT_EQ(scene.find("ball"), second);
+
+    scene.update(gFrame);
+    EXPECT_EQ(scene.find("ball"), second);
+    second.destroy();
+    scene.update(gFrame);
+    EXPECT_EQ(scene.find("ball"), std::nullopt);
+}
+
+/**
+ * A draw that cannot go on names the object it came from. The check keeps its verdict for the
+ * pair of mesh and material, so the second object hits the same kept failure as the first, and its
+ * error still starts with its own name.
+ */
+TEST(SceneTest, aDrawErrorNamesTheGameObject)
+{
+    const Mesh mesh = HandleTestAccess::makeMesh();
+    // The material reads a vec3 at location 0, which the mesh, with no attributes, lacks.
+    const Material material = HandleTestAccess::makeMaterial(
+        {{.location      = 0u,
+          .locationCount = 1u,
+          .name          = "inPosition",
+          .type = {.type       = VOG::Graphics::Vulkan::Shader::Reflection::BaseType::Type::eFloat,
+                   .components = 3u,
+                   .columns    = 1u}}});
+
+    Detail::DrawCheck check;
+    RenderQueue       queue = RenderQueueTestAccess::make(check);
+    for (const std::string name : {"ball", "wall"})
+    {
+        Scene scene;
+        scene.createGameObject(name).addComponent<MeshRenderer>(
+            MeshRenderer{.mesh = mesh, .material = material});
+
+        try
+        {
+            scene.onDraw(gFrame, queue);
+            FAIL() << "onDraw() did not throw for " << name << ".";
+        }
+        catch (const DrawError& error)
+        {
+            EXPECT_TRUE(
+                std::string_view{error.what()}.starts_with("GameObject \"" + name + "\": mesh "))
+                << error.what();
+        }
+    }
+}
+
+TEST(SceneTest, requestQuitIsRememberedUntilItIsCleared)
+{
+    Scene scene;
+    EXPECT_FALSE(scene.quitRequested());
+
+    scene.requestQuit();
+    scene.requestQuit();
+    EXPECT_TRUE(scene.quitRequested());
+
+    scene.clearQuitRequest();
+    EXPECT_FALSE(scene.quitRequested());
+}
+
+#ifndef NDEBUG
+/** Makes a Scene and an object on this thread, and runs @p touch on another one. */
+void
+touchFromAnotherThread(const std::function<void(Scene&, GameObject)>& touch)
+{
+    // The default logger writes to stdout; a death test reads stderr.
+    spdlog::set_default_logger(spdlog::stderr_logger_mt("assert"));
+    Scene       scene;
+    GameObject  object = scene.createGameObject("object");
+    std::thread other{[&]
+                      {
+                          touch(scene, object);
+                      }};
+    other.join();
+}
+
+/** A Scene belongs to the thread that made it: another thread that touches it aborts, in a debug
+ *  build, whichever member it calls. The death runs in a fresh process, because the process that
+ *  runs the threads has them. */
+TEST(SceneDeathTest, anotherThreadThatTouchesTheSceneAborts)
+{
+    GTEST_FLAG_SET(death_test_style, "threadsafe");
+    constexpr const char* kMessage = "belongs to the thread that made it";
+
+    EXPECT_DEATH(touchFromAnotherThread(
+                     [](Scene& scene, GameObject /*object*/)
+                     {
+                         std::ignore = scene.createGameObject("importer");
+                     }),
+                 kMessage);
+    EXPECT_DEATH(touchFromAnotherThread(
+                     [](Scene& scene, GameObject /*object*/)
+                     {
+                         scene.each<Name>(
+                             [](GameObject /*object*/, Name& /*name*/)
+                             {
+                             });
+                     }),
+                 kMessage);
+    EXPECT_DEATH(touchFromAnotherThread(
+                     [](Scene& scene, GameObject /*object*/)
+                     {
+                         scene.requestQuit();
+                     }),
+                 kMessage);
+    EXPECT_DEATH(touchFromAnotherThread(
+                     [](Scene& scene, GameObject /*object*/)
+                     {
+                         scene.clearQuitRequest();
+                     }),
+                 kMessage);
+    EXPECT_DEATH(touchFromAnotherThread(
+                     [](Scene& scene, GameObject /*object*/)
+                     {
+                         std::ignore = scene.quitRequested();
+                     }),
+                 kMessage);
+    EXPECT_DEATH(touchFromAnotherThread(
+                     [](Scene& /*scene*/, GameObject object)
+                     {
+                         std::ignore = object.isValid();
+                     }),
+                 kMessage);
+    EXPECT_DEATH(touchFromAnotherThread(
+                     [](Scene& /*scene*/, GameObject object)
+                     {
+                         std::ignore = object.hasComponent<MeshRenderer>();
+                     }),
+                 kMessage);
+}
+#endif
 
 // NOLINTEND(readability-magic-numbers, readability-function-cognitive-complexity)
 } // namespace VOG::Tests

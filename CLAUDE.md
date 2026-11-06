@@ -45,7 +45,7 @@ Details: `docs/ResourceOwnership.md`, `docs/SwapchainSync.md`.
   `VK_DRIVER_FILES=/opt/homebrew/opt/mesa/share/vulkan/icd.d/lvp_icd.aarch64.json`, because
   MoltenVK has no heaps; on a driver without `VK_EXT_descriptor_heap` the tests fail at
   device selection)
-- Run example: `./build/build/Debug/src/VOG/Examples/ApplicationExample/ApplicationExample --shader-storage-path src/VOG/Engine/resources/shaders`
+- Run example: `./build/build/Debug/src/VOG/Examples/RallyExample/RallyExample --shader-storage-path src/VOG/Engine/resources/shaders`
   (Windows / macOS / Linux with Wayland or X11; Linux WSI is selected from the SDL window backend;
   macOS needs the same `VK_DRIVER_FILES`)
 

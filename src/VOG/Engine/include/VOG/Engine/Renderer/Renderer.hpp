@@ -55,19 +55,21 @@ public:
     struct Config
     {
         std::string appName;
-        std::string engineName;
+        std::string engineName = "VOG";
 
-        std::vector<std::string> layers;
-        std::vector<std::string> extensions;
-
-        std::uint8_t framesInFlight = 1u;
+        /** Two frames in flight let the CPU record one frame while the GPU draws the one before. */
+        std::uint8_t framesInFlight = 2u;
 
         /**
          * The shader directory: `Name.vert.glsl` and `Name.frag.glsl` for every shader, and the
          * includes of both in the subdirectory `include`. The engine's own shaders and its include
          * VOG/Draw.glsl are in src/VOG/Engine/resources/shaders.
          */
-        std::filesystem::path shaderSourcePath;
+        std::filesystem::path shaderPath;
+
+        /** Turns on the Khronos validation layer (VK_LAYER_KHRONOS_validation). The constructor
+         *  throws if the layer is not installed. Without it the Renderer asks for no layer. */
+        bool validation = false;
 
         /**
          * Size of the window in pixels at startup. It sizes the swapchain where the surface

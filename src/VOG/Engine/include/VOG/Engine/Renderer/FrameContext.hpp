@@ -1,5 +1,8 @@
 #pragma once
 
+#include <VOG/Engine/Renderer/Extent.hpp>
+#include <VOG/Engine/Renderer/Input.hpp>
+
 #include <algorithm>
 
 namespace VOG::Engine
@@ -29,5 +32,12 @@ struct FrameContext
      * run()s.
      */
     float deltaSeconds = 0.0f;
+
+    /** The drawable of the window in pixels, which a game that thinks in pixels needs to place
+     *  things at the edges. */
+    Extent viewport;
+
+    /** What the keyboard and the mouse did, as of the start of this frame. */
+    Input input;
 };
 } // namespace VOG::Engine

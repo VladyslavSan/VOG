@@ -4,7 +4,6 @@
 #include <map>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
 
 namespace VOG::Engine
@@ -63,10 +62,9 @@ public:
 
     /**
      * Checks the pair, from the verdict kept for it or by evaluating it.
-     * @param debugName Starts the message of the DrawError, when it is not empty.
      * @throws DrawError if @p mesh cannot feed @p shader.
      */
-    void require(const MeshData& mesh, const ShaderInfo& shader, std::string_view debugName);
+    void require(const MeshData& mesh, const ShaderInfo& shader);
 
 private:
     /** Lets the tests count the verdicts. */

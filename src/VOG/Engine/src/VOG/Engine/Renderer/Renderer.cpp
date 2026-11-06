@@ -15,7 +15,7 @@ namespace VOG::Engine
 {
 Renderer::Impl::Impl(const Common::SurfaceHandle& surfaceHandle, const Config& config)
     : gpu{surfaceHandle, config}
-    , shaders{gpu.device, config.shaderSourcePath}
+    , shaders{gpu.device, config.shaderPath}
     , uploads{gpu.device,
               gpu.fencePool,
               gpu.uploadTimeline,

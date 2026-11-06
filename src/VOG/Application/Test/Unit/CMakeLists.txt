@@ -14,11 +14,21 @@ target_compile_definitions(VOG.Application.Unit
         VOG_TEST_SHADER_PATH="${PROJECT_SOURCE_DIR}/src/VOG/Engine/resources/shaders"
 )
 
+# The test of a render thread that fails reaches behind the public API of the renderer, as the tests
+# of Engine do: through its friend, which needs the private headers of Engine and the Vulkan types.
+target_include_directories(VOG.Application.Unit
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/VOG/Engine/src
+)
+
 target_link_libraries(VOG.Application.Unit
     PUBLIC
         ${PROJECT_NAME}::Application
         GTest::gtest
         GTest::gtest_main
+    PRIVATE
+        ${PROJECT_NAME}::Graphics
+        spdlog::spdlog
 )
 
 include(GoogleTest)

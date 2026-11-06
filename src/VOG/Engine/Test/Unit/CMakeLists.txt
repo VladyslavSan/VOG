@@ -9,6 +9,7 @@ target_sources(VOG.Engine.Unit
         CameraViewTest.cpp
         FrameContextTest.cpp
         FramePacketQueueTest.cpp
+        InputTest.cpp
         MaterialTest.cpp
         PipelineTableTest.cpp
         RegistryTest.cpp

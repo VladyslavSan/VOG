@@ -24,6 +24,7 @@ target_sources(VOG.Graphics.Unit
         Vulkan/DeviceRequirementsTest.cpp
         Vulkan/GLSLCompilerTest.cpp
         Vulkan/InDestructorTest.cpp
+        Vulkan/InstanceTest.cpp
         Vulkan/QueueFamiliesTest.cpp
         Vulkan/SwapchainTest.cpp
         Vulkan/UploadBarriersTest.cpp

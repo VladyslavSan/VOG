@@ -42,6 +42,9 @@ public:
     /** Size of the window in physical pixels. Main thread only, like every SDL window call. */
     Engine::Extent sizeInPixels() const;
 
+    /** How many pixels a point of the window system is: 2 on a retina display, 1 elsewhere. */
+    float pixelDensity() const;
+
 protected:
     Handle mWindowHandle;
     Uint32 mWindowId;
@@ -68,6 +71,14 @@ inline const Common::SurfaceHandle&
 SDLWindow::getSurfaceHandle() const
 {
     return mSurfaceHandles;
+}
+
+inline float
+SDLWindow::pixelDensity() const
+{
+    const float density = SDL_GetWindowPixelDensity(mWindowHandle.get());
+
+    return density > 0.0f ? density : 1.0f;
 }
 
 inline Engine::Extent

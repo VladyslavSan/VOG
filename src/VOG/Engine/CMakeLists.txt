@@ -26,6 +26,7 @@ target_sources(Engine
             include/VOG/Engine/Renderer/CameraView.hpp
             include/VOG/Engine/Renderer/Extent.hpp
             include/VOG/Engine/Renderer/FrameContext.hpp
+            include/VOG/Engine/Renderer/Input.hpp
             include/VOG/Engine/Renderer/Material.hpp
             include/VOG/Engine/Renderer/Mesh.hpp
             include/VOG/Engine/Renderer/Renderable.hpp
@@ -33,7 +34,7 @@ target_sources(Engine
             include/VOG/Engine/Renderer/Shader.hpp
             include/VOG/Engine/Renderer/Texture.hpp
             include/VOG/Engine/Scene/Components.hpp
-            include/VOG/Engine/Scene/Registry.hpp
+            include/VOG/Engine/Scene/Detail/Registry.hpp
             include/VOG/Engine/Scene/Scene.hpp
     PRIVATE
         src/VOG/Engine/Renderer/CameraView.cpp
@@ -48,6 +49,7 @@ target_sources(Engine
         src/VOG/Engine/Renderer/FrameLoop.hpp
         src/VOG/Engine/Renderer/FramePacketQueue.hpp
         src/VOG/Engine/Renderer/GpuContext.cpp
+        src/VOG/Engine/Renderer/Input.cpp
         src/VOG/Engine/Renderer/GpuContext.hpp
         src/VOG/Engine/Renderer/MaterialDefinition.cpp
         src/VOG/Engine/Renderer/MaterialDefinition.hpp
@@ -67,7 +69,7 @@ target_sources(Engine
         src/VOG/Engine/Renderer/UploadQueue.hpp
         src/VOG/Engine/Renderer/UploadTicket.cpp
         src/VOG/Engine/Renderer/UploadTicket.hpp
-        src/VOG/Engine/Scene/Registry.cpp
+        src/VOG/Engine/Scene/Detail/Registry.cpp
         src/VOG/Engine/Scene/Scene.cpp
 )
 

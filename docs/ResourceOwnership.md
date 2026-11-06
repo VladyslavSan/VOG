@@ -186,7 +186,7 @@ objects it references. Holding one handle is always enough; user code never
 keeps a parent around "for" a child and never sequences teardown.
 Examples, not the whole list: a `Buffer` keeps its `Device` alive; a
 `CommandBufferRecorder` or `ExecutableCommandBuffer` keeps its pool (and through it the device) alive; a
-`Device` keeps its `Instance` alive. Scope guards (`Buffer::MemoryMapping`,
+`Device` keeps its `Instance` alive. Scope guards (`Buffer::MemoryMapping` and `Buffer::ReadMapping`,
 `CommandBufferRecorder` and its `RenderingPass`) are the one deliberate
 exception — see requirement 2.
 
@@ -206,7 +206,7 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    *Exception — lifetime strictly nested in the referent's:* borrowing is
    allowed when the borrower provably cannot outlive what it borrows, and the
    type is non-copyable and non-movable so that stays true:
-   - a scope guard, like `std::lock_guard` (`Buffer::MemoryMapping`,
+   - a scope guard, like `std::lock_guard` (`Buffer::MemoryMapping`, `Buffer::ReadMapping`,
      `CommandBufferRecorder`, `CommandBufferRecorder::RenderingPass`);
    - a sub-object exclusively owned by its referent and never handed out
      (`MemoryAllocator` inside `Device` holding `Device&`).
@@ -288,9 +288,14 @@ Requirements — every VOG type that owns, wraps or references a Vulkan object:
    (an atomic), and the state of the render thread (an atomic) with its failure (written before the
    state becomes `eFailed`).
    The pending-renderable list is shared between the callers of `addRenderable` and the submitting
-   thread; it has a mutex. The `Scene`, its `GameObject`s and its `Behaviour`s are main-thread
-   state: `Application` updates the scene and runs `onDraw` on the main thread, and only the packet
-   crosses to the render thread. `createMesh`, `createTexture` and `createMaterial` are safe from any thread: VMA is
+   thread; it has a mutex, and so has the list of the tasks that `Application::post()` takes from
+   any thread and the main thread runs at the start of a frame. The `Scene`, its `GameObject`s and
+   its `Behaviour`s are main-thread state: in a debug build, every public member of `Scene` and
+   `GameObject` that reads or writes scene state aborts when another thread calls it (`each`,
+   `isValid`, `hasComponent` and the quit requests too). Only copying and comparing a `GameObject`,
+   its destructor, and `getGameObject()` and `getScene()` of a `Behaviour` read nothing but the
+   handle or the behaviour and do not check. `Application` updates the scene and runs `onDraw` on
+   the main thread, and only the packet crosses to the render thread. `createMesh`, `createTexture` and `createMaterial` are safe from any thread: VMA is
    created without `EXTERNALLY_SYNCHRONIZED`, so the allocator locks internally, the
    `ShaderLibrary` is only read after its constructor, the heap's free list has a mutex, the layouts
    of the meshes are numbered under a mutex, and the jobs of the uploads are pushed to the

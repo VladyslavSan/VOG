@@ -167,28 +167,35 @@ ResourceFactory::createMesh(const MeshDescription& description)
 Texture
 ResourceFactory::createTexture(const TextureDescription& description)
 {
-    if (description.width == 0u || description.height == 0u)
+    const std::string context = description.name.empty()
+                                  ? std::string{}
+                                  : std::format("Texture \"{}\": ", description.name);
+
+    if (description.extent.width == 0u || description.extent.height == 0u)
     {
-        throw std::invalid_argument{std::format("A texture needs a non-zero extent; got {}x{}.",
-                                                description.width,
-                                                description.height)};
+        throw std::invalid_argument{std::format("{}A texture needs a non-zero extent; got {}x{}.",
+                                                context,
+                                                description.extent.width,
+                                                description.extent.height)};
     }
     constexpr std::uint64_t kBytesPerPixel = 4u;
     const std::uint64_t     size =
-        std::uint64_t{description.width} * description.height * kBytesPerPixel;
+        std::uint64_t{description.extent.width} * description.extent.height * kBytesPerPixel;
     if (description.pixels.size() != size)
     {
-        throw std::invalid_argument{std::format("A {}x{} texture takes {} bytes of pixels; got {}.",
-                                                description.width,
-                                                description.height,
-                                                size,
-                                                description.pixels.size())};
+        throw std::invalid_argument{
+            std::format("{}A {}x{} texture takes {} bytes of pixels; got {}.",
+                        context,
+                        description.extent.width,
+                        description.extent.height,
+                        size,
+                        description.pixels.size())};
     }
 
     // The texture first: it validates the extent against the device, and an extent that no image
     // can have must not reach the (possibly huge) staging allocation.
     Graphics::Vulkan::TexturePtr texture = mDevice->createTexture(
-        mHeap, {description.width, description.height}, toVk(description.format));
+        mHeap, {description.extent.width, description.extent.height}, toVk(description.format));
 
     Graphics::Vulkan::BufferPtr staging =
         mDevice->createBuffer({.size = size, .usage = vk::BufferUsageFlagBits::eTransferSrc},

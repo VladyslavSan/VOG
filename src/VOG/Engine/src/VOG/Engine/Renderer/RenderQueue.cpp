@@ -9,17 +9,14 @@
 namespace VOG::Engine
 {
 void
-RenderQueue::submit(Mesh                    mesh,
-                    Material                material,
-                    const Math::Matrix4x4f& world,
-                    std::string_view        debugName)
+RenderQueue::submit(Mesh mesh, Material material, const Math::Matrix4x4f& world)
 {
     if (!mesh || !material)
     {
         return;
     }
 
-    mCheck->require(*mesh.mData, *material.mData->shader, debugName);
+    mCheck->require(*mesh.mData, *material.mData->shader);
     mDraws.push_back({.mesh = std::move(mesh), .material = std::move(material), .world = world});
 }
 } // namespace VOG::Engine

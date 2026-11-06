@@ -2,8 +2,8 @@
 
 #include <spdlog/spdlog.h>
 
-#include <algorithm>
 #include <exception>
+#include <format>
 #include <stdexcept>
 #include <utility>
 
@@ -11,6 +11,17 @@ namespace VOG::Engine
 {
 namespace
 {
+/**
+ * The behaviours of one object, in the order they started and the order they were added. Every
+ * object that has a behaviour has this component, so the Scene walks the behaviours of an object
+ * and not those of all objects.
+ */
+struct Scripts
+{
+    std::vector<std::unique_ptr<Behaviour>> started;
+    std::vector<std::unique_ptr<Behaviour>> pending;
+};
+
 /** Logs an exception that cannot go on, worded like Renderer::~Renderer. */
 void
 logOnDestroyFailure()
@@ -64,7 +75,13 @@ GameObject::GameObject(Scene& scene, Detail::Entity entity)
 bool
 GameObject::isValid() const
 {
-    return mScene != nullptr && mScene->mRegistry.isAlive(mEntity);
+    if (mScene == nullptr)
+    {
+        return false;
+    }
+    mScene->requireOwnerThread();
+
+    return mScene->mRegistry.isAlive(mEntity);
 }
 
 void
@@ -99,13 +116,28 @@ Scene::~Scene()
     }
 }
 
-GameObject
-Scene::createGameObject()
+Scene&
+Behaviour::getScene() const
 {
+    if (mScene == nullptr)
+    {
+        throw std::logic_error{
+            "A Behaviour has no Scene in its constructor: use getScene() from start()."};
+    }
+
+    return *mScene;
+}
+
+GameObject
+Scene::createGameObject(std::string name)
+{
+    requireOwnerThread();
+
     const Detail::Entity entity = mRegistry.create();
     try
     {
         mRegistry.emplace<Transform>(entity);
+        mRegistry.emplace<Name>(entity, Name{.value = std::move(name)});
     }
     catch (...)
     {
@@ -117,11 +149,40 @@ Scene::createGameObject()
     return {*this, entity};
 }
 
+std::optional<GameObject>
+Scene::find(std::string_view name)
+{
+    requireOwnerThread();
+
+    std::optional<GameObject> found;
+    mRegistry.each<Name>(
+        [&](Detail::Entity entity, Name& candidate)
+        {
+            if (!found && candidate.value == name && !isDying(entity))
+            {
+                found = GameObject{*this, entity};
+            }
+        });
+
+    return found;
+}
+
 void
 Scene::adopt(GameObject object, std::unique_ptr<Behaviour> behaviour)
 {
+    requireOwnerThread();
+
     behaviour->mGameObject = object;
-    mBehaviours.push_back(std::move(behaviour));
+    behaviour->mScene      = this;
+    behaviour->mBirth      = mNextBirth;
+
+    Scripts* scripts = mRegistry.tryGet<Scripts>(object.mEntity);
+    if (scripts == nullptr)
+    {
+        scripts = &mRegistry.emplace<Scripts>(object.mEntity);
+    }
+    scripts->pending.push_back(std::move(behaviour));
+    ++mNextBirth;
 }
 
 void
@@ -145,21 +206,14 @@ Scene::markDestroyed(Detail::Entity entity)
 }
 
 bool
-Scene::isDying(const Behaviour& behaviour)
+Scene::isDying(Detail::Entity entity)
 {
-    return mRegistry.tryGet<PendingDestroy>(behaviour.mGameObject.mEntity) != nullptr;
+    return mRegistry.tryGet<PendingDestroy>(entity) != nullptr;
 }
 
 void
 Scene::retire(Behaviour& behaviour)
 {
-    const bool started = behaviour.mState == Behaviour::State::eStarted;
-    behaviour.mState   = Behaviour::State::eRemoved;
-    if (!started)
-    {
-        return;
-    }
-
     try
     {
         behaviour.onDestroy();
@@ -173,31 +227,39 @@ Scene::retire(Behaviour& behaviour)
 void
 Scene::update(const FrameContext& frame)
 {
+    requireOwnerThread();
     const BusyScope busy{*this};
 
-    // Every pass indexes mBehaviours afresh: user code may append to it. Nothing erases from it
-    // before the end of flush(), so a Behaviour& stays valid while its own function runs.
-    // A behaviour added by start() or update() is past the bound and pending: it starts at the
-    // next update().
-    const std::size_t count = mBehaviours.size();
-    for (std::size_t i = 0; i < count; ++i)
-    {
-        Behaviour& behaviour = *mBehaviours[i];
-        if (behaviour.mState == Behaviour::State::ePending && !isDying(behaviour))
+    // A behaviour that start() or update() adds is born at or after this limit: it is pending and
+    // starts at the next update(), also on an object that this walk has not reached yet.
+    const std::uint64_t limit = mNextBirth;
+
+    mRegistry.each<Scripts>(
+        [&](Detail::Entity entity, Scripts& scripts)
         {
-            // Before start(): a start() that throws is not run again.
-            behaviour.mState = Behaviour::State::eStarted;
-            behaviour.start();
-        }
-    }
-    for (std::size_t i = 0; i < count; ++i)
-    {
-        Behaviour& behaviour = *mBehaviours[i];
-        if (behaviour.mState == Behaviour::State::eStarted && !isDying(behaviour))
+            while (!scripts.pending.empty() && scripts.pending.front()->mBirth < limit &&
+                   !isDying(entity))
+            {
+                // Moved before start(): a start() that throws is not run again, and the behaviours
+                // behind it stay pending.
+                scripts.started.push_back(std::move(scripts.pending.front()));
+                scripts.pending.erase(scripts.pending.begin());
+                scripts.started.back()->start();
+            }
+        });
+    mRegistry.each<Scripts>(
+        [&](Detail::Entity entity, Scripts& scripts)
         {
-            behaviour.update(frame);
-        }
-    }
+            // Nothing adds to `started` while behaviours update: new behaviours are pending.
+            for (const std::unique_ptr<Behaviour>& behaviour : scripts.started)
+            {
+                if (isDying(entity))
+                {
+                    break;
+                }
+                behaviour->update(frame);
+            }
+        });
 
     flush();
 }
@@ -205,59 +267,63 @@ Scene::update(const FrameContext& frame)
 void
 Scene::flush()
 {
-    // Ends: only a started behaviour runs onDestroy(), each behaviour is removed once, and one
-    // created by onDestroy() is pending, so it is removed without a call.
+    // Ends: only a started behaviour runs onDestroy(), once, with the object, and one that
+    // onDestroy() adds is pending, so it is dropped with the object, without a call.
     while (!mDestroyQueue.empty())
     {
         const std::vector<Detail::Entity> queue = std::exchange(mDestroyQueue, {});
         for (const Detail::Entity entity : queue)
         {
-            // Size re-read: onDestroy() may add behaviours.
-            for (std::size_t i = 0; i < mBehaviours.size(); ++i)
+            if (const Scripts* scripts = mRegistry.tryGet<Scripts>(entity))
             {
-                Behaviour& behaviour = *mBehaviours[i];
-                if (behaviour.mState != Behaviour::State::eRemoved &&
-                    behaviour.mGameObject.mEntity == entity)
+                for (const std::unique_ptr<Behaviour>& behaviour : scripts->started)
                 {
-                    retire(behaviour);
+                    retire(*behaviour);
                 }
             }
             mRegistry.destroy(entity);
         }
     }
-
-    std::erase_if(mBehaviours,
-                  [](const std::unique_ptr<Behaviour>& behaviour)
-                  {
-                      return behaviour->mState == Behaviour::State::eRemoved;
-                  });
 }
 
 void
 Scene::clear()
 {
+    requireOwnerThread();
     const BusyScope busy{*this};
 
-    for (std::size_t i = 0; i < mBehaviours.size(); ++i)
-    {
-        if (mBehaviours[i]->mState != Behaviour::State::eRemoved)
+    mRegistry.each<Scripts>(
+        [](Detail::Entity /*entity*/, Scripts& scripts)
         {
-            retire(*mBehaviours[i]);
-        }
-    }
-    // After the loop: onDestroy() may have created objects.
+            for (const std::unique_ptr<Behaviour>& behaviour : scripts.started)
+            {
+                retire(*behaviour);
+            }
+        });
+    // After the walk: onDestroy() may have created objects.
     mRegistry.destroyAll();
-    mBehaviours.clear();
     mDestroyQueue.clear();
 }
 
 void
 Scene::onDraw(const FrameContext& /*frame*/, RenderQueue& queue)
 {
-    mRegistry.each<MeshRenderer, Transform>(
-        [&queue](Detail::Entity /*entity*/, MeshRenderer& renderer, Transform& transform)
+    requireOwnerThread();
+
+    mRegistry.each<MeshRenderer, Transform, Name>(
+        [&queue](
+            Detail::Entity /*entity*/, MeshRenderer& renderer, Transform& transform, Name& name)
         {
-            queue.submit(renderer.mesh, renderer.material, transform.matrix());
+            // Not a debug name per draw: the DrawError of a draw that cannot go on is the only
+            // one that is worth a string.
+            try
+            {
+                queue.submit(renderer.mesh, renderer.material, transform.matrix());
+            }
+            catch (const DrawError& error)
+            {
+                throw DrawError{std::format("GameObject \"{}\": {}", name.value, error.what())};
+            }
         });
 
     // At most one Camera exists (GameObject::addComponent), so this sets the view at most once.

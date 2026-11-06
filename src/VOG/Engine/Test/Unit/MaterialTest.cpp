@@ -145,11 +145,10 @@ protected:
     {
         return std::make_unique<Renderer>(
             Common::SurfaceHandle{.platform = Common::SurfaceHandle::Platform::eHeadless},
-            Renderer::Config{.appName          = "VOG Material Test",
-                             .engineName       = "Test",
-                             .extensions       = {"VK_EXT_headless_surface"},
-                             .shaderSourcePath = shaderPath,
-                             .extent = {.width = gRendererSize, .height = gRendererSize}});
+            Renderer::Config{.appName    = "VOG Material Test",
+                             .engineName = "Test",
+                             .shaderPath = shaderPath,
+                             .extent     = {.width = gRendererSize, .height = gRendererSize}});
     }
 
     /** A 2x2 texture of black pixels. */
@@ -159,7 +158,7 @@ protected:
         const std::vector<std::byte> pixels(std::size_t{2u} * 2u * 4u);
 
         return renderer.createTexture(
-            {.pixels = pixels, .width = 2u, .height = 2u, .filter = filter});
+            {.pixels = pixels, .extent = {.width = 2u, .height = 2u}, .filter = filter});
     }
 
     Graphics::Vulkan::DevicePtr mDevice =

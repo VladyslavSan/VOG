@@ -20,14 +20,14 @@ namespace
 void
 validateConfig(const Application::ApplicationConfig& config)
 {
-    if (config.shaderStoragePath.empty())
+    if (config.renderer.shaderPath.empty())
     {
         throw std::runtime_error("Shader storage path is empty.");
     }
-    if (!std::filesystem::exists(config.shaderStoragePath))
+    if (!std::filesystem::exists(config.renderer.shaderPath))
     {
-        throw std::runtime_error(
-            std::format("Shader storage path \"{}\" does not exist.", config.shaderStoragePath));
+        throw std::runtime_error(std::format("Shader storage path \"{}\" does not exist.",
+                                             config.renderer.shaderPath.string()));
     }
 }
 
@@ -36,6 +36,62 @@ std::uint32_t
 toPixels(Sint32 size)
 {
     return static_cast<std::uint32_t>(std::max(size, Sint32{0}));
+}
+
+/** The key of an SDL scancode, if a game reads it. */
+std::optional<Engine::Key>
+keyOf(SDL_Scancode scancode)
+{
+    using Engine::Key;
+
+    if (scancode >= SDL_SCANCODE_A && scancode <= SDL_SCANCODE_Z)
+    {
+        return static_cast<Key>(std::to_underlying(Key::eA) + (scancode - SDL_SCANCODE_A));
+    }
+    if (scancode >= SDL_SCANCODE_1 && scancode <= SDL_SCANCODE_9)
+    {
+        return static_cast<Key>(std::to_underlying(Key::e1) + (scancode - SDL_SCANCODE_1));
+    }
+
+    switch (scancode)
+    {
+    case SDL_SCANCODE_0:
+        return Key::e0;
+    case SDL_SCANCODE_SPACE:
+        return Key::eSpace;
+    case SDL_SCANCODE_ESCAPE:
+        return Key::eEscape;
+    case SDL_SCANCODE_RETURN:
+        return Key::eReturn;
+    case SDL_SCANCODE_LEFT:
+        return Key::eLeft;
+    case SDL_SCANCODE_RIGHT:
+        return Key::eRight;
+    case SDL_SCANCODE_UP:
+        return Key::eUp;
+    case SDL_SCANCODE_DOWN:
+        return Key::eDown;
+    case SDL_SCANCODE_LSHIFT:
+        return Key::eLeftShift;
+    default:
+        return std::nullopt;
+    }
+}
+
+std::optional<Engine::MouseButton>
+mouseButtonOf(Uint8 button)
+{
+    switch (button)
+    {
+    case SDL_BUTTON_LEFT:
+        return Engine::MouseButton::eLeft;
+    case SDL_BUTTON_RIGHT:
+        return Engine::MouseButton::eRight;
+    case SDL_BUTTON_MIDDLE:
+        return Engine::MouseButton::eMiddle;
+    default:
+        return std::nullopt;
+    }
 }
 
 /** Sets a flag for its lifetime. */
@@ -110,32 +166,33 @@ Application::Application(const ApplicationConfig& config)
 Application::Application(const ApplicationConfig& config, Validated /*validated*/)
     : mSDLHandle{std::make_unique<SDLHandle>(SDL_INIT_EVENTS)}
     , mWindow{std::make_unique<SDLWindow>(config.title.c_str(),
-                                          static_cast<int>(config.width),
-                                          static_cast<int>(config.height),
+                                          static_cast<int>(config.size.width),
+                                          static_cast<int>(config.size.height),
                                           config.hidden ? SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN
                                                         : SDL_WINDOW_RESIZABLE)}
     , mStartTime{std::chrono::steady_clock::now()}
     , mScene{std::make_shared<Engine::Scene>()}
-    , mRenderer{
-          std::make_unique<Engine::Renderer>(mWindow->getSurfaceHandle(),
-                                             Engine::Renderer::Config{
-                                                 .appName             = config.title,
-                                                 .engineName          = "VOG",
-                                                 .layers              = config.layers,
-                                                 .extensions          = config.extensions,
-                                                 .framesInFlight      = config.framesInFlight,
-                                                 .shaderSourcePath    = config.shaderStoragePath,
-                                                 .extent              = mWindow->sizeInPixels(),
-                                                 .onValidationMessage = config.onValidationMessage,
-                                             })}
+    , mRenderer{std::make_unique<Engine::Renderer>(mWindow->getSurfaceHandle(),
+                                                   [&]
+                                                   {
+                                                       Engine::Renderer::Config renderer =
+                                                           config.renderer;
+                                                       if (renderer.appName.empty())
+                                                       {
+                                                           renderer.appName = config.title;
+                                                       }
+                                                       renderer.extent = mWindow->sizeInPixels();
+
+                                                       return renderer;
+                                                   }())}
 {
     mRenderer->addRenderable(mScene);
 }
 
 Application::~Application()
 {
-    // Here, not in ~Scene: onDestroy() may use the renderer, which is alive and stopped (run()
-    // stops it) until this body ends. Without it the scene would die after the renderer.
+    // Here, not in ~Scene: onDestroy() may use the renderer, which is alive until this body ends.
+    // Without it the scene would die after the renderer.
     mScene->clear();
 }
 
@@ -171,9 +228,15 @@ Application::frame(Wait wait)
     mLastFrameTime = now;
     const Engine::FrameContext frameContext{
         .timeSeconds  = std::chrono::duration<double>{now - mStartTime}.count(),
-        .deltaSeconds = delta};
+        .deltaSeconds = delta,
+        .viewport     = mWindow->sizeInPixels(),
+        .input        = mInput};
+    // Now, so that what the events bring from here on is for the next frame: a press is in one
+    // frame only, and a watch frame is a frame.
+    Engine::Input::Writer{mInput}.beginFrame();
 
     // Here, not in onDraw(): a frame the renderer skips for want of room does not call onDraw().
+    runPostedTasks();
     mScene->update(frameContext);
     if (wait == Wait::eYes)
     {
@@ -182,6 +245,78 @@ Application::frame(Wait wait)
     else
     {
         mRenderer->trySubmitFrame(frameContext);
+    }
+}
+
+void
+Application::post(std::function<void()> task)
+{
+    if (!task)
+    {
+        return;
+    }
+
+    const std::scoped_lock lock{mPostMutex};
+    mPosted.push_back(std::move(task));
+}
+
+void
+Application::runPostedTasks()
+{
+    // Moved out under the lock and run without it: a task may post, and what it posts runs in the
+    // next frame, so the vector that is walked is never the one that is appended to.
+    std::vector<std::function<void()>> tasks;
+    {
+        const std::scoped_lock lock{mPostMutex};
+        tasks = std::exchange(mPosted, {});
+    }
+
+    for (auto task = tasks.begin(); task != tasks.end(); ++task)
+    {
+        try
+        {
+            (*task)();
+        }
+        catch (...)
+        {
+            // The tasks behind it run first at the next run(), before what was posted since.
+            const std::scoped_lock lock{mPostMutex};
+            mPosted.insert(mPosted.begin(),
+                           std::make_move_iterator(task + 1),
+                           std::make_move_iterator(tasks.end()));
+            throw;
+        }
+    }
+}
+
+void
+Application::takeInput(const SDL_Event& event)
+{
+    Engine::Input::Writer writer{mInput};
+
+    switch (event.type)
+    {
+    case SDL_EVENT_KEY_DOWN:
+    case SDL_EVENT_KEY_UP:
+        // A repeat of a key that is held is no new press.
+        if (const auto key = keyOf(event.key.scancode); key && !event.key.repeat)
+        {
+            event.key.down ? writer.press(*key) : writer.release(*key);
+        }
+        break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+        if (const auto button = mouseButtonOf(event.button.button))
+        {
+            event.button.down ? writer.press(*button) : writer.release(*button);
+        }
+        break;
+    case SDL_EVENT_MOUSE_MOTION:
+        // Window coordinates are in points; the game reads pixels.
+        writer.moveMouse(Math::Vector2f{event.motion.x, event.motion.y} * mWindow->pixelDensity());
+        break;
+    default:
+        break;
     }
 }
 
@@ -232,8 +367,19 @@ Application::run()
 {
     mWatchFailure = nullptr;
     mLastFrameTime.reset();
+    mInput = Engine::Input{};
     // Resizes before the watch exists are not seen by it.
     mRenderer->resize(mWindow->sizeInPixels());
+
+    // A request to quit ends this run() and no other.
+    struct QuitScope
+    {
+        Engine::Scene& scene;
+
+        ~QuitScope() { scene.clearQuitRequest(); }
+    };
+
+    const QuitScope quitScope{*mScene};
 
     try
     {
@@ -250,6 +396,7 @@ Application::run()
                 {
                     quit = true;
                 }
+                takeInput(event);
             }
 
             // The watch cannot throw through SDL; it left the exception here.
@@ -265,6 +412,10 @@ Application::run()
             // Waits for the render thread, which paces the loop. A render thread that failed
             // drains, so this does not hang, and getState() ends the loop.
             frame(Wait::eYes);
+            if (mScene->quitRequested())
+            {
+                break;
+            }
         }
     }
     catch (...)

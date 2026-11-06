@@ -86,7 +86,7 @@ DrawCheck::describe(const MeshData& mesh, const ShaderInfo& shader, const Missin
 }
 
 void
-DrawCheck::require(const MeshData& mesh, const ShaderInfo& shader, std::string_view debugName)
+DrawCheck::require(const MeshData& mesh, const ShaderInfo& shader)
 {
     const auto [verdict, added] = mVerdicts.try_emplace({mesh.layoutId, shader.programId});
     if (added)
@@ -96,9 +96,7 @@ DrawCheck::require(const MeshData& mesh, const ShaderInfo& shader, std::string_v
 
     if (verdict->second)
     {
-        const std::string sentence = describe(mesh, shader, *verdict->second);
-
-        throw DrawError{debugName.empty() ? sentence : std::format("{}: {}", debugName, sentence)};
+        throw DrawError{describe(mesh, shader, *verdict->second)};
     }
 }
 } // namespace VOG::Engine::Detail

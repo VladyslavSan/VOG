@@ -15,7 +15,9 @@
 #include <algorithm>
 #include <array>
 #include <stdexcept>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace VOG::Engine
 {
@@ -41,6 +43,24 @@ static_assert(std::to_underlying(Filter::eLinear) == 0u &&
               std::to_underlying(Filter::eNearest) == 1u);
 
 constexpr std::size_t gThreadCount = 1u;
+
+/** The layers of the instance: the validation layer if the configuration asks for it. */
+std::vector<std::string>
+layersOf(const Renderer::Config& config)
+{
+    return config.validation ? std::vector<std::string>{"VK_LAYER_KHRONOS_validation"}
+                             : std::vector<std::string>{};
+}
+
+/** The instance extensions that the surface needs and that the instance does not add itself: the
+ *  platforms with a window are known to the instance, a headless surface is not. */
+std::vector<std::string>
+extensionsOf(const Common::SurfaceHandle& surfaceHandle)
+{
+    return surfaceHandle.platform == Common::SurfaceHandle::Platform::eHeadless
+             ? std::vector<std::string>{"VK_EXT_headless_surface"}
+             : std::vector<std::string>{};
+}
 
 /**
  * The format of the depth target. The spec requires a device to render into at least one of
@@ -72,8 +92,8 @@ GpuContext::GpuContext(const Common::SurfaceHandle& surfaceHandle, const Rendere
     , instance{Graphics::Vulkan::Instance::create({
           .appName     = config.appName,
           .engineName  = config.engineName,
-          .layers      = config.layers,
-          .extensions  = config.extensions,
+          .layers      = layersOf(config),
+          .extensions  = extensionsOf(surfaceHandle),
           .messageSink = config.onValidationMessage,
       })}
     , device{instance->makeDevice()}

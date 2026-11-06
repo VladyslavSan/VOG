@@ -1,9 +1,12 @@
 #pragma once
 
+#include <VOG/Engine/Renderer/Extent.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
 #include <utility>
 
 namespace VOG::Engine
@@ -27,11 +30,12 @@ enum class Filter : std::uint8_t
 /** A 2D image with one mip level, rows tightly packed from the top. */
 struct TextureDescription
 {
+    /** Names the texture in error messages; may be empty. */
+    std::string name;
     /** Copied by Renderer::createTexture(); the caller keeps ownership. Exactly
-     *  width * height * 4 bytes. */
+     *  extent.width * extent.height * 4 bytes. */
     std::span<const std::byte> pixels;
-    std::uint32_t              width  = 0u;
-    std::uint32_t              height = 0u;
+    Extent                     extent;
     TextureFormat              format = TextureFormat::eRGBA8Srgb;
     Filter                     filter = Filter::eLinear;
 };

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <VOG/Math/Math.hpp>
+
 #include <algorithm>
 #include <array>
 #include <compare>
@@ -30,6 +32,41 @@ struct VertexAttribute
 
     auto operator<=>(const VertexAttribute&) const = default;
 };
+
+/** The VertexFormat of a C++ member type. The primary template is left undefined, so a type that
+ *  is not listed is a compile error where it is used. */
+template <class T>
+struct VertexFormatOf;
+
+template <>
+struct VertexFormatOf<Math::Vector2f>
+{
+    static constexpr VertexFormat kValue = VertexFormat::eFloat2;
+};
+
+template <>
+struct VertexFormatOf<Math::Vector3f>
+{
+    static constexpr VertexFormat kValue = VertexFormat::eFloat3;
+};
+
+template <>
+struct VertexFormatOf<Math::Vector4f>
+{
+    static constexpr VertexFormat kValue = VertexFormat::eFloat4;
+};
+
+template <class T>
+inline constexpr VertexFormat gVertexFormatOf = VertexFormatOf<T>::kValue;
+
+/** The attribute of type @p T at @p offset bytes from the start of a vertex: `attribute<Vector3f>(
+ *  offsetof(Vertex, position))`. */
+template <class T>
+constexpr VertexAttribute
+attribute(std::uint32_t offset)
+{
+    return {.format = gVertexFormatOf<T>, .offset = offset};
+}
 
 /** A pipeline takes at most this many vertex inputs. */
 inline constexpr std::size_t gMaxVertexAttributes = 8u;

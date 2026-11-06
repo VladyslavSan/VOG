@@ -90,12 +90,12 @@ TEST(RenderQueueTest, defaultCameraIsDefaultView)
 
 /**
  * A mesh that lacks an input of the shader is a mistake of the caller of submit(), and that call
- * gets the DrawError: it names the object, the mesh with its layout, the shader and the first
- * input that is missing. Nothing is added to the queue. Location 1 is there; location 2 is not.
+ * gets the DrawError: it names the mesh with its layout, the shader and the first input that is
+ * missing. Nothing is added to the queue. Location 1 is there; location 2 is not.
  */
 // The score comes from the gtest assertion macros.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-TEST(RenderQueueTest, drawErrorNamesObjectMeshShaderAndMissingInput)
+TEST(RenderQueueTest, drawErrorNamesMeshShaderAndMissingInput)
 {
     Detail::DrawCheck check;
     RenderQueue       queue  = RenderQueueTestAccess::make(check);
@@ -106,13 +106,13 @@ TEST(RenderQueueTest, drawErrorNamesObjectMeshShaderAndMissingInput)
 
     try
     {
-        queue.submit(quad(), lit, Math::Matrix4x4f{1.0f}, "ball");
+        queue.submit(quad(), lit, Math::Matrix4x4f{1.0f});
         FAIL() << "submit() did not throw.";
     }
     catch (const DrawError& error)
     {
         EXPECT_EQ(std::string_view{error.what()},
-                  "ball: mesh \"mesh\" (float2 @0, float2 @8) does not provide location 2 (vec3 "
+                  "mesh \"mesh\" (float2 @0, float2 @8) does not provide location 2 (vec3 "
                   "inNormal) of shader \"shader\"");
     }
     EXPECT_TRUE(RenderQueueTestAccess::draws(queue).empty());
@@ -191,8 +191,8 @@ TEST(RenderQueueTest, compatibleAndEmptyDrawsAreAcceptedOrDroppedWithoutAnError)
 
 /**
  * The verdict is kept for each pair of layout and program, a failure too: a caller that catches
- * the DrawError and goes on gets it again for the next object with that pair, under the name of
- * that object, and the check is not run again. A pair that differs in either id is another entry.
+ * the DrawError and goes on gets it again for the next object with that pair, and the check is not
+ * run again. A pair that differs in either id is another entry.
  */
 // The score comes from the gtest assertion macros.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -205,18 +205,22 @@ TEST(RenderQueueTest, theVerdictIsKeptForEachPairAndAFailureToo)
     const Material bad  = HandleTestAccess::makeMaterial(
         {{.location = 2u, .locationCount = 1u, .name = "inNormal", .type = floatVector(3u)}}, 2u);
 
-    for (const std::string_view object : {"first", "second"})
+    std::vector<std::string> messages;
+    for (int draw = 0; draw < 2; ++draw)
     {
         try
         {
-            queue.submit(quad(), bad, Math::Matrix4x4f{1.0f}, object);
+            queue.submit(quad(), bad, Math::Matrix4x4f{1.0f});
             FAIL() << "submit() did not throw.";
         }
         catch (const DrawError& error)
         {
-            EXPECT_TRUE(std::string_view{error.what()}.starts_with(std::string{object} + ": mesh"));
+            messages.emplace_back(error.what());
         }
     }
+    ASSERT_EQ(messages.size(), 2u);
+    EXPECT_TRUE(std::string_view{messages[0]}.starts_with("mesh "));
+    EXPECT_EQ(messages[0], messages[1]);
     EXPECT_EQ(Detail::DrawCheckTestAccess::verdictCount(check), 1u);
 
     for (int draw = 0; draw < 3; ++draw)

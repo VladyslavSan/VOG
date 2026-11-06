@@ -7,7 +7,6 @@
 #include <VOG/Math/Math.hpp>
 
 #include <stdexcept>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -42,15 +41,12 @@ public:
      * Adds a draw. A draw with an empty mesh or an empty material is dropped silently. Otherwise
      * checks that the mesh provides every vertex input of the shader of the material: once for
      * each pair of vertex layout and shader, the verdict is kept, so a draw that fails the check
-     * fails it again each time it is submitted, under the name it is given then.
+     * fails it again each time it is submitted. The caller knows which object draws, and adds its
+     * name to the error if it wants one (Scene does).
      *
-     * @param debugName Names the object that draws, for the DrawError; not kept.
      * @throws DrawError if the mesh cannot feed the shader. The draw is not added.
      */
-    void submit(Mesh                    mesh,
-                Material                material,
-                const Math::Matrix4x4f& world,
-                std::string_view        debugName = {});
+    void submit(Mesh mesh, Material material, const Math::Matrix4x4f& world);
 
     /**
      * Sets the view the frame is drawn with. The last call of the frame wins; a frame without a

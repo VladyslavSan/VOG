@@ -28,6 +28,19 @@ calculateCameraMatrix(const CameraPose& pose)
     return result;
 }
 
+Quaternionf
+identityQuaternion()
+{
+    return glm::identity<Quaternionf>();
+}
+
+Matrix4x4f
+trs(const Vector3f& position, const Quaternionf& rotation, const Vector3f& scale)
+{
+    return glm::translate(Matrix4x4f{1.0f}, position) * glm::mat4_cast(rotation) *
+           glm::scale(Matrix4x4f{1.0f}, scale);
+}
+
 Matrix4x4f
 orthographicProjection(const Vector2f& position,
                        const Vector2f& viewportSize,
